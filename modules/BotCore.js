@@ -1,4 +1,4 @@
-/**
+  /**
  * ═══════════════════════════════════════════════════════════════════════
  * CLASSE: BotCore
  * ═══════════════════════════════════════════════════════════════════════
@@ -41,17 +41,34 @@ const CommandHandler = require('./CommandHandler');
 class BotCore {
   constructor() {
     this.config = ConfigManager.getInstance();
-    this.logger = pino({ 
-      level: this.config.LOG_LEVEL,
-      transport: {
-        target: 'pino-pretty',
-        options: {
-          colorize: true,
-          translateTime: 'SYS:standard',
-          ignore: 'pid,hostname'
+    // Pino configuration optimized for Railway
+    const isRailway = process.env.RAILWAY_ENVIRONMENT_ID ||
+                     process.env.RAILWAY_PROJECT_ID ||
+                     process.env.RAILWAY_ENVIRONMENT ||
+                     process.env.RAILWAY_STATIC_URL ||
+                     process.env.RAILWAY_PROJECT_NAME ||
+                     process.env.RAILWAY_ENVIRONMENT === 'true' ||
+                     process.env.PINO_NO_PRETTY === 'true';
+    const isProduction = process.env.NODE_ENV === 'production' || isRailway;
+
+    // Use simple Pino configuration for Railway to avoid transport issues
+    if (isProduction) {
+      this.logger = pino({
+        level: this.config.LOG_LEVEL
+      });
+    } else {
+      this.logger = pino({
+        level: this.config.LOG_LEVEL,
+        transport: {
+          target: 'pino-pretty',
+          options: {
+            colorize: true,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname'
+          }
         }
-      }
-    });
+      });
+    }
 
     // Componentes
     this.apiClient = null;
