@@ -60,20 +60,18 @@ RUN mkdir -p /opt && \
     chmod +x /opt/sqlmap/sqlmap.py && \
     ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
 
-# NUCLEI - Vulnerability Scanning
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then \
-        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_linux_amd64.zip"; \
-    elif [ "$ARCH" = "aarch64" ]; then \
-        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_linux_arm64.zip"; \
-    else \
-        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_linux_amd64.zip"; \
-    fi && \
+# NUCLEI - Vulnerability Scanning (fallback para instalação via Go)
+RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || \
+    echo "Nuclei Go install failed, trying alternative method..." && \
+    ARCH=$(uname -m) && \
     mkdir -p /tmp/nuclei_install && \
     cd /tmp/nuclei_install && \
-    curl -L "$NUCLEI_URL" -o nuclei.zip && \
-    unzip -q nuclei.zip && \
-    mv nuclei /usr/local/bin/ && \
+    curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | \
+    grep "browser_download_url.*linux_amd64.tar.gz" | \
+    cut -d '"' -f 4 | \
+    xargs curl -L -o nuclei.tar.gz && \
+    tar -xzf nuclei.tar.gz && \
+    find . -name "nuclei" -type f -executable -exec mv {} /usr/local/bin/ \; && \
     chmod +x /usr/local/bin/nuclei && \
     cd - && \
     rm -rf /tmp/nuclei_install
@@ -132,6 +130,14 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     npm -v && \
     python3 --version && \
     ffmpeg -version | head -1 && \
+    echo "🔧 Verificando ferramentas de cybersecurity..." && \
+    nmap --version | head -1 && \
+    hydra -h | head -1 && \
+    nikto -version | head -1 && \
+    python3 /opt/sqlmap/sqlmap.py --version | head -1 && \
+    nuclei -version && \
+    masscan --version | head -1 && \
+    echo "✅ Todas as ferramentas instaladas com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
 
 # Limpar cache para reduzir tamanho da imagem
