@@ -1,7 +1,7 @@
 {
   "build": {
     "builder": "dockerfile",
-    "dockerfilePath": "Dockerfile.railway"
+    "dockerfilePath": "Dockerfile"
   },
   "deploy": {
     "startCommand": "node index.js",
