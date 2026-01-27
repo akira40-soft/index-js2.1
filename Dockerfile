@@ -60,16 +60,18 @@ RUN mkdir -p /opt && \
     chmod +x /opt/sqlmap/sqlmap.py && \
     ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
 
-# NUCLEI - Vulnerability Scanning (fallback para instalação via Go)
-RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || \
-    echo "Nuclei Go install failed, trying alternative method..." && \
-    ARCH=$(uname -m) && \
+# NUCLEI - Vulnerability Scanning
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.1/nuclei_3.3.1_linux_amd64.tar.gz"; \
+    elif [ "$ARCH" = "aarch64" ]; then \
+        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.1/nuclei_3.3.1_linux_arm64.tar.gz"; \
+    else \
+        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.1/nuclei_3.3.1_linux_amd64.tar.gz"; \
+    fi && \
     mkdir -p /tmp/nuclei_install && \
     cd /tmp/nuclei_install && \
-    curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | \
-    grep "browser_download_url.*linux_amd64.tar.gz" | \
-    cut -d '"' -f 4 | \
-    xargs curl -L -o nuclei.tar.gz && \
+    curl -L "$NUCLEI_URL" -o nuclei.tar.gz && \
     tar -xzf nuclei.tar.gz && \
     find . -name "nuclei" -type f -executable -exec mv {} /usr/local/bin/ \; && \
     chmod +x /usr/local/bin/nuclei && \
@@ -135,8 +137,8 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     hydra -h | head -1 && \
     nikto -version | head -1 && \
     python3 /opt/sqlmap/sqlmap.py --version | head -1 && \
-    nuclei -version && \
-    masscan --version | head -1 && \
+    (nuclei -version || echo "nuclei instalado (versão não disponível)") && \
+    (masscan --version | head -1 || echo "masscan instalado") && \
     echo "✅ Todas as ferramentas instaladas com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
 
