@@ -25,7 +25,7 @@ class ConfigManager {
     this.API_RETRY_DELAY = parseInt(process.env.API_RETRY_DELAY || 1000);
 
     // ═══ BOT IDENTITY ═══
-    this.BOT_NUMERO_REAL = process.env.BOT_NUMERO || '244937035662';
+    this.BOT_NUMERO_REAL = process.env.BOT_NUMERO || '40755431264474';
     this.BOT_NAME = process.env.BOT_NAME || 'Akira';
     this.BOT_VERSION = 'v21.02.2025';
     this.PREFIXO = process.env.PREFIXO || '#';

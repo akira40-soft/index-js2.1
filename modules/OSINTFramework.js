@@ -1,14 +1,18 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * OSINT FRAMEWORK - REAL & ADVANCED IMPLEMENTATION v2
+ * OSINT FRAMEWORK - REAL APIS ONLY - CLEAN IMPLEMENTATION
  * ═══════════════════════════════════════════════════════════════════════════
  * ✅ Google Dorking / Google Doxing - REAL
- * ✅ Email reconnaissance - HaveIBeenPwned API
- * ✅ Phone lookup - APIs reais
- * ✅ Username search - Verificação real de plataformas
- * ✅ Domínio + subdomínios - crt.sh + DNS
- * ✅ Breach database search - REAL APIs
- * ✅ Dark web monitoring - TOR integration
+ * ✅ Email reconnaissance - HaveIBeenPwned API ONLY
+ * ✅ Phone lookup - Numverify API ONLY
+ * ✅ Username search - GitHub API ONLY
+ * ✅ Domain enumeration - crt.sh ONLY
+ * ✅ Breach database search - HaveIBeenPwned ONLY
+ * ✅ Dark web monitoring - SIMULATED (no real access)
+ *
+ * ❌ REMOVED: All Math.random() fake probabilities
+ * ❌ REMOVED: Simulated results
+ * ❌ REMOVED: Fake data generation
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -22,32 +26,30 @@ class OSINTFramework {
     this.config = config;
     this.cache = new Map();
     this.cacheExpiry = 3600000; // 1 hora
-    
-    // APIs e chaves
+
+    // APIs reais apenas
     this.apis = {
       haveibeenpwned: 'https://haveibeenpwned.com/api/v3',
-      ipqualityscore: 'https://ipqualityscore.com/api',
-      virustotal: 'https://www.virustotal.com/api/v3',
-      urlhaus: 'https://urlhaus-api.abuse.ch/v1',
+      numverify: 'http://numverify.com/',
+      github: 'https://api.github.com',
       crtsh: 'https://crt.sh/',
     };
 
-    // User agents
+    // User agents para evitar blocks
     this.userAgents = [
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
     ];
 
-    console.log('✅ OSINTFramework REAL inicializado com ferramentas reais');
+    console.log('✅ OSINTFramework REAL - Apenas APIs reais implementadas');
   }
 
   /**
    * ═════════════════════════════════════════════════════════════════════
-   * 🔍 GOOGLE DORKING / GOOGLE DOXING - REAL
+   * 🔍 GOOGLE DORKING - REAL SEARCH ONLY
    * ═════════════════════════════════════════════════════════════════════
    */
-
   async googleDorking(alvo, tipoSearch = 'geral') {
     try {
       const dorkingQueries = this._gerarDorkingQueries(alvo, tipoSearch);
@@ -59,11 +61,12 @@ class OSINTFramework {
         queries: dorkingQueries,
         resultados: [],
         risco: 'MÉDIO',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        aviso: 'Resultados limitados devido a restrições do Google'
       };
 
-      // Executa cada query de dorking
-      for (const query of dorkingQueries.slice(0, 3)) {
+      // Executa apenas 2 queries para evitar blocks
+      for (const query of dorkingQueries.slice(0, 2)) {
         try {
           const results = await this._executarGoogleDorking(query);
           if (results.length > 0) {
@@ -91,27 +94,15 @@ class OSINTFramework {
     if (tipo === 'email') {
       queries.push(`"${alvo}" site:linkedin.com`);
       queries.push(`"${alvo}" filetype:pdf`);
-      queries.push(`"${alvo}" site:pastebin.com OR site:github.com`);
-      queries.push(`${alvo.split('@')[0]} site:twitter.com`);
-      queries.push(`"${alvo}" inurl:profile`);
     } else if (tipo === 'dominio') {
       queries.push(`site:${alvo}`);
       queries.push(`inurl:${alvo} intitle:admin`);
-      queries.push(`site:${alvo} filetype:sql OR filetype:db`);
-      queries.push(`"${alvo}" inurl:backup`);
-      queries.push(`site:${alvo} intitle:index.of`);
     } else if (tipo === 'pessoa') {
       queries.push(`"${alvo}" site:linkedin.com`);
       queries.push(`"${alvo}" site:facebook.com`);
-      queries.push(`"${alvo}" site:twitter.com`);
-      queries.push(`"${alvo}" phone OR email`);
-      queries.push(`"${alvo}" inurl:profile`);
     } else {
       queries.push(`"${alvo}"`);
       queries.push(`${alvo} inurl:admin`);
-      queries.push(`${alvo} intitle:index.of`);
-      queries.push(`${alvo} filetype:pdf`);
-      queries.push(`${alvo} inurl:login`);
     }
 
     return queries;
@@ -133,11 +124,11 @@ class OSINTFramework {
       const resultados = [];
 
       $('div.g').each((i, elem) => {
-        if (i < 5) {
+        if (i < 3) { // Apenas 3 resultados por query
           const title = $(elem).find('h3').text();
           const linkElem = $(elem).find('a').first();
           let url = linkElem.attr('href');
-          
+
           // Clean URL
           if (url && url.includes('/url?q=')) {
             const parts = url.split('/url?q=');
@@ -145,7 +136,7 @@ class OSINTFramework {
               url = parts[1].split('&')[0];
             }
           }
-          
+
           const snippet = $(elem).find('.VwiC3b').text() || $(elem).find('.st').text();
 
           if (title && url) {
@@ -163,10 +154,9 @@ class OSINTFramework {
 
   /**
    * ═════════════════════════════════════════════════════════════════════
-   * 📧 EMAIL RECONNAISSANCE
+   * 📧 EMAIL RECONNAISSANCE - HAVEIBEENPWNED ONLY
    * ═════════════════════════════════════════════════════════════════════
    */
-
   async emailReconnaissance(email) {
     try {
       if (!this._isValidEmail(email)) {
@@ -178,17 +168,14 @@ class OSINTFramework {
         return this.cache.get(cacheKey);
       }
 
-      // 1. Verifica vazamento em databases públicos
-      const breachResult = await this._checkEmailBreaches(email);
-      
-      // 2. Valida se email existe
-      const validResult = await this._validateEmail(email);
-      
-      // 3. Extrai nome e domínio
+      // 1. Verifica vazamento em HaveIBeenPwned (REAL API)
+      const breachResult = await this._checkHaveIBeenPwned(email);
+
+      // 2. Extrai nome e domínio
       const [nome, dominio] = email.split('@');
-      
-      // 4. Busca informações do domínio
-      const dominioInfo = await this._getDominioInfo(dominio);
+
+      // 3. Busca informações do domínio (crt.sh REAL)
+      const dominioInfo = await this._getDominioInfoReal(dominio);
 
       const resultado = {
         sucesso: true,
@@ -196,15 +183,14 @@ class OSINTFramework {
         email: email,
         nome: nome,
         dominio: dominio,
-        valido: validResult.valido,
         descobertas: {
           vazamentosEncontrados: breachResult.encontrados,
           breaches: breachResult.breaches,
           tipoEmail: this._classifyEmail(email),
-          probabilidadeFake: validResult.probabilidadeFake,
           dominioLegitimo: dominioInfo.legítimo,
           anoFundacao: dominioInfo.anoFundacao,
-          pais: dominioInfo.pais
+          pais: dominioInfo.pais,
+          certificadosEncontrados: dominioInfo.certificadosEncontrados
         },
         ameacas: breachResult.encontrados > 0 ? [
           '⚠️ Email encontrado em vazamentos',
@@ -226,48 +212,102 @@ class OSINTFramework {
   }
 
   /**
+   * Verifica vazamentos reais no HaveIBeenPwned
+   */
+  async _checkHaveIBeenPwned(email) {
+    try {
+      const response = await axios.get(`${this.apis.haveibeenpwned}/breachedaccount/${email}`, {
+        headers: {
+          'User-Agent': 'AkiraBot-OSINT/1.0',
+          'hibp-api-key': process.env.HIBP_API_KEY || ''
+        },
+        timeout: 10000
+      });
+
+      const breaches = response.data.map(breach => ({
+        nome: breach.Name,
+        dominio: breach.Domain,
+        dataVazamento: breach.BreachDate,
+        dadosExpostos: breach.DataClasses,
+        severidade: breach.IsVerified ? 'VERIFICADO' : 'NÃO VERIFICADO'
+      }));
+
+      return {
+        encontrados: breaches.length,
+        breaches: breaches
+      };
+    } catch (e) {
+      if (e.response?.status === 404) {
+        return { encontrados: 0, breaches: [] };
+      }
+      console.warn('Erro ao consultar HaveIBeenPwned:', e.message);
+      return { encontrados: 0, breaches: [], erro: 'API indisponível' };
+    }
+  }
+
+  /**
+   * Busca informações reais do domínio via crt.sh
+   */
+  async _getDominioInfoReal(dominio) {
+    try {
+      const response = await axios.get(`${this.apis.crtsh}/?q=${encodeURIComponent(dominio)}&output=json`, {
+        timeout: 10000
+      });
+
+      if (response.data && Array.isArray(response.data)) {
+        const certificados = response.data;
+        const primeiroCert = certificados[0];
+
+        return {
+          legítimo: certificados.length > 0,
+          anoFundacao: primeiroCert?.not_before ? new Date(primeiroCert.not_before).getFullYear() : null,
+          pais: primeiroCert?.issuer_country || 'Desconhecido',
+          certificadosEncontrados: certificados.length
+        };
+      }
+
+      return {
+        legítimo: false,
+        anoFundacao: null,
+        pais: 'Desconhecido',
+        certificadosEncontrados: 0
+      };
+    } catch (e) {
+      console.warn('Erro ao consultar crt.sh:', e.message);
+      return {
+        legítimo: false,
+        anoFundacao: null,
+        pais: 'Erro na consulta',
+        certificadosEncontrados: 0
+      };
+    }
+  }
+
+  /**
    * ═════════════════════════════════════════════════════════════════════
-   * 📱 PHONE NUMBER LOOKUP
+   * 📱 PHONE NUMBER LOOKUP - NUMVERIFY ONLY
    * ═════════════════════════════════════════════════════════════════════
    */
-
   async phoneNumberLookup(numero) {
     try {
-      // Remove caracteres especiais
       const numberClean = numero.replace(/\D/g, '');
-      
+
       if (numberClean.length < 7) {
         return { sucesso: false, erro: 'Número de telefone inválido' };
       }
 
-      // APIs de lookup
-      const apis = [
-        this._tryNumverifyAPI(numberClean),
-        this._tryTwilioLookup(numberClean),
-        this._tryAboutMyPhoneAPI(numberClean)
-      ];
+      // Tenta Numverify API (única API real implementada)
+      const result = await this._tryNumverifyAPI(numberClean);
 
-      const resultado = await Promise.race(apis.map(p => p.catch(() => null))).catch(() => null);
-      
-      if (resultado) {
-        return resultado;
+      if (result) {
+        return result;
       }
 
-      // Fallback: analisa padrão
       return {
-        sucesso: true,
-        tipo: 'phone_lookup',
+        sucesso: false,
+        erro: 'Não foi possível consultar o número',
         numero: numero,
         numeroLimpo: numberClean,
-        analise: {
-          codigoArea: numberClean.substring(0, 3),
-          operadora: this._guessOperadora(numberClean),
-          pais: this._guessCountryByFormat(numberClean),
-          tipoLinha: Math.random() < 0.7 ? 'Celular' : 'Fixo',
-          ativo: Math.random() < 0.8,
-          risco: Math.random() < 0.2 ? 'MÉDIO' : 'BAIXO'
-        },
-        aviso: 'Resultados baseados em análise de padrão',
         timestamp: new Date().toISOString()
       };
     } catch (e) {
@@ -277,52 +317,67 @@ class OSINTFramework {
   }
 
   /**
+   * Consulta Numverify API (única API real implementada)
+   */
+  async _tryNumverifyAPI(numero) {
+    try {
+      const apiKey = process.env.NUMVERIFY_API_KEY;
+      if (!apiKey) {
+        return null;
+      }
+
+      const response = await axios.get(`${this.apis.numverify}/`, {
+        params: {
+          access_key: apiKey,
+          number: numero
+        },
+        timeout: 10000
+      });
+
+      if (response.data && response.data.valid) {
+        return {
+          sucesso: true,
+          tipo: 'phone_lookup',
+          numero: response.data.number,
+          numeroInternacional: response.data.international_format,
+          codigoPais: response.data.country_code,
+          pais: response.data.country_name,
+          local: response.data.location,
+          operadora: response.data.carrier,
+          tipoLinha: response.data.line_type,
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      return null;
+    } catch (e) {
+      console.warn('Erro ao consultar Numverify:', e.message);
+      return null;
+    }
+  }
+
+  /**
    * ═════════════════════════════════════════════════════════════════════
-   * 👤 USERNAME SEARCH - Buscar em redes sociais
+   * 👤 USERNAME SEARCH - GITHUB API ONLY
    * ═════════════════════════════════════════════════════════════════════
    */
-
   async usernameSearch(username) {
     try {
       if (username.length < 3) {
         return { sucesso: false, erro: 'Username muito curto (mín 3 caracteres)' };
       }
 
-      // Plataformas para buscar
-      const plataformas = [
-        { nome: 'Twitter', url: `https://twitter.com/${username}`, ícone: '𝕏' },
-        { nome: 'Instagram', url: `https://instagram.com/${username}`, ícone: '📸' },
-        { nome: 'TikTok', url: `https://tiktok.com/@${username}`, ícone: '🎵' },
-        { nome: 'GitHub', url: `https://github.com/${username}`, ícone: '🐙' },
-        { nome: 'LinkedIn', url: `https://linkedin.com/in/${username}`, ícone: '💼' },
-        { nome: 'Reddit', url: `https://reddit.com/u/${username}`, ícone: '🤖' },
-        { nome: 'YouTube', url: `https://youtube.com/@${username}`, ícone: '📺' },
-        { nome: 'Twitch', url: `https://twitch.tv/${username}`, ícone: '🎮' }
-      ];
-
-      const encontrados = [];
-
-      for (const plataforma of plataformas) {
-        // Simula verificação (real seria fazer requisição)
-        if (Math.random() < 0.4) { // 40% de chance de encontrado
-          encontrados.push({
-            plataforma: plataforma.nome,
-            ícone: plataforma.ícone,
-            url: plataforma.url,
-            status: '✅ Encontrado',
-            seguidores: Math.floor(Math.random() * 100000),
-            ativo: Math.random() < 0.8
-          });
-        }
-      }
+      // Apenas GitHub API (única API real implementada)
+      const result = await this._checkUsernameOnGitHub(username);
 
       return {
         sucesso: true,
         tipo: 'username_search',
         username,
-        encontrados: encontrados.length,
-        contas: encontrados,
-        risco: encontrados.length > 3 ? 'MÉDIO' : 'BAIXO',
+        plataforma: 'GitHub',
+        encontrado: result.encontrado,
+        perfil: result.perfil,
+        risco: result.encontrado ? 'BAIXO' : 'NENHUM',
         timestamp: new Date().toISOString()
       };
     } catch (e) {
@@ -332,51 +387,91 @@ class OSINTFramework {
   }
 
   /**
+   * Verifica username no GitHub (única plataforma real implementada)
+   */
+  async _checkUsernameOnGitHub(username) {
+    try {
+      const response = await axios.get(`${this.apis.github}/users/${username}`, {
+        headers: {
+          'User-Agent': this._randomUserAgent(),
+          'Authorization': process.env.GITHUB_TOKEN ? `token ${process.env.GITHUB_TOKEN}` : undefined
+        },
+        timeout: 10000
+      });
+
+      if (response.data && response.data.login) {
+        return {
+          encontrado: true,
+          perfil: {
+            nome: response.data.name || response.data.login,
+            login: response.data.login,
+            url: response.data.html_url,
+            bio: response.data.bio,
+            seguidores: response.data.followers,
+            seguindo: response.data.following,
+            repositorios: response.data.public_repos,
+            criadoEm: response.data.created_at,
+            atualizadoEm: response.data.updated_at
+          }
+        };
+      }
+
+      return { encontrado: false };
+    } catch (e) {
+      if (e.response?.status === 404) {
+        return { encontrado: false };
+      }
+      console.warn('Erro ao consultar GitHub:', e.message);
+      return { encontrado: false, erro: e.message };
+    }
+  }
+
+  /**
    * ═════════════════════════════════════════════════════════════════════
-   * 🌐 DOMAIN + SUBDOMAIN ENUMERATION
+   * 🌐 DOMAIN SUBDOMAIN ENUMERATION - CRT.SH ONLY
    * ═════════════════════════════════════════════════════════════════════
    */
-
   async subdomainEnumeration(dominio) {
     try {
       if (!this._isDomain(dominio)) {
         return { sucesso: false, erro: 'Domínio inválido' };
       }
 
-      // Lista comum de subdomínios para testar
-      const subdomainsList = [
-        'www', 'mail', 'ftp', 'admin', 'api', 'cdn', 'backup',
-        'dev', 'test', 'staging', 'demo', 'beta', 'sandbox',
-        'app', 'web', 'mobile', 'blog', 'shop', 'store',
-        'support', 'help', 'docs', 'wiki', 'forum',
-        'vpn', 'rdp', 'sftp', 'git', 'svn',
-        'cache', 'proxy', 'lb', 'mail2', 'smtp'
-      ];
+      // Busca certificados via crt.sh (única fonte real implementada)
+      const response = await axios.get(`${this.apis.crtsh}/?q=${encodeURIComponent(dominio)}&output=json`, {
+        timeout: 15000
+      });
 
-      const descobertos = [];
+      const subdomains = new Set();
 
-      // Simula descoberta
-      for (const sub of subdomainsList) {
-        if (Math.random() < 0.15) { // 15% de chance
-          descobertos.push({
-            subdominio: `${sub}.${dominio}`,
-            ativo: Math.random() < 0.7,
-            tipoServico: this._guessService(sub)
-          });
-        }
+      if (response.data && Array.isArray(response.data)) {
+        response.data.forEach(cert => {
+          if (cert.name_value) {
+            // Extrai subdomínios
+            const names = cert.name_value.split('\n');
+            names.forEach(name => {
+              const cleanName = name.trim().toLowerCase();
+              if (cleanName.includes(dominio) && cleanName !== dominio) {
+                subdomains.add(cleanName);
+              }
+            });
+          }
+        });
       }
+
+      const subdomainList = Array.from(subdomains).slice(0, 20); // Máximo 20
 
       return {
         sucesso: true,
         tipo: 'subdomain_enumeration',
         dominio,
-        descobertos: descobertos.length,
-        subdomainios: descobertos,
-        risco: descobertos.length > 10 ? 'ALTO' : descobertos.length > 5 ? 'MÉDIO' : 'BAIXO',
+        descobertos: subdomainList.length,
+        subdomains: subdomainList,
+        fonte: 'crt.sh (Certificate Transparency)',
+        risco: subdomainList.length > 10 ? 'ALTO' : subdomainList.length > 5 ? 'MÉDIO' : 'BAIXO',
         recomendacoes: [
           '🛡️ Revisar subdomínios obsoletos',
           '🔐 Verificar certificados SSL',
-          '🚫 Considerar não listar via DNS',
           '📊 Monitorar continuamente'
         ],
         timestamp: new Date().toISOString()
@@ -389,50 +484,28 @@ class OSINTFramework {
 
   /**
    * ═════════════════════════════════════════════════════════════════════
-   * 🚨 BREACH DATABASE SEARCH
+   * 🚨 BREACH DATABASE SEARCH - HAVEIBEENPWNED ONLY
    * ═════════════════════════════════════════════════════════════════════
    */
-
   async breachSearch(alvo) {
     try {
-      // Pode ser email ou username
-      const tipo = this._isValidEmail(alvo) ? 'email' : 'username';
-
-      // APIs públicas de breach search
-      const breaches = [
-        { nome: 'HaveIBeenPwned', severidade: 'CRÍTICO', registros: 12 },
-        { nome: 'LinkedIn Breach 2021', severidade: 'CRÍTICO', registros: 700000000 },
-        { nome: 'Facebook Breach 2019', severidade: 'ALTO', registros: 540000000 },
-        { nome: 'Yahoo Breach 2013', severidade: 'CRÍTICO', registros: 3000000000 },
-        { nome: 'Equifax Breach 2017', severidade: 'CRÍTICO', registros: 147000000 },
-      ];
-
-      const encontrados = [];
-      for (const breach of breaches) {
-        if (Math.random() < 0.2) { // 20% de chance
-          encontrados.push({
-            ...breach,
-            dataVazamento: new Date(2020 + Math.random() * 4, Math.floor(Math.random() * 12)).toISOString().split('T')[0],
-            dadosExpostos: [
-              'Email',
-              'Senha',
-              'Nome completo',
-              'Telefone',
-              'Endereço'
-            ].filter(() => Math.random() < 0.6)
-          });
-        }
+      if (!this._isValidEmail(alvo)) {
+        return { sucesso: false, erro: 'Apenas emails são suportados para busca de vazamentos' };
       }
+
+      // Apenas HaveIBeenPwned (única fonte real implementada)
+      const breachResult = await this._checkHaveIBeenPwned(alvo);
 
       return {
         sucesso: true,
         tipo: 'breach_search',
         alvo,
-        tipoAlvo: tipo,
-        vazamentosEncontrados: encontrados.length,
-        breaches: encontrados,
-        risco: encontrados.length > 0 ? 'CRÍTICO' : 'NENHUM',
-        acoes: encontrados.length > 0 ? [
+        tipoAlvo: 'email',
+        vazamentosEncontrados: breachResult.encontrados,
+        breaches: breachResult.breaches,
+        fonte: 'HaveIBeenPwned',
+        risco: breachResult.encontrados > 0 ? 'CRÍTICO' : 'NENHUM',
+        acoes: breachResult.encontrados > 0 ? [
           '🔴 CRÍTICO: Sua informação foi vazada',
           '🔐 Mude sua senha IMEDIATAMENTE',
           '✅ Ative 2FA em todas as contas',
@@ -450,48 +523,24 @@ class OSINTFramework {
 
   /**
    * ═════════════════════════════════════════════════════════════════════
-   * 🌍 DARK WEB MONITORING (SIMULADO)
+   * 🌍 DARK WEB MONITORING - SIMULATED (NO REAL ACCESS)
    * ═════════════════════════════════════════════════════════════════════
    */
-
   async darkWebMonitoring(alvo) {
     try {
-      // Simula monitoramento em dark web
-      // Nota: Acesso real a dark web é complexo e arriscado
-
-      const ameacas = Math.random() < 0.2 ? [
-        {
-          nivel: 'CRÍTICO',
-          descricao: 'Credenciais sendo vendidas em marketplace escuro',
-          forum: 'AlphaBay',
-          preco: '$50-200',
-          contatoVendedor: 'seller_xxxx'
-        },
-        {
-          nivel: 'ALTO',
-          descricao: 'Dados pessoais em database público do dark web',
-          fonte: 'Paste site escuro',
-          disponibilidade: 'Público'
-        }
-      ] : [];
-
       return {
         sucesso: true,
         tipo: 'darkweb_monitoring',
         alvo,
-        ameacasDetectadas: ameacas.length,
-        ameacas,
-        status: ameacas.length > 0 ? 'ALERTA!' : 'Seguro',
-        acoes: ameacas.length > 0 ? [
-          '🚨 ALERTA CRÍTICO',
-          'Contrate serviço de credit freeze',
-          'Notifique autoridades se necessário',
-          'Considere Dark Web ID monitoring'
-        ] : [
-          '✅ Sem ameaças detectadas',
-          '🔍 Monitore regularmente'
+        ameacasDetectadas: 0,
+        ameacas: [],
+        status: 'Não disponível',
+        aviso: '⚠️ Monitoramento real da dark web não é possível sem infraestrutura especializada (TOR + credenciais)',
+        recomendacoes: [
+          '🔍 Use serviços especializados como Dark Web ID',
+          '📧 Monitore vazamentos regularmente',
+          '🛡️ Considere serviços de monitoramento profissional'
         ],
-        aviso: '⚠️ Simulado - Monitoramento real é premium',
         timestamp: new Date().toISOString()
       };
     } catch (e) {
@@ -502,53 +551,9 @@ class OSINTFramework {
 
   /**
    * ═════════════════════════════════════════════════════════════════════
-   * FUNÇÕES AUXILIARES PRIVADAS
+   * FUNÇÕES AUXILIARES
    * ═════════════════════════════════════════════════════════════════════
    */
-
-  async _checkEmailBreaches(email) {
-    try {
-      // Simula check em HaveIBeenPwned
-      const breaches = Math.floor(Math.random() * 5);
-      
-      const breachList = breaches > 0 ? [
-        { nome: 'Yahoo Breach', ano: 2013 },
-        { nome: 'LinkedIn Breach', ano: 2021 },
-        { nome: 'Facebook', ano: 2019 }
-      ].slice(0, breaches) : [];
-
-      return {
-        encontrados: breaches,
-        breaches: breachList
-      };
-    } catch (e) {
-      return { encontrados: 0, breaches: [] };
-    }
-  }
-
-  async _validateEmail(email) {
-    try {
-      // Simula validação
-      return {
-        valido: Math.random() < 0.85,
-        probabilidadeFake: Math.random() * 100
-      };
-    } catch (e) {
-      return { valido: false, probabilidadeFake: 100 };
-    }
-  }
-
-  async _getDominioInfo(dominio) {
-    try {
-      return {
-        legítimo: !dominio.includes('fake'),
-        anoFundacao: 2000 + Math.floor(Math.random() * 24),
-        pais: ['🇺🇸', '🇬🇧', '🇩🇪', '🇳🇱', '🇦🇴'][Math.floor(Math.random() * 5)]
-      };
-    } catch (e) {
-      return { legítimo: true, anoFundacao: 2000, pais: '🌍' };
-    }
-  }
 
   _isValidEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -563,50 +568,6 @@ class OSINTFramework {
     if (email.endsWith('.edu')) return 'Educacional';
     if (email.endsWith('.gov')) return 'Governo';
     return 'Comercial';
-  }
-
-  _guessOperadora(numero) {
-    const operadoras = ['Meo', 'Vodafone', 'Altice/Zap', 'NOS', 'Outros'];
-    return operadoras[Math.floor(numero.substring(0, 3) / 100) % operadoras.length];
-  }
-
-  _guessCountryByFormat(numero) {
-    if (numero.startsWith('244')) return '🇦🇴 Angola';
-    if (numero.startsWith('55')) return '🇧🇷 Brasil';
-    if (numero.startsWith('351')) return '🇵🇹 Portugal';
-    return '🌍 Desconhecido';
-  }
-
-  _tryNumverifyAPI(numero) {
-    return Promise.reject('API não testada');
-  }
-
-  _tryTwilioLookup(numero) {
-    return Promise.reject('API não testada');
-  }
-
-  _tryAboutMyPhoneAPI(numero) {
-    return Promise.reject('API não testada');
-  }
-
-  _guessService(subdominio) {
-    const servicios = {
-      'mail': '📧 Email',
-      'ftp': '📁 FTP',
-      'admin': '🔐 Admin',
-      'api': '🔌 API',
-      'cdn': '⚡ CDN',
-      'dev': '👨‍💻 Desenvolvimento',
-      'test': '🧪 Testes',
-      'vpn': '🔒 VPN',
-      'git': '🐙 Git'
-    };
-    
-    for (const [key, val] of Object.entries(servicios)) {
-      if (subdominio.includes(key)) return val;
-    }
-    
-    return '🌐 Serviço';
   }
 
   _randomUserAgent() {

@@ -155,6 +155,75 @@ class LevelSystem {
     }
   }
 
+  // Retorna o nome da patente baseado no nível
+  getPatente(level) {
+    const patentes = {
+      0: 'Recruta',
+      1: 'Soldado',
+      2: 'Cabo',
+      3: 'Sargento',
+      4: 'Tenente',
+      5: 'Capitão',
+      6: 'Major',
+      7: 'Coronel',
+      8: 'General',
+      9: 'Marechal',
+      10: 'Comandante Supremo',
+      11: 'Líder Elite',
+      12: 'Mestre das Sombras',
+      13: 'Guardião da Ordem',
+      14: 'Senhor da Guerra',
+      15: 'Imperador',
+      16: 'Deus da Guerra',
+      17: 'Lenda Viva',
+      18: 'Mito Imortal',
+      19: 'Divindade Suprema',
+      20: 'Criador de Mundos',
+      21: 'Destruidor de Galáxias',
+      22: 'Senhor do Tempo',
+      23: 'Mestre do Espaço',
+      24: 'Guardião do Multiverso',
+      25: 'Entidade Cósmica',
+      26: 'Força Primordial',
+      27: 'Essência Divina',
+      28: 'Poder Absoluto',
+      29: 'Ser Supremo',
+      30: 'Transcendente',
+      31: 'Onipresente',
+      32: 'Onipotente',
+      33: 'Onisciente',
+      34: 'Existência Pura',
+      35: 'Vazio Absoluto',
+      36: 'Nada e Tudo',
+      37: 'Além da Compreensão',
+      38: 'Indescritível',
+      39: 'Inconcebível',
+      40: 'O Último Nível',
+      41: 'O Inatingível',
+      42: 'O Impossível',
+      43: 'O Inexplicável',
+      44: 'O Misterioso',
+      45: 'O Enigmático',
+      46: 'O Arcano',
+      47: 'O Esotérico',
+      48: 'O Oculto',
+      49: 'O Secreto',
+      50: 'O Desconhecido',
+      51: 'O Inexplorado',
+      52: 'O Inacessível',
+      53: 'O Proibido',
+      54: 'O Sagrado',
+      55: 'O Divino',
+      56: 'O Celestial',
+      57: 'O Eterno',
+      58: 'O Infinito',
+      59: 'O Absoluto',
+      60: 'O Máximo'
+    };
+
+    return patentes[level] || `Nível ${level}`;
+  }
+
   // status info
   getStatus(gid) {
     const window = this.promos[gid];

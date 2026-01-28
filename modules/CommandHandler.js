@@ -457,6 +457,7 @@ _Cada real faz diferença no desenvolvimento do Akira Bot_
             nextLevelXp = this.bot.levelSystem.requiredXp(level + 1) || 1000;
           }
           const progressPct = Math.min(100, Math.floor((xp / nextLevelXp) * 100));
+          const patente = this.bot.levelSystem.getPatente(level);
 
           const profileText = this.createMenuHeader('👤', 'SEU PERFIL') + `
 
@@ -468,6 +469,7 @@ ${this.createMenuSection('📝', 'INFORMAÇÕES PESSOAIS')}
 
 ${this.createMenuSection('🎮', 'ESTATÍSTICAS DE JOGO')}
 *Nível:* ${level}
+*🏆 Patente:* ${patente}
 *Experiência (XP):* ${xp}
 *Próximo nível:* ${nextLevelXp}
 *Progresso:* ${'█'.repeat(Math.floor(progressPct / 10))}${'░'.repeat(10 - Math.floor(progressPct / 10))} ${progressPct}%
