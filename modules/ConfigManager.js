@@ -19,7 +19,7 @@ class ConfigManager {
 
     // ═══ PORTAS E URLS ═══
     this.PORT = parseInt(process.env.PORT || process.env.HF_PORT || 3000);
-    this.API_URL = process.env.API_URL || process.env.HF_API_URL || 'https://akra35567-akira-index.hf.space/api/akira';
+    this.API_URL = process.env.API_URL || process.env.HF_API_URL || 'https://akra35567-akira-index.hf.space/api';
     this.API_TIMEOUT = parseInt(process.env.API_TIMEOUT || 120000);
     this.API_RETRY_ATTEMPTS = parseInt(process.env.API_RETRY_ATTEMPTS || 3);
     this.API_RETRY_DELAY = parseInt(process.env.API_RETRY_DELAY || 1000);
