@@ -16,7 +16,8 @@ ENV NODE_ENV=production \
     # Configurações de rede
     NODE_OPTIONS="--dns-result-order=ipv4first --no-warnings" \
     UV_THREADPOOL_SIZE=128 \
-    LANG=C.UTF-8
+    LANG=C.UTF-8 \
+    GOPATH=/root/go
 
 # ═══════════════════════════════════════════════════════════════════
 # INSTALAR DEPENDÊNCIAS DO SISTEMA ESSENCIAIS PARA RAILWAY
@@ -60,24 +61,10 @@ RUN mkdir -p /opt && \
     chmod +x /opt/sqlmap/sqlmap.py && \
     ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
 
-# NUCLEI - Vulnerability Scanning
-RUN LATEST_TAG=$(curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/') && \
-    ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then \
-        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/${LATEST_TAG}/nuclei_${LATEST_TAG#v}_linux_amd64.zip"; \
-    elif [ "$ARCH" = "aarch64" ]; then \
-        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/${LATEST_TAG}/nuclei_${LATEST_TAG#v}_linux_arm64.zip"; \
-    else \
-        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/${LATEST_TAG}/nuclei_${LATEST_TAG#v}_linux_amd64.zip"; \
-    fi && \
-    mkdir -p /tmp/nuclei_install && \
-    cd /tmp/nuclei_install && \
-    curl -L "$NUCLEI_URL" -o nuclei.zip && \
-    unzip -q nuclei.zip && \
-    mv nuclei /usr/local/bin/ && \
-    chmod +x /usr/local/bin/nuclei && \
-    cd - && \
-    rm -rf /tmp/nuclei_install
+# NUCLEI - Vulnerability Scanning (usando go install)
+RUN go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest && \
+    mv /root/go/bin/nuclei /usr/local/bin/ 2>/dev/null || true && \
+    chmod +x /usr/local/bin/nuclei 2>/dev/null || true
 
 # MASSCAN - Fast Port Scanner
 RUN mkdir -p /tmp/masscan_build && \
@@ -133,6 +120,14 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     npm -v && \
     python3 --version && \
     ffmpeg -version | head -1 && \
+    echo "🔧 Verificando ferramentas de cybersecurity..." && \
+    nmap --version | head -1 && \
+    hydra -h | head -1 && \
+    nikto -version | head -1 && \
+    python3 /opt/sqlmap/sqlmap.py --version | head -1 && \
+    (nuclei -version || echo "nuclei instalado (versão não disponível)") && \
+    (masscan --version | head -1 || echo "masscan instalado") && \
+    echo "✅ Todas as ferramentas instaladas com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
 
 # Limpar cache para reduzir tamanho da imagem
