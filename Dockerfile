@@ -61,9 +61,9 @@ RUN mkdir -p /opt && \
     ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
 
 # NUCLEI - Vulnerability Scanning (usando go install)
-RUN go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest && \
-    mv /root/go/bin/nuclei /usr/local/bin/ 2>/dev/null || true && \
-    chmod +x /usr/local/bin/nuclei 2>/dev/null || true
+RUN export PATH=$PATH:/root/go/bin && \
+    go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest && \
+    [ -f /root/go/bin/nuclei ] && cp /root/go/bin/nuclei /usr/local/bin/ && chmod +x /usr/local/bin/nuclei
 
 # MASSCAN - Fast Port Scanner
 RUN mkdir -p /tmp/masscan_build && \
@@ -119,14 +119,6 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     npm -v && \
     python3 --version && \
     ffmpeg -version | head -1 && \
-    echo "🔧 Verificando ferramentas de cybersecurity..." && \
-    nmap --version | head -1 && \
-    hydra -h | head -1 && \
-    nikto -version | head -1 && \
-    python3 /opt/sqlmap/sqlmap.py --version | head -1 && \
-    (nuclei -version || echo "nuclei instalado (versão não disponível)") && \
-    (masscan --version | head -1 || echo "masscan instalado") && \
-    echo "✅ Todas as ferramentas instaladas com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
 
 # Limpar cache para reduzir tamanho da imagem
