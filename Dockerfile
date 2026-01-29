@@ -46,7 +46,8 @@ RUN apk add --no-cache \
     hydra \
     nikto \
     unzip \
-    perl
+    perl \
+    go
 
 # ═══════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
@@ -59,24 +60,10 @@ RUN mkdir -p /opt && \
     chmod +x /opt/sqlmap/sqlmap.py && \
     ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
 
-# NUCLEI - Vulnerability Scanning (SKIP - causing build issues)
-# RUN ARCH=$(uname -m) && \
-#     if [ "$ARCH" = "x86_64" ]; then \
-#         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.1/nuclei_3.3.1_linux_amd64.tar.gz"; \
-#     elif [ "$ARCH" = "aarch64" ]; then \
-#         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.1/nuclei_3.3.1_linux_arm64.tar.gz"; \
-#     else \
-#         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.1/nuclei_3.3.1_linux_amd64.tar.gz"; \
-#     fi && \
-#     mkdir -p /tmp/nuclei_install && \
-#     cd /tmp/nuclei_install && \
-#     curl -L "$NUCLEI_URL" -o nuclei.tar.gz && \
-#     tar -xzf nuclei.tar.gz && \
-#     find . -name "nuclei" -type f -executable -exec mv {} /usr/local/bin/ \; && \
-#     chmod +x /usr/local/bin/nuclei && \
-#     cd - && \
-#     rm -rf /tmp/nuclei_install
-RUN echo "⚠️  Nuclei skipped - download URL issues in Railway environment"
+# NUCLEI - Vulnerability Scanning (usando go install)
+RUN go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest && \
+    mv /root/go/bin/nuclei /usr/local/bin/ 2>/dev/null || true && \
+    chmod +x /usr/local/bin/nuclei 2>/dev/null || true
 
 # MASSCAN - Fast Port Scanner
 RUN mkdir -p /tmp/masscan_build && \
