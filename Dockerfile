@@ -60,10 +60,24 @@ RUN mkdir -p /opt && \
     chmod +x /opt/sqlmap/sqlmap.py && \
     ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
 
-# NUCLEI - Vulnerability Scanning (usando go install)
-RUN export PATH=$PATH:/root/go/bin && \
-    go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest && \
-    [ -f /root/go/bin/nuclei ] && cp /root/go/bin/nuclei /usr/local/bin/ && chmod +x /usr/local/bin/nuclei
+# NUCLEI - Vulnerability Scanning
+RUN LATEST_TAG=$(curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/') && \
+    ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/${LATEST_TAG}/nuclei_${LATEST_TAG#v}_linux_amd64.zip"; \
+    elif [ "$ARCH" = "aarch64" ]; then \
+        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/${LATEST_TAG}/nuclei_${LATEST_TAG#v}_linux_arm64.zip"; \
+    else \
+        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/${LATEST_TAG}/nuclei_${LATEST_TAG#v}_linux_amd64.zip"; \
+    fi && \
+    mkdir -p /tmp/nuclei_install && \
+    cd /tmp/nuclei_install && \
+    curl -L "$NUCLEI_URL" -o nuclei.zip && \
+    unzip -q nuclei.zip && \
+    mv nuclei /usr/local/bin/ && \
+    chmod +x /usr/local/bin/nuclei && \
+    cd - && \
+    rm -rf /tmp/nuclei_install
 
 # MASSCAN - Fast Port Scanner
 RUN mkdir -p /tmp/masscan_build && \
