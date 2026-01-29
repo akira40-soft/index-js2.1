@@ -629,24 +629,42 @@ class BotCore {
         }
       }
 
-      // Award group XP (auto XP system)
+      // Award group XP (auto XP system) - DESATIVADO POR PADRÃO
+      // O dono do grupo deve ativar com #level on
       try {
-        if (ehGrupo && this.config.FEATURE_LEVELING) {
-          const uid = m.key.participant || m.key.remoteJid;
-          const xpAmount = Math.floor(Math.random() * (25 - 15 + 1)) + 15;
-          const { rec, leveled } = this.levelSystem.awardXp(m.key.remoteJid, uid, xpAmount);
-          if (leveled) {
-            const patente = typeof this.getPatente === 'function' ? this.getPatente(rec.level) : `Nível ${rec.level}`;
-            await this.sock.sendMessage(m.key.remoteJid, { 
-              text: `🎉 @${uid.split('@')[0]} subiu para o nível ${rec.level}! 🏅 ${patente}`, 
-              contextInfo: { mentionedJid: [uid] } 
-            });
-            if (rec.level >= this.levelSystem.maxLevel) {
-              const maxRes = await this.levelSystem.registerMaxLevelUser(m.key.remoteJid, uid, m.pushName || uid, this.sock);
-              if (maxRes && maxRes.promoted) {
-                await this.sock.sendMessage(m.key.remoteJid, { 
-                  text: `🎊 ${m.pushName || uid} foi promovido automaticamente a ADM!` 
-                });
+        if (ehGrupo) {
+          const gid = m.key.remoteJid;
+          const togglesPath = path.join(this.config.DATABASE_FOLDER, 'group_settings.json');
+          let toggles = {};
+          
+          if (fs.existsSync(togglesPath)) {
+            try {
+              toggles = JSON.parse(fs.readFileSync(togglesPath, 'utf8') || '{}');
+            } catch (e) {
+              toggles = {};
+            }
+          }
+          
+          // Verifica se leveling está ativado para este grupo
+          const isLevelingEnabled = toggles[gid] && toggles[gid].levelingEnabled === true;
+          
+          if (isLevelingEnabled) {
+            const uid = m.key.participant || m.key.remoteJid;
+            const xpAmount = Math.floor(Math.random() * (25 - 15 + 1)) + 15;
+            const { rec, leveled } = this.levelSystem.awardXp(m.key.remoteJid, uid, xpAmount);
+            if (leveled) {
+              const patente = this.levelSystem.getPatente(rec.level);
+              await this.sock.sendMessage(m.key.remoteJid, {
+                text: `🎉 @${uid.split('@')[0]} você foi elevado ao nível ${rec.level} e a ${patente}`,
+                contextInfo: { mentionedJid: [uid] }
+              });
+              if (rec.level >= this.levelSystem.maxLevel) {
+                const maxRes = await this.levelSystem.registerMaxLevelUser(m.key.remoteJid, uid, m.pushName || uid, this.sock);
+                if (maxRes && maxRes.promoted) {
+                  await this.sock.sendMessage(m.key.remoteJid, { 
+                    text: `🎊 ${m.pushName || uid} foi promovido automaticamente a ADM!` 
+                  });
+                }
               }
             }
           }
@@ -661,6 +679,13 @@ class BotCore {
       // Processa áudio
       if (temAudio) {
         await this.handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo);
+        return;
+      }
+
+      // Processa imagem
+      const temImagem = this.messageProcessor.hasImage(m);
+      if (temImagem) {
+        await this.handleImageMessage(m, nome, numeroReal, replyInfo, ehGrupo);
         return;
       }
 
@@ -740,15 +765,22 @@ class BotCore {
       // Verifica se deve responder
       let deveResponder = false;
 
+      // ═══ DETECÇÃO DE ATIVAÇÃO POR PALAVRA-CHAVE "AKIRA" ═══
+      const textoLower = texto.toLowerCase();
+      const botNameLower = (this.config.BOT_NAME || 'belmira').toLowerCase();
+      const hasBotName = textoLower.includes(botNameLower);
+
       if (foiAudio) {
         // Audio sempre responde em PV
         if (!ehGrupo) {
           deveResponder = true;
         } else {
-          // Em grupos, responde se for reply ao bot ou menção
+          // Em grupos, responde se for reply ao bot, menção, ou palavra "akira"
           if (replyInfo && replyInfo.ehRespostaAoBot) {
             deveResponder = true;
           } else if (this.messageProcessor.isBotMentioned(m)) {
+            deveResponder = true;
+          } else if (hasBotName) {
             deveResponder = true;
           }
         }
@@ -757,11 +789,14 @@ class BotCore {
         if (replyInfo && replyInfo.ehRespostaAoBot) {
           deveResponder = true;
         } else if (!ehGrupo) {
-          // Em PV sempre responde
-          deveResponder = true;
+          // Em PV: NÃO responde se não for reply ao bot
+          // O usuário deve responder em reply para Akira responder em reply no PV
+          deveResponder = false;
         } else {
-          // Em grupo, responde se mencionado
+          // Em grupo, responde se mencionado ou se contém palavra "akira"
           if (this.messageProcessor.isBotMentioned(m)) {
+            deveResponder = true;
+          } else if (hasBotName) {
             deveResponder = true;
           }
         }

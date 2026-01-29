@@ -106,8 +106,31 @@ class LevelSystem {
   }
 
   // Auto-ADM promotion window logic
+  // REGRA: Cada usuário tem APENAS uma chance em 3 dias para chegar ao nível 60
+  // Se falhar, NUNCA mais poderá tentar novamente para se tornar ADM
   registerMaxLevelUser(gid, uid, userName, sock) {
     try {
+      const failedPath = path.join(this.config.DATABASE_FOLDER, 'datauser', 'level_adm_failed.json');
+      
+      // ═══ VERIFICA SE JÁ FALHOU ANTES ═══
+      // Se falhou uma vez, nunca mais pode tentar
+      try {
+        if (fs.existsSync(failedPath)) {
+          const failedData = JSON.parse(fs.readFileSync(failedPath, 'utf8') || '{}');
+          if (failedData[uid] && failedData[uid].failed === true) {
+            const failedDate = new Date(failedData[uid].failedAt).toLocaleDateString('pt-BR');
+            return { 
+              success: false, 
+              message: `❌ Você já teve sua chance e falhou em ${failedDate}.\n\n⚠️ Não há mais tentativas disponíveis para se tornar ADM via level.`,
+              permanentFailure: true
+            };
+          }
+        }
+      } catch (e) {
+        // Continua mesmo se falhar a leitura
+      }
+
+      // ═══ INICIA JANELA DE 3 DIAS ═══
       if (!this.promos[gid]) {
         this.promos[gid] = {
           windowStart: Date.now(),
@@ -119,37 +142,111 @@ class LevelSystem {
       }
 
       const window = this.promos[gid];
+      
+      // ═══ SE JANELA EXPIROU, REGISTRA FALHA PERMANENTE ═══
       if (Date.now() > window.windowEnd) {
-        this.promos[gid] = { windowStart: Date.now(), windowEnd: Date.now() + (this.windowDays * 24 * 60 * 60 * 1000), maxLevelUsers: [], promotedToADM: [], failedUsers: [] };
+        // Verificar quem estava na janela e registrar falhas permanentes
+        const failedUsersInWindow = window.maxLevelUsers || [];
+        
+        // Salvar falhas permanentes para usuários que não foram promovidos
+        let failedData = {};
+        try {
+          if (fs.existsSync(failedPath)) {
+            failedData = JSON.parse(fs.readFileSync(failedPath, 'utf8') || '{}');
+          }
+        } catch (e) {
+          failedData = {};
+        }
+        
+        // Registrar falha permanente para todos que estavam na janela mas não foram promovidos
+        for (const user of failedUsersInWindow) {
+          const wasPromoted = window.promotedToADM && window.promotedToADM.includes(user.uid);
+          if (!wasPromoted) {
+            failedData[user.uid] = {
+              failed: true,
+              failedAt: Date.now(),
+              groupId: gid,
+              levelReached: this.maxLevel,
+              reason: 'Janela de 3 dias expirada sem promoção a ADM'
+            };
+          }
+        }
+        
+        // Salvar arquivo de falhas
+        try {
+          const failedDir = path.dirname(failedPath);
+          if (!fs.existsSync(failedDir)) {
+            fs.mkdirSync(failedDir, { recursive: true });
+          }
+          fs.writeFileSync(failedPath, JSON.stringify(failedData, null, 2));
+        } catch (e) {
+          this.logger.warn('LevelSystem: erro ao salvar falhas:', e.message);
+        }
+        
+        // Resetar janela
+        this.promos[gid] = { 
+          windowStart: Date.now(), 
+          windowEnd: Date.now() + (this.windowDays * 24 * 60 * 60 * 1000), 
+          maxLevelUsers: [], 
+          promotedToADM: [], 
+          failedUsers: [] 
+        };
       }
 
-      if (window.failedUsers.includes(uid)) return { success: false, message: 'Você já falhou nesta janela.' };
-      if (window.promotedToADM.includes(uid)) return { success: false, message: 'Já promovido nesta janela.' };
+      // ═══ VERIFICAÇÕES ═══
+      if (window.promotedToADM.includes(uid)) {
+        return { success: false, message: '❌ Você já foi promovido a ADM nesta janela.' };
+      }
 
-      if (!window.maxLevelUsers.find(u => u.uid === uid)) window.maxLevelUsers.push({ uid, userName, timestamp: Date.now(), position: window.maxLevelUsers.length + 1 });
+      // Adiciona usuário à lista de max level users
+      if (!window.maxLevelUsers.find(u => u.uid === uid)) {
+        window.maxLevelUsers.push({ 
+          uid, 
+          userName, 
+          timestamp: Date.now(), 
+          position: window.maxLevelUsers.length + 1 
+        });
+      }
 
       const cfg = this._load(path.join(this.config.DATABASE_FOLDER, 'datauser', 'level_adm_config.json'), {});
       const auto = cfg[gid]?.autoADMEnabled === true;
 
       this._save(this.promoPath, this.promos);
 
+      // ═══ PROMOÇÃO A ADM ═══
       if (auto && window.maxLevelUsers.length <= this.topForAdm) {
         const position = window.maxLevelUsers.findIndex(u => u.uid === uid) + 1;
         if (position <= this.topForAdm) {
           try {
             window.promotedToADM.push(uid);
             this._save(this.promoPath, this.promos);
+            
             if (sock && typeof sock.groupUpdateDescription === 'function') {
               sock.groupUpdateDescription(gid, `Akira Auto-ADM: ${userName} (Nível ${this.maxLevel} - Top ${position}/${this.topForAdm})`).catch(()=>{});
             }
-            return { success: true, promoted: true, position, message: `Promovido a ADM (Top ${position})` };
+            
+            return { 
+              success: true, 
+              promoted: true, 
+              position, 
+              message: `🎉 Parabéns! Você foi promovido a ADM! (Top ${position}/${this.topForAdm})` 
+            };
           } catch (e) {
-            return { success: false, message: 'Erro ao promover ADM' };
+            return { success: false, message: '❌ Erro ao promover ADM' };
           }
         }
       }
 
-      return { success: true, promoted: false, message: `Max level registrado (${window.maxLevelUsers.length}/${this.topForAdm})` };
+      // ═══ STATUS ATUAL ═══
+      const daysRemaining = Math.ceil((window.windowEnd - Date.now()) / (24 * 60 * 60 * 1000));
+      return { 
+        success: true, 
+        promoted: false, 
+        message: `📊 Max level registrado!\n\n🎯 Posição: ${window.maxLevelUsers.length}/${this.topForAdm}\n⏰ Tempo restante: ${daysRemaining} dias\n\n⚠️ Atenção: Esta é sua ÚNICA chance em 3 dias para se tornar ADM!\nSe a janela expirar sem você estar no Top ${this.topForAdm}, NÃO haverá mais tentativas.`,
+        daysRemaining,
+        position: window.maxLevelUsers.length,
+        maxPositions: this.topForAdm
+      };
     } catch (e) {
       return { success: false, message: e.message };
     }

@@ -114,8 +114,10 @@ class MediaProcessor {
 
   /**
    * Adiciona metadados EXIF ao sticker
+   * Pack Name = nome do usuário que solicitou
+   * Author = Akira-Bot
    */
-  async addStickerMetadata(webpBuffer, packName = 'akira-bot', author = 'Akira Bot') {
+  async addStickerMetadata(webpBuffer, packName = 'akira-bot', author = 'Akira-Bot') {
     try {
       if (!Webpmux) {
         this.logger.debug('⚠️  Webpmux não disponível, retornando buffer sem EXIF');
@@ -128,7 +130,7 @@ class MediaProcessor {
       const json = {
         'sticker-pack-id': crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2, 10)),
         'sticker-pack-name': String(packName || 'akira-bot').slice(0, 30),
-        'sticker-pack-publisher': String(author || 'Akira Bot').slice(0, 30),
+        'sticker-pack-publisher': String(author || 'Akira-Bot').slice(0, 30),
         'emojis': ['']
       };
 
@@ -155,6 +157,8 @@ class MediaProcessor {
 
   /**
    * Cria sticker de imagem
+   * Pack Name = nome do usuário
+   * Author = Akira-Bot
    */
   async createStickerFromImage(imageBuffer, metadata = {}) {
     try {
@@ -165,9 +169,9 @@ class MediaProcessor {
 
       fs.writeFileSync(inputPath, imageBuffer);
 
-      // Pack name = akira-bot, Author = nome do usuário que requisitou
-      const { userName = 'User', author = 'akira-bot' } = metadata;
-      const packName = `akira-bot-${userName.split(' ')[0].toLowerCase()}`;
+      // Pack name = apenas nome do usuário, Author = Akira-Bot
+      const { userName = 'User' } = metadata;
+      const packName = userName.split(' ')[0].toLowerCase(); // Apenas nome
 
       await new Promise((resolve, reject) => {
         ffmpeg(inputPath)
@@ -188,8 +192,8 @@ class MediaProcessor {
 
       const stickerBuffer = fs.readFileSync(outputPath);
 
-      // Adiciona metadados EXIF
-      const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, author);
+      // Adiciona metadados EXIF: packName = nome usuário, author = Akira-Bot
+      const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, 'Akira-Bot');
 
       await Promise.all([
         this.cleanupFile(inputPath),
@@ -248,9 +252,9 @@ class MediaProcessor {
         this.logger.debug('⚠️ Não foi possível obter duração do vídeo antes da conversão:', probeErr.message);
       }
 
-      // Pack name = akira-bot, Author = nome do usuário que requisitou
-      const { userName = 'User', author = 'akira-bot' } = metadata;
-      const packName = `akira-bot-${userName.split(' ')[0].toLowerCase()}`;
+      // Pack name = apenas nome do usuário, Author = Akira-Bot
+      const { userName = 'User' } = metadata;
+      const packName = userName.split(' ')[0].toLowerCase(); // Apenas nome
 
       await new Promise((resolve, reject) => {
         ffmpeg(inputPath)
@@ -265,7 +269,7 @@ class MediaProcessor {
             '-an',
             `-t`, String(maxDuration),
             '-metadata', `title=${packName}`,
-            '-metadata', `artist=${author}`,
+            '-metadata', `artist=Akira-Bot`,
             '-metadata', 'comment=Criado por Akira Bot',
             '-y'
           ])
@@ -288,8 +292,8 @@ class MediaProcessor {
         };
       }
 
-      // Adiciona metadados EXIF ao sticker animado
-      const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, author);
+      // Adiciona metadados EXIF ao sticker animado: packName = nome usuário, author = Akira-Bot
+      const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, 'Akira-Bot');
 
       await Promise.all([
         this.cleanupFile(inputPath),
@@ -570,6 +574,34 @@ class MediaProcessor {
     }
   }
 
+/**
+   * Extrai Video ID do YouTube de várias formas
+   */
+  extractYouTubeVideoId(url) {
+    // Formato padrão: https://www.youtube.com/watch?v=VIDEO_ID
+    let match = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+
+    // Formato curto: https://youtu.be/VIDEO_ID
+    match = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+
+    // Formato embed: https://www.youtube.com/embed/VIDEO_ID
+    match = url.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+
+    // Formato shorts: https://www.youtube.com/shorts/VIDEO_ID
+    match = url.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+
+    // Se a URL já é apenas o ID (11 caracteres)
+    if (url.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(url)) {
+      return url;
+    }
+
+    return null;
+  }
+
   /**
    * Download de áudio do YouTube - ROBUSTO COM FALLBACK
    */
@@ -577,17 +609,11 @@ class MediaProcessor {
     try {
       this.logger.info('🎵 Iniciando download de áudio do YouTube...');
 
-      let videoId = '';
-      if (url.includes('youtube.com/watch?v=')) {
-        videoId = url.split('v=')[1]?.split('&')[0];
-      } else if (url.includes('youtu.be/')) {
-        videoId = url.split('youtu.be/')[1]?.split('?')[0];
-      } else {
-        videoId = url;
-      }
-
-      if (!videoId || videoId.length !== 11) {
-        return { sucesso: false, error: 'URL do YouTube inválida' };
+      // Extrair video ID
+      let videoId = this.extractYouTubeVideoId(url);
+      
+      if (!videoId) {
+        return { sucesso: false, error: 'URL do YouTube inválida. Formatos suportados:\n- youtube.com/watch?v=ID\n- youtu.be/ID\n- youtube.com/shorts/ID\n- youtube.com/embed/ID' };
       }
 
       this.logger.info(`📹 Video ID: ${videoId}`);
@@ -596,25 +622,91 @@ class MediaProcessor {
       const ytdlpTool = this.findYtDlp();
       if (ytdlpTool) {
         this.logger.info('🔧 Tentando yt-dlp (método 1 - mais robusto)...');
-        const result = await this._downloadWithYtDlp(url, videoId, ytdlpTool);
-        if (result.sucesso) return result;
+        try {
+          const result = await this._downloadWithYtDlp(url, videoId, ytdlpTool);
+          if (result.sucesso) {
+            // Buscar título real
+            const titleResult = await this._getYouTubeTitle(url, ytdlpTool);
+            if (titleResult.sucesso) {
+              result.titulo = titleResult.titulo;
+            }
+            return result;
+          }
+        } catch (ytErr) {
+          this.logger.warn('⚠️ yt-dlp falhou:', ytErr.message);
+        }
         this.logger.info('⚠️  yt-dlp falhou, tentando ytdl-core...');
       }
 
       // Fallback para ytdl-core
       if (ytdl) {
         this.logger.info('🔧 Tentando ytdl-core (método 2 - fallback)...');
-        return await this._downloadWithYtdlCore(url, videoId);
+        try {
+          return await this._downloadWithYtdlCore(url, videoId);
+        } catch (ytErr) {
+          this.logger.warn('⚠️ ytdl-core falhou:', ytErr.message);
+        }
+      }
+
+      // Fallback para axios direto (método 3)
+      this.logger.info('🔧 Tentando método direto com axios (método 3)...');
+      try {
+        return await this._downloadWithAxios(url, videoId);
+      } catch (axiosErr) {
+        this.logger.warn('⚠️ Método direto falhou:', axiosErr.message);
       }
 
       return {
         sucesso: false,
-        error: 'Nenhum método de download disponível. Instale yt-dlp ou @distube/ytdl-core.'
+        error: 'Nenhum método de download funcionou. Verifique:\n1. yt-dlp está instalado: which yt-dlp\n2. @distube/ytdl-core está no package.json\n3. A URL do vídeo é válida'
       };
 
     } catch (error) {
-      this.logger.error('❌ Erro geral:', error.message);
+      this.logger.error('❌ Erro geral no download:', error.message);
       return { sucesso: false, error: error.message };
+    }
+  }
+
+  /**
+   * Obtém título do vídeo usando yt-dlp
+   */
+  async _getYouTubeTitle(url, tool) {
+    try {
+      const command = process.platform === 'win32'
+        ? `"${tool.cmd}" --get-title --no-playlist "${url}"`
+        : `${tool.cmd} --get-title --no-playlist "${url}"`;
+
+      const { execSync } = require('child_process');
+      const title = execSync(command, { encoding: 'utf8', timeout: 30000 }).trim();
+      
+      return { sucesso: true, titulo: title || 'Música do YouTube' };
+    } catch (e) {
+      return { sucesso: false, error: e.message };
+    }
+  }
+
+  /**
+   * Download direto via axios (fallback)
+   */
+  async _downloadWithAxios(url, videoId) {
+    try {
+      // Usar API pública do YouTube para obter info
+      const apiUrl = `https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`;
+      const apiResponse = await axios.get(apiUrl, { timeout: 10000 });
+      
+      const titulo = apiResponse.data?.title || 'Música do YouTube';
+
+      // Tentar obter URL de áudio direto (muitas vezes não funciona, mas worth a try)
+      // Este é um fallback limitado - yt-dlp é sempre preferível
+      
+      this.logger.info('⚠️ Método direto limitado - considere instalar yt-dlp para melhor qualidade');
+      
+      return {
+        sucesso: false,
+        error: `Método direto não suporta download. Instale yt-dlp:\napt install yt-dlp\nou\nnpm install -g yt-dlp`
+      };
+    } catch (e) {
+      return { sucesso: false, error: e.message };
     }
   }
 

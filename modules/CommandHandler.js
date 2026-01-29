@@ -6,6 +6,13 @@ const CybersecurityToolkit = require('./CybersecurityToolkit');
 const OSINTFramework = require('./OSINTFramework');
 const SubscriptionManager = require('./SubscriptionManager');
 const SecurityLogger = require('./SecurityLogger');
+
+// Novos módulos para comandos adicionais
+const GroupManagement = require('./GroupManagement');
+const UserProfile = require('./UserProfile');
+const BotProfile = require('./BotProfile');
+const ImageEffects = require('./ImageEffects');
+
 const fs = require('fs');
 const path = require('path');
 
@@ -51,6 +58,15 @@ class CommandHandler {
     this.securityLogger = new SecurityLogger(this.config);
     console.log('✅ Ferramentas ENTERPRISE inicializadas: CybersecurityToolkit, OSINTFramework, SubscriptionManager, SecurityLogger');
     
+    // Inicializa novos módulos
+    if (sock) {
+      this.groupManagement = new GroupManagement(sock, this.config);
+      this.userProfile = new UserProfile(sock, this.config);
+      this.botProfile = new BotProfile(sock, this.config);
+      this.imageEffects = new ImageEffects(this.config);
+      console.log('✅ Novos módulos inicializados: GroupManagement, UserProfile, BotProfile, ImageEffects');
+    }
+    
     // Inicializa PresenceSimulator se socket for fornecido
     if (sock) {
       presenceSimulator = new PresenceSimulator(sock);
@@ -69,6 +85,15 @@ class CommandHandler {
       this.stickerHandler = new StickerViewOnceHandler(sock, this.config);
       this.mediaProcessor = new MediaProcessor();
       console.log('✅ Handlers de mídia inicializados via setSocket()');
+    }
+    
+    // Inicializa novos módulos se ainda não foram
+    if (!this.groupManagement) {
+      this.groupManagement = new GroupManagement(sock, this.config);
+      this.userProfile = new UserProfile(sock, this.config);
+      this.botProfile = new BotProfile(sock, this.config);
+      this.imageEffects = new ImageEffects(this.config);
+      console.log('✅ Novos módulos inicializados via setSocket()');
     }
     
     if (!presenceSimulator && sock) {
@@ -343,6 +368,29 @@ ${this.createMenuSection('🛡️', 'MODERAÇÃO E PROTEÇÃO')}
 *#level off* - Desativar sistema de níveis
 *#apagar* - Apagar mensagem (responda a ela)
 
+${this.createMenuSection('📸', 'MODERAÇÃO DE GRUPO (Dono)')}
+*#fotogrupo* - Ver/alterar foto do grupo
+*#nomegrupo <nome>* - Alterar nome do grupo
+*#descricaogrupo <desc>* - Alterar descrição
+*#fechargrupo* - Fechar grupo (só admins enviam)
+*#abrirgrupo* - Abrir grupo (todos enviam)
+*#fecharprog HH:MM* - Fechamento programado
+*#abrirprog HH:MM* - Abertura programada
+*#verprog* - Ver programações ativas
+*#cancelarprog* - Cancelar programações
+*#statusgrupo* - Ver status do grupo
+
+${this.createMenuSection('👤', 'DADOS DE USUÁRIO')}
+*#dadosusuario @menção* - Ver dados do usuário
+*#fotoperfil @menção* - Ver foto de perfil
+*#biografia @menção* - Ver bio/status do usuário
+
+${this.createMenuSection('🤖', 'CONFIGURAÇÕES DA AKIRA (Dono)')}
+*#setbotpic* - Alterar foto da Akira
+*#setbotname <nome>* - Alterar nome da Akira
+*#setbotbio <bio>* - Alterar bio da Akira
+*#verbotinfo* - Ver informações da Akira
+
 ${this.createMenuSection('💬', 'CONVERSA NORMAL')}
 Apenas mencione "Akira" em grupos ou responda minhas mensagens
 Em PV, converse naturalmente - sempre online!
@@ -581,6 +629,7 @@ Ganhe XP conversando naturalmente com o bot.`
 
           const sub = (args[0] || '').toLowerCase();
 
+          // ═══ TODOS OS SUBCOMANDOS (on/off/status) SÃO DONO-ONLY ═══
           if (['on', 'off', 'status'].includes(sub)) {
             return await ownerOnly(async () => {
               // Toggle leveling system
@@ -2384,6 +2433,537 @@ _AKIRA BOT v21 - Enterprise Grade Pentesting Suite_`;
           }, { quoted: m });
           return true;
         }
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // 🔧 NOVOS COMANDOS DE MODERAÇÃO DE GRUPO
+      // ═══════════════════════════════════════════════════════════════
+
+      // #FOTOGRUPO - Ver/alterar foto do grupo
+      if (cmd === 'fotogrupo' || cmd === 'grouppic' || cmd === 'gpic') {
+        try {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          return await ownerOnly(async () => {
+            // Se tem imagem na resposta, definir como foto do grupo
+            if (m.message && m.message.imageMessage) {
+              const imageBuffer = await this.mediaProcessor.downloadMedia(m.message.imageMessage, 'image');
+              if (!imageBuffer) {
+                await sock.sendMessage(m.key.remoteJid, { 
+                  text: '❌ Erro ao baixar imagem.' 
+                }, { quoted: m });
+                return true;
+              }
+
+              const result = await this.groupManagement.setGroupPhoto(m.key.remoteJid, imageBuffer);
+              await sock.sendMessage(m.key.remoteJid, { 
+                text: result.message 
+              }, { quoted: m });
+              return true;
+            }
+
+            // Caso contrário, apenas ver foto atual
+            const photoResult = await this.groupManagement.getGroupPhoto(m.key.remoteJid);
+            
+            let response = `📸 *FOTO DO GRUPO*\n\n`;
+            if (photoResult.hasPhoto) {
+              response += `✅ O grupo tem uma foto de perfil configurada.\n\n`;
+              response += `💡 Para alterar, responda uma imagem com #fotogrupo`;
+            } else {
+              response += `❌ Este grupo não tem foto de perfil configurada.\n\n`;
+              response += `💡 Para adicionar, responda uma imagem com #fotogrupo`;
+            }
+
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: response 
+            }, { quoted: m });
+            return true;
+          });
+        } catch (e) {
+          console.error('Erro em fotogrupo:', e);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: '❌ Erro ao processar comando.' 
+          }, { quoted: m });
+          return true;
+        }
+      }
+
+      // #NOMEGRUPO - Alterar nome do grupo
+      if (cmd === 'nomegrupo' || cmd === 'gname' || cmd === 'setgname' || cmd === 'mudargrupo') {
+        return await ownerOnly(async () => {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          if (!full || full.trim().length === 0) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '📝 *COMANDO #nomegrupo*\n\n' +
+                    '✅ Uso: #nomegrupo <novo nome>\n' +
+                    '✅ Exemplo: #nomegrupo Akira Bot Angola\n\n' +
+                    '💡 O bot deve ser admin para alterar o nome.'
+            }, { quoted: m });
+            return true;
+          }
+
+          const result = await this.groupManagement.setGroupName(m.key.remoteJid, full);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #DESCRICAOGRUPO - Alterar descrição do grupo
+      if (cmd === 'descricaogrupo' || cmd === 'gdesc' || cmd === 'setgdesc' || cmd === 'descrição') {
+        return await ownerOnly(async () => {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          if (!full || full.trim().length === 0) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '📝 *COMANDO #descricaogrupo*\n\n' +
+                    '✅ Uso: #descricaogrupo <nova descrição>\n' +
+                    '✅ Exemplo: #descricaogrupo Grupo oficial do Akira Bot\n\n' +
+                    '💡 O bot deve ser admin para alterar a descrição.'
+            }, { quoted: m });
+            return true;
+          }
+
+          const result = await this.groupManagement.setGroupDescription(m.key.remoteJid, full);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #FECHARGRUPO - Fechar grupo (apenas admins enviam)
+      if (cmd === 'fechargrupo' || cmd === 'close' || cmd === 'lock') {
+        return await ownerOnly(async () => {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          const result = await this.groupManagement.closeGroup(m.key.remoteJid);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #ABRIRGRUPO - Abrir grupo (todos enviam)
+      if (cmd === 'abrirgrupo' || cmd === 'open' || cmd === 'unlock') {
+        return await ownerOnly(async () => {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          const result = await this.groupManagement.openGroup(m.key.remoteJid);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #FECHARPROG - Fechamento programado
+      if (cmd === 'fecharprog' || cmd === 'closesch' || cmd === 'schedclose') {
+        return await ownerOnly(async () => {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          if (!full || !full.match(/^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/)) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '⏰ *COMANDO #fecharprog*\n\n' +
+                    '✅ Uso: #fecharprog HH:MM [motivo]\n' +
+                    '✅ Exemplo: #fecharprog 22:30 Motivo: Horário de dormir\n\n' +
+                    '💡 O bot deve ser admin para executar a ação.'
+            }, { quoted: m });
+            return true;
+          }
+
+          const [timeStr, ...reasonParts] = full.split(' ');
+          const reason = reasonParts.join(' ');
+          const result = await this.groupManagement.scheduleClose(m.key.remoteJid, timeStr, reason);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #ABRIRPROG - Abertura programada
+      if (cmd === 'abrirprog' || cmd === 'opensched' || cmd === 'schedopen') {
+        return await ownerOnly(async () => {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          if (!full || !full.match(/^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/)) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '⏰ *COMANDO #abrirprog*\n\n' +
+                    '✅ Uso: #abrirprog HH:MM [motivo]\n' +
+                    '✅ Exemplo: #abrirprog 08:00 Motivo: Acordar\n\n' +
+                    '💡 O bot deve ser admin para executar a ação.'
+            }, { quoted: m });
+            return true;
+          }
+
+          const [timeStr, ...reasonParts] = full.split(' ');
+          const reason = reasonParts.join(' ');
+          const result = await this.groupManagement.scheduleOpen(m.key.remoteJid, timeStr, reason);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #CANCELARPROG - Cancelar programações
+      if (cmd === 'cancelarprog' || cmd === 'cancelsched' || cmd === 'cancel') {
+        return await ownerOnly(async () => {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          const result = await this.groupManagement.cancelScheduledActions(m.key.remoteJid);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #VERPROG - Ver programações ativas
+      if (cmd === 'verprog' || cmd === 'viewsched' || cmd === 'schedlist') {
+        return await ownerOnly(async () => {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          const result = await this.groupManagement.getScheduledActions(m.key.remoteJid);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #STATUSGRUPO - Ver status completo do grupo
+      if (cmd === 'statusgrupo' || cmd === 'gstatus' || cmd === 'groupstatus') {
+        try {
+          if (!ehGrupo) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Este comando funciona apenas em grupos.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          const status = await this.groupManagement.getGroupStatus(m.key.remoteJid);
+          
+          let response = `📊 *STATUS DO GRUPO*\n\n`;
+          response += `┌─────────────────────────────┐\n`;
+          response += `│ 📝 *Nome:* ${status.subject || 'N/A'}\n`;
+          response += `│ 👥 *Membros:* ${status.size}\n`;
+          response += `│ 🔒 *Estado:* ${status.locked ? '🔒 Fechado' : '🔓 Aberto'}\n`;
+          response += `│ 🤖 *Bot Admin:* ${status.botAdmin ? '✅ Sim' : '❌ Não'}\n`;
+          response += `└─────────────────────────────┘\n\n`;
+
+          if (status.desc) {
+            response += `📝 *Descrição:*\n${status.desc}\n`;
+          } else {
+            response += `📝 *Descrição:* Não definida\n`;
+          }
+
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: response 
+          }, { quoted: m });
+          return true;
+        } catch (e) {
+          console.error('Erro em statusgrupo:', e);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: '❌ Erro ao obter status do grupo.' 
+          }, { quoted: m });
+          return true;
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // 👤 NOVOS COMANDOS DE DADOS DE USUÁRIO
+      // ═══════════════════════════════════════════════════════════════
+
+      // #DADOSUSUARIO - Ver dados do usuário mencionado
+      if (cmd === 'dadosusuario' || cmd === 'userdata' || cmd === 'udata' || cmd === 'infousuario') {
+        try {
+          // Extrair usuário mencionado ou usar sender
+          let targetJid = null;
+          if (m.message && m.message.extendedTextMessage && 
+              m.message.extendedTextMessage.contextInfo && 
+              m.message.extendedTextMessage.contextInfo.mentionedJid &&
+              m.message.extendedTextMessage.contextInfo.mentionedJid.length > 0) {
+            targetJid = m.message.extendedTextMessage.contextInfo.mentionedJid[0];
+          } else if (replyInfo && replyInfo.participantJidCitado) {
+            targetJid = replyInfo.participantJidCitado;
+          } else {
+            targetJid = m.key.participant || m.key.remoteJid;
+          }
+
+          const userInfo = await this.userProfile.getUserInfo(targetJid);
+          const message = this.userProfile.formatUserDataMessage(userInfo);
+          
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: message 
+          }, { quoted: m });
+
+          // Se tem foto, enviar como imagem
+          if (userInfo.hasPhoto && userInfo.photoUrl) {
+            try {
+              const axios = require('axios');
+              const response = await axios.get(userInfo.photoUrl, { responseType: 'arraybuffer' });
+              await sock.sendMessage(m.key.remoteJid, {
+                image: Buffer.from(response.data),
+                caption: `📸 Foto de perfil de ${userInfo.number}`
+              }, { quoted: m });
+            } catch (imgErr) {
+              console.warn('⚠️ Erro ao enviar foto:', imgErr.message);
+            }
+          }
+
+          return true;
+        } catch (e) {
+          console.error('Erro em dadosusuario:', e);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: '❌ Erro ao obter dados do usuário.' 
+          }, { quoted: m });
+          return true;
+        }
+      }
+
+      // #FOTOPERFIL - Ver foto de perfil do usuário
+      if (cmd === 'fotoperfil' || cmd === 'upic' || cmd === 'profilepic' || cmd === 'pic') {
+        try {
+          let targetJid = null;
+          if (m.message && m.message.extendedTextMessage && 
+              m.message.extendedTextMessage.contextInfo && 
+              m.message.extendedTextMessage.contextInfo.mentionedJid &&
+              m.message.extendedTextMessage.contextInfo.mentionedJid.length > 0) {
+            targetJid = m.message.extendedTextMessage.contextInfo.mentionedJid[0];
+          } else if (replyInfo && replyInfo.participantJidCitado) {
+            targetJid = replyInfo.participantJidCitado;
+          } else {
+            targetJid = m.key.participant || m.key.remoteJid;
+          }
+
+          const result = await this.userProfile.handleProfilePhoto(targetJid);
+          
+          // Enviar mensagem de texto primeiro
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+
+          // Se tem foto, enviar imagem
+          if (result.hasPhoto && result.photoUrl) {
+            try {
+              const axios = require('axios');
+              const response = await axios.get(result.photoUrl, { responseType: 'arraybuffer' });
+              await sock.sendMessage(m.key.remoteJid, {
+                image: Buffer.from(response.data),
+                caption: `📸 Foto de perfil de ${this.userProfile.formatJidToNumber(targetJid)}`
+              }, { quoted: m });
+            } catch (imgErr) {
+              console.warn('⚠️ Erro ao enviar foto:', imgErr.message);
+            }
+          }
+
+          return true;
+        } catch (e) {
+          console.error('Erro em fotoperfil:', e);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: '❌ Erro ao obter foto de perfil.' 
+          }, { quoted: m });
+          return true;
+        }
+      }
+
+      // #BIOGRAFIA - Ver bio do usuário
+      if (cmd === 'biografia' || cmd === 'ubio' || cmd === 'status' || cmd === 'bio') {
+        try {
+          let targetJid = null;
+          if (m.message && m.message.extendedTextMessage && 
+              m.message.extendedTextMessage.contextInfo && 
+              m.message.extendedTextMessage.contextInfo.mentionedJid &&
+              m.message.extendedTextMessage.contextInfo.mentionedJid.length > 0) {
+            targetJid = m.message.extendedTextMessage.contextInfo.mentionedJid[0];
+          } else if (replyInfo && replyInfo.participantJidCitado) {
+            targetJid = replyInfo.participantJidCitado;
+          } else {
+            targetJid = m.key.participant || m.key.remoteJid;
+          }
+
+          const result = await this.userProfile.handleUserBio(targetJid);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        } catch (e) {
+          console.error('Erro em biografia:', e);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: '❌ Erro ao obter biografia.' 
+          }, { quoted: m });
+          return true;
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // 🤖 NOVOS COMANDOS DE CONFIGURAÇÃO DA AKIRA (DONO APENAS)
+      // ═══════════════════════════════════════════════════════════════
+
+      // #SETBOTPIC - Alterar foto da Akira
+      if (cmd === 'setbotpic' || cmd === 'botpic' || cmd === 'botfoto' || cmd === 'setbotfoto') {
+        return await ownerOnly(async () => {
+          if (!m.message || !m.message.imageMessage) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: `📸 *COMANDO #setbotpic*\n\n` +
+                    '✅ Responda uma imagem com este comando\n' +
+                    '✅ A foto será definida como foto de perfil da Akira\n\n' +
+                    '⚠️ Apenas o proprietário pode usar este comando.'
+            }, { quoted: m });
+            return true;
+          }
+
+          const imageBuffer = await this.mediaProcessor.downloadMedia(m.message.imageMessage, 'image');
+          if (!imageBuffer) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: '❌ Erro ao baixar imagem.' 
+            }, { quoted: m });
+            return true;
+          }
+
+          const result = await this.botProfile.setBotPhoto(imageBuffer);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #SETBOTNAME - Alterar nome da Akira
+      if (cmd === 'setbotname' || cmd === 'botname' || cmd === 'setnomebot' || cmd === 'nomebot') {
+        return await ownerOnly(async () => {
+          if (!full || full.trim().length === 0) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: `📝 *COMANDO #setbotname*\n\n` +
+                    '✅ Uso: #setbotname <novo nome>\n' +
+                    '✅ Exemplo: #setbotname Akira Bot V21\n\n' +
+                    '⚠️ Limite: 25 caracteres (WhatsApp)\n' +
+                    '⚠️ Apenas o proprietário pode usar este comando.'
+            }, { quoted: m });
+            return true;
+          }
+
+          const result = await this.botProfile.setBotName(full);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #SETBOTBIO - Alterar bio da Akira
+      if (cmd === 'setbotbio' || cmd === 'botstatus' || cmd === 'botbio' || cmd === 'setstatusbot') {
+        return await ownerOnly(async () => {
+          if (!full || full.trim().length === 0) {
+            await sock.sendMessage(m.key.remoteJid, { 
+              text: `📝 *COMANDO #setbotbio*\n\n` +
+                    '✅ Uso: #setbotbio <nova bio>\n' +
+                    '✅ Exemplo: #setbotbio Akira Bot - Feito com ❤️\n\n' +
+                    '⚠️ Limite: 139 caracteres (WhatsApp)\n' +
+                    '⚠️ Apenas o proprietário pode usar este comando.'
+            }, { quoted: m });
+            return true;
+          }
+
+          const result = await this.botProfile.setBotStatus(full);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: result.message 
+          }, { quoted: m });
+          return true;
+        });
+      }
+
+      // #VERBOTINFO - Ver informações da Akira
+      if (cmd === 'verbotinfo' || cmd === 'botinfo' || cmd === 'infobot' || cmd === 'akirainfo') {
+        try {
+          const botInfo = await this.botProfile.getBotInfo();
+          const message = this.botProfile.formatBotInfoMessage(botInfo);
+          
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: message 
+          }, { quoted: m });
+
+          // Enviar foto se disponível
+          if (botInfo.hasPhoto && botInfo.photoUrl) {
+            try {
+              const axios = require('axios');
+              const response = await axios.get(botInfo.photoUrl, { responseType: 'arraybuffer' });
+              await sock.sendMessage(m.key.remoteJid, {
+                image: Buffer.from(response.data),
+                caption: `📸 Foto atual da Akira`
+              }, { quoted: m });
+            } catch (imgErr) {
+              console.warn('⚠️ Erro ao enviar foto:', imgErr.message);
+            }
+          }
+
+          return true;
+        } catch (e) {
+          console.error('Erro em verbotinfo:', e);
+          await sock.sendMessage(m.key.remoteJid, { 
+            text: '❌ Erro ao obter informações da Akira.' 
+          }, { quoted: m });
+          return true;
+        }
+      }
+
+      // #HELPIMAGE - Ajuda de efeitos de imagem
+      if (cmd === 'helpimagem' || cmd === 'helpeffects' || cmd === 'imagehelp' || cmd === 'efeitos') {
+        const helpMessage = this.imageEffects.getHelpMessage();
+        await sock.sendMessage(m.key.remoteJid, { 
+          text: helpMessage 
+        }, { quoted: m });
+        return true;
       }
 
       // Default: Comando não encontrado

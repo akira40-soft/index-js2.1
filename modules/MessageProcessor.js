@@ -161,14 +161,15 @@ class MessageProcessor {
         tipoMidia = 'outro';
       }
 
-      const participantJidCitado = context.participant || null;
+      // Try to get participant from context or from quoted message key
+      const participantJidCitado = context.participant || context.quotedMessage?.key?.participant || null;
 
       return {
         textoMensagemCitada,
         tipoMidia,
         participantJidCitado,
         ehRespostaAoBot: this.isReplyToBot(participantJidCitado),
-        quemEscreveuCitacao: this.extractUserNumber({ key: { participant: participantJidCitado } })
+        quemEscreveuCitacao: participantJidCitado ? this.extractUserNumber({ key: { participant: participantJidCitado } }) : 'remetente_pv'
       };
 
     } catch (e) {
@@ -197,6 +198,18 @@ class MessageProcessor {
     try {
       const tipo = getContentType(message.message);
       return tipo === 'audioMessage';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * Detecta se tem imagem
+   */
+  hasImage(message) {
+    try {
+      const tipo = getContentType(message.message);
+      return tipo === 'imageMessage';
     } catch (e) {
       return false;
     }
