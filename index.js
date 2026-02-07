@@ -32,7 +32,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 // HF SPACES DNS CORRECTIONS - CORREÇÃO CRÍTICA PARA QR CODE
 // ═══════════════════════════════════════════════════════════════════════
-const dns = require('dns');
+import dns from 'dns';
 
 // 1. Força IPv4 para todas as operações DNS (CRÍTICO PARA HF SPACES)
 dns.setDefaultResultOrder('ipv4first');
