@@ -20,6 +20,7 @@ class APIClient {
 
   /**
    * Formata payload conforme esperado por api.py
+   * Enhanced to support full reply context from akira modules
    */
   buildPayload(messageData) {
     const {
@@ -46,22 +47,31 @@ class APIClient {
       forcar_busca: Boolean(forcar_pesquisa)
     };
 
-    // Adiciona contexto de reply se existir
-    if (mensagem_citada) {
-      payload.mensagem_citada = String(mensagem_citada).substring(0, 500);
+    // Adiciona contexto de reply se existir (enhanced for akira compatibility)
+    if (mensagem_citada || reply_metadata.is_reply) {
+      payload.mensagem_citada = String(mensagem_citada || reply_metadata.quoted_text_original || '').substring(0, 500);
+      
+      // Full reply metadata for akira's reply_context_handler.py
       payload.reply_metadata = {
-        is_reply: true,
+        is_reply: Boolean(reply_metadata.is_reply || !!mensagem_citada),
         reply_to_bot: Boolean(reply_metadata.reply_to_bot),
         quoted_author_name: String(reply_metadata.quoted_author_name || 'desconhecido').substring(0, 50),
-        quoted_author_numero: String(reply_metadata.quoted_author_numero || 'desconhecido'),
+        quoted_author_numero: String(reply_metadata.quoted_author_numero || 'desconhecido').substring(0, 20),
         quoted_type: String(reply_metadata.quoted_type || 'texto'),
-        quoted_text_original: String(reply_metadata.quoted_text_original || '').substring(0, 200),
-        context_hint: String(reply_metadata.context_hint || '')
+        quoted_text_original: String(reply_metadata.quoted_text_original || mensagem_citada || '').substring(0, 500),
+        context_hint: String(reply_metadata.context_hint || ''),
+        priority_level: parseInt(reply_metadata.priority_level || 2)
       };
     } else {
       payload.reply_metadata = {
         is_reply: false,
-        reply_to_bot: false
+        reply_to_bot: false,
+        quoted_author_name: '',
+        quoted_author_numero: '',
+        quoted_type: 'texto',
+        quoted_text_original: '',
+        context_hint: '',
+        priority_level: 1
       };
     }
 

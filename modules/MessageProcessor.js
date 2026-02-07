@@ -96,17 +96,17 @@ class MessageProcessor {
         case 'conversation':
           return msg.conversation || '';
         case 'extendedTextMessage':
-          return msg.extendedTextMessage?.text || '';
+          return (msg.extendedTextMessage && msg.extendedTextMessage.text) || '';
         case 'imageMessage':
-          return msg.imageMessage?.caption || '';
+          return (msg.imageMessage && msg.imageMessage.caption) || '';
         case 'videoMessage':
-          return msg.videoMessage?.caption || '';
+          return (msg.videoMessage && msg.videoMessage.caption) || '';
         case 'audioMessage':
           return '[mensagem de voz]';
         case 'stickerMessage':
           return '[figurinha]';
         case 'documentMessage':
-          return msg.documentMessage?.caption || '[documento]';
+          return (msg.documentMessage && msg.documentMessage.caption) || '[documento]';
         default:
           return '';
       }
@@ -119,16 +119,91 @@ class MessageProcessor {
    * Detecta tipo de conversa (PV ou Grupo)
    */
   getConversationType(message) {
-    const remoteJid = message.key?.remoteJid || '';
+    const remoteJid = (message.key && message.key.remoteJid) || '';
     return String(remoteJid).endsWith('@g.us') ? 'grupo' : 'pv';
   }
 
   /**
+   * Extrai hint de contexto baseado no texto citado e mensagem atual
+   * Adaptado de reply_context_handler.py
+   */
+  extractContextHint(quotedText, mensagemAtual) {
+    const hints = [];
+    const quotedLower = (quotedText || '').toLowerCase();
+    const mensagemLower = (mensagemAtual || '').toLowerCase();
+
+    // Detecta tipo de reply
+    if (quotedLower.includes('akira') || quotedLower.includes('bot') || 
+        quotedLower.includes('você') || quotedLower.includes('vc') || quotedLower.includes('tu')) {
+      hints.push('pergunta_sobre_akira');
+    }
+
+    // Pergunta factual
+    if (quotedLower.match(/\b(oq|o que|qual|quanto|onde|quando|como|quem|por que|pq)\b/)) {
+      hints.push('pergunta_factual');
+    }
+
+    // Ironia/deboche detectado
+    if (quotedLower.match(/(kkk|haha|😂|🤣|eita|lol|mdr)/)) {
+      hints.push('tom_irreverente');
+    }
+
+    // Expressão de opinião
+    if (quotedLower.match(/\b(acho|penso|creio|imagino|acredito)\b/)) {
+      hints.push('expressao_opiniao');
+    }
+
+    // Pergunta curta detectada
+    const wordCount = mensagemAtual ? mensagemAtual.split(/\s+/).length : 0;
+    const hasQuestion = mensagemLower.includes('?') || 
+                       mensagemLower.match(/\b(qual|quais|quem|como|onde|quando|por que|pq|oq)\b/);
+    if (wordCount <= 5 && hasQuestion) {
+      hints.push('pergunta_curta');
+    }
+
+    return hints.join(' | ') || 'contexto_geral';
+  }
+
+  /**
+   * Calcula nível de prioridade do reply
+   * Adaptado de reply_context_handler.py
+   * Returns: 1=normal, 2=reply, 3=reply_to_bot, 4=reply_to_bot_short_question
+   */
+  calculateReplyPriority(isReply, replyToBot, mensagemAtual) {
+    const PRIORITY_NORMAL = 1;
+    const PRIORITY_REPLY = 2;
+    const PRIORITY_REPLY_TO_BOT = 3;
+    const PRIORITY_REPLY_TO_BOT_SHORT_QUESTION = 4;
+    const PERGUNTA_CURTA_LIMITE = 5;
+
+    if (!isReply) return PRIORITY_NORMAL;
+
+    // Reply para o bot
+    if (replyToBot) {
+      const wordCount = mensagemAtual ? mensagemAtual.split(/\s+/).length : 0;
+      const hasQuestion = mensagemAtual && (
+        mensagemAtual.includes('?') || 
+        mensagemAtual.toLowerCase().match(/\b(qual|quais|quem|como|onde|quando|por que|pq|oq|o que)\b/)
+      );
+      
+      // Pergunta curta = prioridade máxima
+      if (wordCount <= PERGUNTA_CURTA_LIMITE && hasQuestion) {
+        return PRIORITY_REPLY_TO_BOT_SHORT_QUESTION;
+      }
+      return PRIORITY_REPLY_TO_BOT;
+    }
+
+    // Reply normal
+    return PRIORITY_REPLY;
+  }
+
+  /**
    * Extrai informações de reply
+   * Enhanced version adapted from akira's reply_context_handler.py
    */
   extractReplyInfo(message) {
     try {
-      const context = message.message?.extendedTextMessage?.contextInfo;
+      const context = message.message && message.message.extendedTextMessage && message.message.extendedTextMessage.contextInfo;
       if (!context || !context.quotedMessage) return null;
 
       const quoted = context.quotedMessage;
@@ -137,39 +212,75 @@ class MessageProcessor {
       // Extrai texto da mensagem citada
       let textoMensagemCitada = '';
       let tipoMidia = 'texto';
+      let quotedTextOriginal = '';
 
       if (tipo === 'conversation') {
-        textoMensagemCitada = quoted.conversation || '';
+        quotedTextOriginal = quoted.conversation || '';
+        textoMensagemCitada = quotedTextOriginal;
         tipoMidia = 'texto';
       } else if (tipo === 'extendedTextMessage') {
-        textoMensagemCitada = quoted.extendedTextMessage?.text || '';
+        quotedTextOriginal = (quoted.extendedTextMessage && quoted.extendedTextMessage.text) || '';
+        textoMensagemCitada = quotedTextOriginal;
         tipoMidia = 'texto';
       } else if (tipo === 'imageMessage') {
-        textoMensagemCitada = quoted.imageMessage?.caption || '[imagem]';
+        quotedTextOriginal = (quoted.imageMessage && quoted.imageMessage.caption) || '';
+        textoMensagemCitada = quotedTextOriginal || '[imagem]';
         tipoMidia = 'imagem';
       } else if (tipo === 'videoMessage') {
-        textoMensagemCitada = quoted.videoMessage?.caption || '[vídeo]';
+        quotedTextOriginal = (quoted.videoMessage && quoted.videoMessage.caption) || '';
+        textoMensagemCitada = quotedTextOriginal || '[vídeo]';
         tipoMidia = 'video';
       } else if (tipo === 'audioMessage') {
+        quotedTextOriginal = '[áudio]';
         textoMensagemCitada = '[áudio]';
         tipoMidia = 'audio';
       } else if (tipo === 'stickerMessage') {
+        quotedTextOriginal = '[figurinha]';
         textoMensagemCitada = '[figurinha]';
         tipoMidia = 'sticker';
+      } else if (tipo === 'documentMessage') {
+        quotedTextOriginal = (quoted.documentMessage && quoted.documentMessage.caption) || '[documento]';
+        textoMensagemCitada = quotedTextOriginal;
+        tipoMidia = 'documento';
       } else {
+        quotedTextOriginal = '[conteúdo]';
         textoMensagemCitada = '[conteúdo]';
         tipoMidia = 'outro';
       }
 
       // Try to get participant from context or from quoted message key
-      const participantJidCitado = context.participant || context.quotedMessage?.key?.participant || null;
+      const participantJidCitado = context.participant || (context.quotedMessage && context.quotedMessage.key && context.quotedMessage.key.participant) || null;
+      
+      // Extract author number
+      let quotedAuthorNumero = 'desconhecido';
+      if (participantJidCitado) {
+        quotedAuthorNumero = this.extractUserNumber({ key: { participant: participantJidCitado } });
+      }
+
+      // Check if reply is to bot
+      const ehRespostaAoBot = this.isReplyToBot(participantJidCitado);
+      
+      // Get current message text for context hint calculation
+      const currentMessageText = this.extractText(message);
+      
+      // Calculate context hint
+      const contextHint = this.extractContextHint(quotedTextOriginal, currentMessageText);
+      
+      // Calculate priority
+      const priorityLevel = this.calculateReplyPriority(true, ehRespostaAoBot, currentMessageText);
 
       return {
         textoMensagemCitada,
         tipoMidia,
         participantJidCitado,
-        ehRespostaAoBot: this.isReplyToBot(participantJidCitado),
-        quemEscreveuCitacao: participantJidCitado ? this.extractUserNumber({ key: { participant: participantJidCitado } }) : 'remetente_pv'
+        ehRespostaAoBot,
+        quemEscreveuCitacao: quotedAuthorNumero,
+        quotedAuthorNumero: quotedAuthorNumero,
+        quotedType: tipoMidia,
+        quotedTextOriginal: quotedTextOriginal,
+        contextHint: contextHint,
+        priorityLevel: priorityLevel,
+        isReply: true
       };
 
     } catch (e) {
@@ -241,7 +352,7 @@ class MessageProcessor {
    */
   isBotMentioned(message) {
     try {
-      const mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+      const mentions = (message.message && message.message.extendedTextMessage && message.message.extendedTextMessage.contextInfo && message.message.extendedTextMessage.contextInfo.mentionedJid) || [];
       return mentions.some(jid => this.isReplyToBot(jid));
     } catch (e) {
       return false;
@@ -253,7 +364,7 @@ class MessageProcessor {
    */
   extractMentions(message) {
     try {
-      return message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+      return (message.message && message.message.extendedTextMessage && message.message.extendedTextMessage.contextInfo && message.message.extendedTextMessage.contextInfo.mentionedJid) || [];
     } catch (e) {
       return [];
     }
@@ -338,7 +449,7 @@ class MessageProcessor {
    */
   getStats() {
     return {
-      rateLimitEntries: this.rateLimitMap?.size || 0,
+      rateLimitEntries: (this.rateLimitMap && this.rateLimitMap.size) || 0,
       prefixo: this.config.PREFIXO
     };
   }

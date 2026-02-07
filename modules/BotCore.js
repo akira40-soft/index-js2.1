@@ -809,7 +809,18 @@ class BotCore {
 
       this.logger.info(`\n🔥 [PROCESSANDO] ${nome}: ${texto.substring(0, 60)}...`);
 
-      // Constrói payload
+      // Constrói payload com reply metadata completo (adaptado de akira)
+      const replyMetadata = replyInfo ? {
+        is_reply: replyInfo.isReply || true,
+        reply_to_bot: replyInfo.ehRespostaAoBot,
+        quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido',
+        quoted_author_numero: replyInfo.quotedAuthorNumero || 'desconhecido',
+        quoted_type: replyInfo.quotedType || 'texto',
+        quoted_text_original: replyInfo.quotedTextOriginal || '',
+        context_hint: replyInfo.contextHint || '',
+        priority_level: replyInfo.priorityLevel || 2
+      } : { is_reply: false, reply_to_bot: false };
+
       const payload = this.apiClient.buildPayload({
         usuario: nome,
         numero: numeroReal,
@@ -817,10 +828,7 @@ class BotCore {
         tipo_conversa: ehGrupo ? 'grupo' : 'pv',
         tipo_mensagem: foiAudio ? 'audio' : 'texto',
         mensagem_citada: (replyInfo && replyInfo.textoMensagemCitada) || '',
-        reply_metadata: replyInfo ? {
-          reply_to_bot: replyInfo.ehRespostaAoBot,
-          quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido'
-        } : { is_reply: false, reply_to_bot: false }
+        reply_metadata: replyMetadata
       });
 
       // Chama API
