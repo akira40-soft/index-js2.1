@@ -3,7 +3,7 @@
   "version": "21.0.0",
   "description": "🤖 AKIRA BOT V21 — DIGITAÇÃO REALISTA + DINÂMICAS WHATSAPP COMPLETAS + STT DEEPGRAM + TTS + COMANDOS COMPLETOS",
   "main": "index.js",
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",

@@ -62,10 +62,15 @@ dns.resolve4 = function(hostname, options, callback) {
 // ═══════════════════════════════════════════════════════════════════════
 
 // @ts-nocheck
-const express = require('express');
-const QRCode = require('qrcode');
-const ConfigManager = require('./modules/ConfigManager');
-const BotCore = require('./modules/BotCore');
+import express from 'express';
+import QRCode from 'qrcode';
+import ConfigManager from './modules/ConfigManager.js';
+import BotCore from './modules/BotCore.js';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // ═══════════════════════════════════════════════════════════════════════
 // INICIALIZAÇÃO GLOBAL
@@ -687,7 +692,7 @@ function initializeServer() {
   });
 
   // ═══ Rota: Reset de autenticação (força novo login) ═══
-  app.post('/reset-auth', (req, res) => {
+  app.post('/reset-auth', async (req, res) => {
     try {
       if (!botCore) {
         return res.status(503).json({
@@ -696,7 +701,7 @@ function initializeServer() {
         });
       }
 
-      const fs = require('fs');
+      const { default: fs } = await import('fs');
       const authPath = botCore.config.AUTH_FOLDER;
 
       if (fs.existsSync(authPath)) {
@@ -943,11 +948,11 @@ process.on('SIGTERM', shutdown);
 // ═══════════════════════════════════════════════════════════════════════
 // INICIALIZAÇÃO
 // ═══════════════════════════════════════════════════════════════════════
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(error => {
     console.error('❌ Erro ao iniciar:', error);
     process.exit(1);
   });
 }
 
-module.exports = { botCore, app, config };
+export { botCore, app, config };

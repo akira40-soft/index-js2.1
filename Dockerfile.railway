@@ -160,7 +160,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:$PORT/health 2>/dev/null || exit 1
 
 # ═══════════════════════════════════════════════════════════════════
-# COMANDO DE INICIALIZAÇÃO PARA RAILWAY
+# COMANDO DE INICIALIZAÇÃO PARA RAILWAY (ESM - ECMAScript Modules)
 # ═══════════════════════════════════════════════════════════════════
+# O projeto usa ESM (type: "module" no package.json)
+# Não requer flag --experimental-modules pois Node 18+ suporta ESM nativamente
 
 CMD ["node", "index.js"]
