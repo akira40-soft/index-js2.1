@@ -26,7 +26,7 @@ class ConfigManager {
 
  // ═══ BOT IDENTITY ═══
  this.BOT_NUMERO_REAL = process.env?.BOT_NUMERO || '40755431264474';
- this.BOT_NAME = process.env?.BOT_NAME || 'Akira';
+ this.BOT_NAME = process.env?.BOT_NAME || 'belmira';
  this.BOT_VERSION = 'v21.1.02.2025';
  this.PREFIXO = process.env?.PREFIXO || '#';
 
