@@ -17,8 +17,8 @@
  */
 
 import axios from 'axios';
-import cheerio from 'cheerio';
-import fs from 'fs';
+import * as cheerio from 'cheerio';
+import * as fs from 'node:fs';
 
 class OSINTFramework {
     constructor(config) {
