@@ -17,6 +17,7 @@
 
 import dns from 'dns';
 import https from 'https';
+import http from 'http';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 
 // ═══════════════════════════════════════════════════════════════════════
