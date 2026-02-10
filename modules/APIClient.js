@@ -88,6 +88,15 @@ class APIClient {
     * Realiza requisição com retry exponencial
     */
     async request(method, endpoint, data = null, options = {}) {
+        // Validate method parameter
+        if (!method || typeof method !== 'string') {
+            this.logger.error(`[API] Invalid method parameter: ${method}`);
+            return {
+                success: false,
+                error: 'Invalid HTTP method provided'
+            };
+        }
+
         const url = `${this.config.API_URL}${endpoint}`;
         const maxRetries = options.retries || this.config.API_RETRY_ATTEMPTS;
         let lastError = null;
@@ -97,7 +106,7 @@ class APIClient {
                 this.requestCount++;
 
                 if (this.config.LOG_API_REQUESTS) {
-                    this.logger.info(`[API] ${method.d.toUpperCase()} ${endpoint} (tentativa ${attempt}/${maxRetries})`);
+                    this.logger.info(`[API] ${method.toUpperCase()} ${endpoint} (tentativa ${attempt}/${maxRetries})`);
                 }
 
                 const axiosConfig = {

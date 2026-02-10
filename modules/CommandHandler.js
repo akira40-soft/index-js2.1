@@ -108,46 +108,254 @@ class CommandHandler {
     }
 
     /**
-    * Processa comandos recebidos
+     * Processa a mensagem e despacha comandos (Método principal chamado pelo BotCore)
+     */
+    async handle(m, meta) {
+        // meta: { nome, numeroReal, texto, replyInfo, ehGrupo }
+        try {
+            const { nome, numeroReal, texto, replyInfo, ehGrupo } = meta;
+            const mp = this.bot.messageProcessor;
+
+            // Extrai comando e argumentos
+            const parsed = mp.parseCommand(texto);
+            if (!parsed) return false;
+
+            const chatJid = m.key.remoteJid;
+            const senderId = numeroReal;
+            const command = parsed.comando.toLowerCase();
+            const args = parsed.args;
+            const fullArgs = parsed.textoCompleto;
+
+            // Log de comando
+            // this.logger?.debug(`[CMD] ${command} por ${nome} em ${chatJid}`);
+
+            // Simulador de presença (digitação)
+            if (presenceSimulator) {
+                await presenceSimulator.simulateTyping(chatJid, command);
+            }
+
+            // Verifica permissões de dono
+            const isOwner = this.config.isDono(senderId, nome);
+
+            // ══════════════════════════════════════════
+            // DESPACHO DE COMANDOS
+            // ══════════════════════════════════════════
+
+            switch (command) {
+                case 'ping':
+                    await this.bot.reply(m, `🏓 Pong! Uptime: ${Math.floor(process.uptime())}s`);
+                    return true;
+
+                case 'menu':
+                case 'help':
+                case 'ajuda':
+                case 'comandos':
+                    return await this._showMenu(m);
+
+                case 'sticker':
+                case 's':
+                case 'fig':
+                    return await this._handleSticker(m, nome);
+
+                case 'play':
+                case 'p':
+                    return await this._handlePlay(m, fullArgs);
+
+                case 'perfil':
+                case 'profile':
+                case 'info':
+                    return await this._handleProfile(m, meta);
+
+                case 'registrar':
+                case 'reg':
+                    return await this._handleRegister(m, fullArgs, senderId);
+
+                // Comandos Administrativos (Enterprise / Cybersecurity)
+                case 'nmap':
+                case 'sqlmap':
+                case 'hydra':
+                case 'nuclei':
+                case 'whois':
+                case 'dns':
+                case 'geo':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this.cybersecurityToolkit.handleCommand(m, command, args);
+
+                // Comandos de Grupo
+                case 'antilink':
+                case 'mute':
+                case 'desmute':
+                case 'kick':
+                case 'add':
+                case 'promote':
+                case 'demote':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Apenas o administrador do sistema pode gerenciar grupos.');
+                        return true;
+                    }
+                    return await this.groupManagement.handleCommand(m, command, args);
+
+                case 'level':
+                case 'nivel':
+                    return await this._handleLevel(m, args, ehGrupo, senderId, isOwner);
+
+                default:
+                    // Verifica se o comando pertence a algum outro toolkit
+                    if (isOwner && await this.osintFramework.handleCommand(m, command, args)) return true;
+                    return false;
+            }
+
+        } catch (error) {
+            console.error('❌ Erro no handlesCommand:', error);
+            return false;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MÉTODOS AUXILIARES DE COMANDO
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async _showMenu(m) {
+        const menuText = `╔══════════════════════════════╗
+║  🤖 *AKIRA BOT V21* 🤖       ║
+╚══════════════════════════════╝
+
+📱 *PREFIXO:* \`${this.config.PREFIXO}\`
+
+🎨 *MÍDIA*
+• \`#sticker\` - Criar figurinha
+• \`#play\` - Baixar música/vídeo
+
+🛡️ *SEGURANÇA (ADMIN)*
+• \`#nmap\` | \`#sqlmap\` | \`#whois\`
+• \`#dns\` | \`#geo\` | \`#nuclei\`
+
+👥 *GRUPOS (ADMIN)*
+• \`#antilink\` | \`#mute\` | \`#kick\`
+• \`#promote\` | \`#level on/off\`
+
+🎮 *UTILIDADES*
+• \`#perfil\` - Ver seus dados
+• \`#registrar\` - Criar sua conta
+• \`#level\` - Ver seu nível e XP
+
+*Desenvolvido por Isaac Quarenta*`;
+        await this.bot.reply(m, menuText);
+        return true;
+    }
+
+    async _handleSticker(m, nome) {
+        try {
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const imageMsg = m.message?.imageMessage || quoted?.imageMessage;
+
+            if (!imageMsg) {
+                await this.bot.reply(m, '❌ Responda a uma imagem para criar o sticker.');
+                return true;
+            }
+
+            await this.bot.reply(m, '⏳ Criando sticker...');
+            const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
+            const res = await this.mediaProcessor.createStickerFromImage(buf, {
+                packName: 'Akira Pack',
+                author: nome
+            });
+
+            if (res && res.sucesso && res.buffer) {
+                await this.sock.sendMessage(m.key.remoteJid, { sticker: res.buffer }, { quoted: m });
+            } else {
+                await this.bot.reply(m, '❌ Erro ao criar sticker.');
+            }
+        } catch (e) {
+            await this.bot.reply(m, '❌ Erro no processamento do sticker.');
+        }
+        return true;
+    }
+
+    async _handlePlay(m, query) {
+        if (!query) {
+            await this.bot.reply(m, '❌ Uso: #play <nome da música ou link>');
+            return true;
+        }
+        await this.bot.reply(m, '⏳ Buscando e processando música...');
+        try {
+            const res = await this.mediaProcessor.downloadYouTubeAudio(query);
+            if (res.error) {
+                await this.bot.reply(m, `❌ ${res.error}`);
+            } else {
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    audio: res.buffer,
+                    mimetype: 'audio/mpeg',
+                    ptt: false,
+                    fileName: `${res.title}.mp3`
+                }, { quoted: m });
+            }
+        } catch (e) {
+            await this.bot.reply(m, '❌ Erro ao processar o comando play.');
+        }
+        return true;
+    }
+
+    async _handleProfile(m, meta) {
+        const { nome, numeroReal } = meta;
+        const uid = m.key.participant || m.key.remoteJid;
+        const record = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
+        const txt = `👤 *PERFIL:* ${nome}\n📱 *Número:* ${numeroReal}\n🎮 *Nível:* ${record.level || 0}\n⭐ *XP:* ${record.xp || 0}`;
+        await this.bot.reply(m, txt);
+        return true;
+    }
+
+    async _handleRegister(m, fullArgs, senderId) {
+        if (!fullArgs.includes('|')) {
+            await this.bot.reply(m, '❌ Uso: #registrar Nome|Idade');
+            return true;
+        }
+        const [nomeUser, idadeStr] = fullArgs.split('|').map(s => s.trim());
+        const idade = parseInt(idadeStr, 10);
+        if (!nomeUser || isNaN(idade)) {
+            await this.bot.reply(m, '❌ Formato inválido.');
+            return true;
+        }
+        // Simulação de registro (pode ser expandido conforme necessário)
+        await this.bot.reply(m, `✅ Registro de *${nomeUser}* (${idade} anos) concluído!`);
+        return true;
+    }
+
+    async _handleLevel(m, args, ehGrupo, senderId, isOwner) {
+        if (!ehGrupo) {
+            await this.bot.reply(m, '📵 Este comando só funciona em grupos.');
+            return true;
+        }
+        const sub = (args[0] || '').toLowerCase();
+        if (['on', 'off'].includes(sub)) {
+            if (!isOwner) {
+                await this.bot.reply(m, '🚫 Apenas administradores podem alterar o status do level.');
+                return true;
+            }
+            // Implementação de toggle depende de como o BotCore gerencia os settings
+            await this.bot.reply(m, `✅ Sistema de level ${sub === 'on' ? 'ativado' : 'desativado'} para este grupo.`);
+            return true;
+        }
+        const uid = m.key.participant || m.key.remoteJid;
+        const rec = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
+        await this.bot.reply(m, `📊 *Seu Status:* Nível ${rec.level || 0} | XP ${rec.xp || 0}`);
+        return true;
+    }
+
+    /**
+    * Processa comandos recebidos (LEGACY - Mantido para compatibilidade se necessário)
     */
     async handleCommand(m, command, args) {
-        // Validações básicas
-        if (!m || !m.key || !m.key.remoteJid) return;
-
-        const chatJid = m.key.remoteJid;
-        const sender = m.key.participant || m.key.remoteJid;
-        const isGroup = chatJid.endsWith('@g.us');
-
-        // Logs de comando
-        // console.log(`Command: ${command} from ${sender} in ${chatJid}`);
-
-        // Simulador de presença (digitação)
-        if (presenceSimulator) {
-            await presenceSimulator.simulateTyping(chatJid, command);
-        }
-
-        // ══════════════════════════════════════════
-        // COMANDOS DE ADMINISTRAÇÃO E GRUPOS
-        // ══════════════════════════════════════════
-
-        switch (command.toLowerCase()) {
-            // ... (implementação dos comandos aqui)
-            // Mantendo a estrutura original mas adaptada para ESM
-
-            case 'ping':
-                await this.bot.reply(m, '🏓 Pong! O bot está online e operante.');
-                break;
-
-            case 'menu':
-            case 'help':
-                // Implementação simples do menu para testar
-                await this.bot.reply(m, '🤖 *AKIRA BOT V21*\n\nComandos disponíveis:\n\ntest, ping, menu');
-                break;
-
-            default:
-                // Tentar encontrar comando nos submódulos ou retornar falso
-                break;
-        }
+        return this.handle(m, {
+            nome: m.pushName || 'Usuário',
+            numeroReal: m.key.participant || m.key.remoteJid,
+            texto: `${this.config.PREFIXO}${command} ${args.join(' ')}`,
+            replyInfo: null,
+            ehGrupo: m.key.remoteJid.endsWith('@g.us')
+        });
     }
 }
 

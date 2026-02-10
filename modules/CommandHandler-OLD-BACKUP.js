@@ -28,21 +28,21 @@ class CommandHandler {
   canUsePremiumFeature(userId) {
     const now = new Date();
     const usage = premiumFeatureUsage.get(userId) || { lastUse: 0, count: 0, resetDate: now };
-    
+
     // Reset a cada 3 meses (90 dias)
     const threeMonthsAgo = new Date(now.getTime() - (90 * 24 * 60 * 60 * 1000));
-    
+
     if (usage.resetDate < threeMonthsAgo) {
       usage.count = 0;
       usage.resetDate = now;
     }
-    
+
     const canUse = usage.count === 0;
     if (canUse) {
       usage.count = 1;
       usage.lastUse = now.getTime();
     }
-    
+
     premiumFeatureUsage.set(userId, usage);
     return canUse;
   }
@@ -140,14 +140,14 @@ ${this.getDivider()}`;
               return true;
             }
             const [nomeUser, idadeStr] = full.split('|').map(s => s.trim());
-            const idade = parseInt(idadeStr,10);
+            const idade = parseInt(idadeStr, 10);
             if (!nomeUser || isNaN(idade)) { await sock.sendMessage(m.key.remoteJid, { text: 'Formato inválido.' }, { quoted: m }); return true; }
 
             const registered = JSON.parse(fs.readFileSync(regPath, 'utf8') || '[]');
             const senderJid = m.key.participant || m.key.remoteJid;
-            if (registered.find(u=>u.id===senderJid)) { await sock.sendMessage(m.key.remoteJid, { text: '✅ Você já está registrado!' }, { quoted: m }); return true; }
+            if (registered.find(u => u.id === senderJid)) { await sock.sendMessage(m.key.remoteJid, { text: '✅ Você já está registrado!' }, { quoted: m }); return true; }
 
-            const serial = (Date.now().toString(36) + Math.random().toString(36).slice(2,10)).toUpperCase();
+            const serial = (Date.now().toString(36) + Math.random().toString(36).slice(2, 10)).toUpperCase();
             const time = new Date().toISOString();
             registered.push({ id: senderJid, name: nomeUser, age: idade, time, serial, registeredAt: Date.now() });
             fs.writeFileSync(regPath, JSON.stringify(registered, null, 2));
@@ -164,17 +164,17 @@ ${this.getDivider()}`;
           try {
             const gid = m.key.remoteJid;
             if (!String(gid).endsWith('@g.us')) { await sock.sendMessage(gid, { text: '📵 Level funciona apenas em grupos.' }, { quoted: m }); return true; }
-            const sub = (args[0]||'').toLowerCase();
-            if (['on','off','status'].includes(sub)) {
+            const sub = (args[0] || '').toLowerCase();
+            if (['on', 'off', 'status'].includes(sub)) {
               return await ownerOnly(async () => {
                 const settingsPath = this.config.JSON_PATHS?.leveling || null;
                 if (settingsPath) {
                   const toggles = this.bot.apiClient.loadJSON ? this.bot.apiClient.loadJSON(settingsPath) : {};
-                  if (sub === 'on') { toggles[gid]=true; this.bot.apiClient.saveJSON && this.bot.apiClient.saveJSON(settingsPath, toggles); await sock.sendMessage(gid,{text:'✅ Level ativado'},{quoted:m}); }
-                  else if (sub === 'off') { delete toggles[gid]; this.bot.apiClient.saveJSON && this.bot.apiClient.saveJSON(settingsPath, toggles); await sock.sendMessage(gid,{text:'🚫 Level desativado'},{quoted:m}); }
-                  else { await sock.sendMessage(gid,{text:`ℹ️ Status: ${toggles[gid] ? 'Ativo' : 'Inativo'}`},{quoted:m}); }
+                  if (sub === 'on') { toggles[gid] = true; this.bot.apiClient.saveJSON && this.bot.apiClient.saveJSON(settingsPath, toggles); await sock.sendMessage(gid, { text: '✅ Level ativado' }, { quoted: m }); }
+                  else if (sub === 'off') { delete toggles[gid]; this.bot.apiClient.saveJSON && this.bot.apiClient.saveJSON(settingsPath, toggles); await sock.sendMessage(gid, { text: '🚫 Level desativado' }, { quoted: m }); }
+                  else { await sock.sendMessage(gid, { text: `ℹ️ Status: ${toggles[gid] ? 'Ativo' : 'Inativo'}` }, { quoted: m }); }
                 } else {
-                  await sock.sendMessage(gid,{text:'⚠️ Configuração de leveling não encontrada'},{quoted:m});
+                  await sock.sendMessage(gid, { text: '⚠️ Configuração de leveling não encontrada' }, { quoted: m });
                 }
                 return true;
               });
@@ -184,7 +184,7 @@ ${this.getDivider()}`;
             const uid = m.key.participant || m.key.remoteJid;
             const rec = this.bot.levelSystem.getGroupRecord(gid, uid, true);
             const req = this.bot.levelSystem.requiredXp(rec.level);
-            const pct = req === Infinity ? 100 : Math.min(100, Math.floor((rec.xp/req)*100));
+            const pct = req === Infinity ? 100 : Math.min(100, Math.floor((rec.xp / req) * 100));
             const msg = `🎉 LEVEL\n👤 @${uid.split('@')[0]}\n📊 Nível: ${rec.level}\n⭐ XP: ${rec.xp}/${req}\nProgresso: ${pct}%`;
             await sock.sendMessage(gid, { text: msg, contextInfo: { mentionedJid: [uid] } }, { quoted: m });
           } catch (e) { }
@@ -193,30 +193,30 @@ ${this.getDivider()}`;
         case 'antilink':
           try {
             return await ownerOnly(async () => {
-              const sub2 = (args[0]||'').toLowerCase();
+              const sub2 = (args[0] || '').toLowerCase();
               const gid = m.key.remoteJid;
-              if (sub2 === 'on') { this.bot.moderationSystem.toggleAntiLink(gid, true); await sock.sendMessage(gid,{text:'🔒 ANTI-LINK ATIVADO'},{quoted:m}); }
-              else if (sub2 === 'off') { this.bot.moderationSystem.toggleAntiLink(gid, false); await sock.sendMessage(gid,{text:'🔓 ANTI-LINK DESATIVADO'},{quoted:m}); }
-              else { await sock.sendMessage(gid,{text:`Status: ${this.bot.moderationSystem.isAntiLinkActive(gid) ? 'Ativo' : 'Inativo'}`},{quoted:m}); }
+              if (sub2 === 'on') { this.bot.moderationSystem.toggleAntiLink(gid, true); await sock.sendMessage(gid, { text: '🔒 ANTI-LINK ATIVADO' }, { quoted: m }); }
+              else if (sub2 === 'off') { this.bot.moderationSystem.toggleAntiLink(gid, false); await sock.sendMessage(gid, { text: '🔓 ANTI-LINK DESATIVADO' }, { quoted: m }); }
+              else { await sock.sendMessage(gid, { text: `Status: ${this.bot.moderationSystem.isAntiLinkActive(gid) ? 'Ativo' : 'Inativo'}` }, { quoted: m }); }
               return true;
             });
-          } catch (e) {}
+          } catch (e) { }
           return true;
 
         case 'mute':
           try {
             return await ownerOnly(async () => {
-              const target = (m.message?.extendedTextMessage?.contextInfo?.mentionedJid||[])[0] || replyInfo?.participantJidCitado;
-              if (!target) { await sock.sendMessage(m.key.remoteJid,{text:'Marque ou responda o usuário'},{quoted:m}); return true; }
+              const target = (m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [])[0] || replyInfo?.participantJidCitado;
+              if (!target) { await sock.sendMessage(m.key.remoteJid, { text: 'Marque ou responda o usuário' }, { quoted: m }); return true; }
               const res = this.bot.moderationSystem.muteUser(m.key.remoteJid, target, 5);
-              await sock.sendMessage(m.key.remoteJid,{text:`🔇 Mutado por ${res.minutes} minutos`},{quoted:m});
+              await sock.sendMessage(m.key.remoteJid, { text: `🔇 Mutado por ${res.minutes} minutos` }, { quoted: m });
               return true;
             });
-          } catch (e) {}
+          } catch (e) { }
           return true;
 
         case 'desmute':
-          try { return await ownerOnly(async ()=>{ const target = (m.message?.extendedTextMessage?.contextInfo?.mentionedJid||[])[0] || replyInfo?.participantJidCitado; if (!target) { await sock.sendMessage(m.key.remoteJid,{text:'Marque ou responda o usuário'},{quoted:m}); return true;} this.bot.moderationSystem.unmuteUser(m.key.remoteJid,target); await sock.sendMessage(m.key.remoteJid,{text:'🔊 Usuário desmutado'},{quoted:m}); return true; }); } catch(e){}
+          try { return await ownerOnly(async () => { const target = (m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [])[0] || replyInfo?.participantJidCitado; if (!target) { await sock.sendMessage(m.key.remoteJid, { text: 'Marque ou responda o usuário' }, { quoted: m }); return true; } this.bot.moderationSystem.unmuteUser(m.key.remoteJid, target); await sock.sendMessage(m.key.remoteJid, { text: '🔊 Usuário desmutado' }, { quoted: m }); return true; }); } catch (e) { }
           return true;
 
         case 'sticker':
@@ -257,7 +257,7 @@ ${this.getDivider()}`;
             const res = await this.bot.mediaProcessor.downloadYouTubeAudio(full);
             if (res.error) { await sock.sendMessage(m.key.remoteJid, { text: `❌ ${res.error}` }, { quoted: m }); return true; }
             await sock.sendMessage(m.key.remoteJid, { audio: res.buffer, mimetype: 'audio/mpeg', ptt: false, fileName: `${res.title || 'music'}.mp3` }, { quoted: m });
-          } catch (e) {}
+          } catch (e) { }
           return true;
 
         // ═══════════════════════════════════════════════════════════════
@@ -412,7 +412,7 @@ _Obrigado por apoiar um projeto feito com paixão!_ 🚀`;
           return false;
       }
     } catch (err) {
-      try { await this.bot.sock.sendMessage(m.key.remoteJid, { text: '❌ Erro no comando.' }, { quoted: m }); } catch {}
+      try { await this.bot.sock.sendMessage(m.key.remoteJid, { text: '❌ Erro no comando.' }, { quoted: m }); } catch { }
       return true;
     }
   }
