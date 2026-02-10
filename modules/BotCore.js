@@ -890,6 +890,25 @@ class BotCore {
     }
 
     /**
+    * Helper method para enviar replies (usado pelo CommandHandler)
+    */
+    async reply(m, text, options = {}) {
+        try {
+            if (!this.sock) {
+                this.logger.warn('⚠️ Socket não disponível para enviar reply');
+                return false;
+            }
+
+            const jid = m.key.remoteJid;
+            await this.sock.sendMessage(jid, { text }, { quoted: m, ...options });
+            return true;
+        } catch (error) {
+            this.logger.error('❌ Erro ao enviar reply:', error.message);
+            return false;
+        }
+    }
+
+    /**
     * Handle muted user
     */
     async handleMutedUserMessage(m, nome) {
