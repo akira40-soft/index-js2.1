@@ -1,0 +1,11 @@
+# ... (após as instalações do apk)
+
+# ═══════════════════════════════════════════════════════════════════
+# INSTALAÇÃO MANUAL DO YT-DLP (LATEST)
+# ═══════════════════════════════════════════════════════════════════
+# Garante a versão mais recente para evitar erros de extração do YouTube
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp && \
+    echo "✅ yt-dlp instalado manualmente: $(yt-dlp --version)"
+
+# ═══════════════════════════════════════════════════════════════════

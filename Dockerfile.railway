@@ -36,7 +36,7 @@ RUN apk add --no-cache \
     jpeg-dev \
     giflib-dev \
     ffmpeg \
-    yt-dlp \
+    # yt-dlp removido do apk para instalação manual da versão latest abaixo
     ca-certificates \
     openssl \
     openssl-dev \
@@ -47,8 +47,14 @@ RUN apk add --no-cache \
     hydra \
     nikto \
     unzip \
-    perl \
-    go
+    perl
+
+# ═══════════════════════════════════════════════════════════════════
+# INSTALAÇÃO MANUAL DO YT-DLP (LATEST) - REQUISITO DEPLOY
+# ═══════════════════════════════════════════════════════════════════
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp && \
+    echo "✅ yt-dlp instalado manualmente: $(yt-dlp --version)"
 
 # ═══════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
