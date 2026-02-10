@@ -14,6 +14,10 @@ import ffmpeg from 'fluent-ffmpeg';
 import { exec, execFile, spawn, execSync } from 'child_process';
 import util from 'util';
 import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // yt-dlp ou ytdl-core (prioritário)
 let ytdl = null;
@@ -533,7 +537,6 @@ class MediaProcessor {
 
             // Tenta no PATH
             try {
-                const { execSync } = require('child_process');
                 execSync(`${binName} --version`, { stdio: 'pipe', shell: true });
                 return { modo: 'exe', cmd: binName };
             } catch (_) { }

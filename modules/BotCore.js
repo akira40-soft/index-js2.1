@@ -235,8 +235,6 @@ class BotCore {
     * Verifica e limpa credenciais antigas se necessário
     */
     async _checkAndCleanOldAuth() {
-        const fs = require('fs');
-        const path = require('path');
 
         const authPath = this.config.AUTH_FOLDER;
         const credsPath = path.join(authPath, 'creds.json');
@@ -939,7 +937,6 @@ class BotCore {
     * Limpa credenciais em caso de erro de autenticação
     */
     _cleanAuthOnError() {
-        const fs = require('fs');
         try {
             if (fs.existsSync(this.config.AUTH_FOLDER)) {
                 fs.rmSync(this.config.AUTH_FOLDER, { recursive: true, force: true });
