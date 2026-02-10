@@ -158,12 +158,6 @@ RUN npm cache clean --force 2>/dev/null || true
 # Railway usa $PORT automaticamente
 EXPOSE $PORT
 
-# ═══════════════════════════════════════════════════════════════════
-# HEALTHCHECK PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:$PORT/health 2>/dev/null || exit 1
 
 # ═══════════════════════════════════════════════════════════════════
 # COMANDO DE INICIALIZAÇÃO PARA RAILWAY (ESM - ECMAScript Modules)
