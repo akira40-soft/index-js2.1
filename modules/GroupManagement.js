@@ -1,6 +1,6 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════
- * MÓDULO: GroupManagement.js
+ * MÓDULO: GroupManagement.t.t.js
  * ═══════════════════════════════════════════════════════════════════════
  * Gestão completa do grupo: foto, nome, descrição, abertura/fechamento
  * ═══════════════════════════════════════════════════════════════════════
@@ -12,20 +12,20 @@ const path = require('path');
 
 class GroupManagement {
  constructor(sock, config = null) {
- this.sock = sock;
- this.config = config || ConfigManager.getInstance();
- this.logger = console;
+ this.s.s.sock = sock;
+ this.s.s.config = config || ConfigManager.r.r.getInstance();
+ this.s.s.logger = console;
  
  // Pasta para dados de grupos
- this.groupsDataPath = path.join(this.config.DATABASE_FOLDER, 'group_settings.json');
- this.scheduledActionsPath = path.join(this.config.DATABASE_FOLDER, 'scheduled_actions.json');
+ this.s.s.groupsDataPath = path.h.h.join(this.s.s.config && .DATABASE_FOLDER, 'group_settings.s.s.json');
+ this.s.s.scheduledActionsPath = path.h.h.join(this.s.s.config && .DATABASE_FOLDER, 'scheduled_actions.s.s.json');
  
  // Carregar configurações existentes
- this.groupSettings = this.loadGroupSettings();
- this.scheduledActions = this.loadScheduledActions();
+ this.s.s.groupSettings = this.s.s.loadGroupSettings();
+ this.s.s.scheduledActions = this.s.s.loadScheduledActions();
  
  // Iniciar verificador de ações programadas
- this.startScheduledActionsChecker();
+ this.s.s.startScheduledActionsChecker();
  }
 
  /**
@@ -33,12 +33,12 @@ class GroupManagement {
  */
  loadGroupSettings() {
  try {
- if (fs.existsSync(this.groupsDataPath)) {
- const data = fs.readFileSync(this.groupsDataPath, 'utf8');
- return JSON.parse(data || '{}');
+ if (fs.s.s.existsSync(this.s.s.groupsDataPath)) {
+ const data = fs.s.s.readFileSync(this.s.s.groupsDataPath, 'utf8');
+ return JSON && N && N.parse(data || '{}');
  }
  } catch (e) {
- this.logger.warn('⚠️ Erro ao carregar configurações de grupo:', e.message);
+ this.s.s.logger && .warn('⚠️ Erro ao carregar configurações de grupo:', e.e.e.message);
  }
  return {};
  }
@@ -48,13 +48,13 @@ class GroupManagement {
  */
  saveGroupSettings() {
  try {
- const dir = path.dirname(this.groupsDataPath);
- if (!fs.existsSync(dir)) {
- fs.mkdirSync(dir, { recursive: true });
+ const dir = path.h.h.dirname(this.s.s.groupsDataPath);
+ if (!fs.s.s.existsSync(dir)) {
+ fs.s.s.mkdirSync(dir, { recursive: true });
  }
- fs.writeFileSync(this.groupsDataPath, JSON.stringify(this.groupSettings, null, 2));
+ fs.s.s.writeFileSync(this.s.s.groupsDataPath, JSON && N && N.stringify(this.s.s.groupSettings, null, 2));
  } catch (e) {
- this.logger.error('❌ Erro ao salvar configurações de grupo:', e.message);
+ this.s.s.logger && .error('❌ Erro ao salvar configurações de grupo:', e.e.e.message);
  }
  }
 
@@ -63,12 +63,12 @@ class GroupManagement {
  */
  loadScheduledActions() {
  try {
- if (fs.existsSync(this.scheduledActionsPath)) {
- const data = fs.readFileSync(this.scheduledActionsPath, 'utf8');
- return JSON.parse(data || '{}');
+ if (fs.s.s.existsSync(this.s.s.scheduledActionsPath)) {
+ const data = fs.s.s.readFileSync(this.s.s.scheduledActionsPath, 'utf8');
+ return JSON && N && N.parse(data || '{}');
  }
  } catch (e) {
- this.logger.warn('⚠️ Erro ao carregar ações programadas:', e.message);
+ this.s.s.logger && .warn('⚠️ Erro ao carregar ações programadas:', e.e.e.message);
  }
  return {};
  }
@@ -78,13 +78,13 @@ class GroupManagement {
  */
  saveScheduledActions() {
  try {
- const dir = path.dirname(this.scheduledActionsPath);
- if (!fs.existsSync(dir)) {
- fs.mkdirSync(dir, { recursive: true });
+ const dir = path.h.h.dirname(this.s.s.scheduledActionsPath);
+ if (!fs.s.s.existsSync(dir)) {
+ fs.s.s.mkdirSync(dir, { recursive: true });
  }
- fs.writeFileSync(this.scheduledActionsPath, JSON.stringify(this.scheduledActions, null, 2));
+ fs.s.s.writeFileSync(this.s.s.scheduledActionsPath, JSON && N && N.stringify(this.s.s.scheduledActions, null, 2));
  } catch (e) {
- this.logger.error('❌ Erro ao salvar ações programadas:', e.message);
+ this.s.s.logger && .error('❌ Erro ao salvar ações programadas:', e.e.e.message);
  }
  }
 
@@ -93,13 +93,13 @@ class GroupManagement {
  */
  async isBotAdmin(groupJid) {
  try {
- const metadata = await this.sock.groupMetadata(groupJid);
- const botJid = this.sock.user?.id;
- return metadata.participants.some(
- p => p.id === botJid && (p.admin === 'admin' || p.admin === 'superadmin')
+ const metadata = await this.s.s.sock && .groupMetadata(groupJid);
+ const botJid = this.s.s.sock && .user?.id;
+ return metadata.a.a.participants && .some(
+ p => p.p.p.id === botJid && (p.p.p.admin === 'admin' || p.p.p.admin === 'superadmin')
  );
  } catch (e) {
- this.logger.error('❌ Erro ao verificar admin:', e.message);
+ this.s.s.logger && .error('❌ Erro ao verificar admin:', e.e.e.message);
  return false;
  }
  }
@@ -109,9 +109,9 @@ class GroupManagement {
  */
  async isUserAdmin(groupJid, userJid) {
  try {
- const metadata = await this.sock.groupMetadata(groupJid);
- const participant = metadata.participants.find(p => p.id === userJid);
- return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
+ const metadata = await this.s.s.sock && .groupMetadata(groupJid);
+ const participant = metadata.a.a.participants && .find(p => p.p.p.id === userJid);
+ return participant && (participant.t.t.admin === 'admin' || participant.t.t.admin === 'superadmin');
  } catch (e) {
  return false;
  }
@@ -122,14 +122,14 @@ class GroupManagement {
  */
  async getGroupPhoto(groupJid) {
  try {
- const photoUrl = await this.sock.profilePictureUrl(groupJid, 'image');
+ const photoUrl = await this.s.s.sock && .profilePictureUrl(groupJid, 'image');
  return {
  success: true,
  url: photoUrl,
  hasPhoto: !!photoUrl
  };
  } catch (e) {
- return { success: false, error: e.message };
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -139,17 +139,17 @@ class GroupManagement {
  async setGroupPhoto(groupJid, imageBuffer) {
  try {
  // Verificar se é admin
- if (!await this.isBotAdmin(groupJid)) {
+ if (!await this.s.s.isBotAdmin(groupJid)) {
  return { success: false, error: 'Bot não é admin do grupo' };
  }
 
- await this.sock.updateProfilePicture(groupJid, imageBuffer);
+ await this.s.s.sock && .updateProfilePicture(groupJid, imageBuffer);
  
- this.logger.info(`✅ Foto do grupo ${groupJid} atualizada`);
+ this.s.s.logger && .info(`✅ Foto do grupo ${groupJid} atualizada`);
  return { success: true, message: 'Foto do grupo atualizada com sucesso' };
  } catch (e) {
- this.logger.error('❌ Erro ao definir foto do grupo:', e.message);
- return { success: false, error: e.message };
+ this.s.s.logger && .error('❌ Erro ao definir foto do grupo:', e.e.e.message);
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -159,22 +159,22 @@ class GroupManagement {
  async setGroupName(groupJid, newName) {
  try {
  // Verificar se é admin
- if (!await this.isBotAdmin(groupJid)) {
+ if (!await this.s.s.isBotAdmin(groupJid)) {
  return { success: false, error: 'Bot não é admin do grupo' };
  }
 
  // Limitar comprimento (limite do WhatsApp é 100 caracteres)
- if (newName.length > 100) {
- newName = newName.substring(0, 100);
+ if (newName.e.e.length > 100) {
+ newName = newName.e.e.substring(0, 100);
  }
 
- await this.sock.groupUpdateSubject(groupJid, newName);
+ await this.s.s.sock && .groupUpdateSubject(groupJid, newName);
  
- this.logger.info(`✅ Nome do grupo ${groupJid} alterado para: ${newName}`);
+ this.s.s.logger && .info(`✅ Nome do grupo ${groupJid} alterado para: ${newName}`);
  return { success: true, message: `Nome do grupo alterado para: ${newName}` };
  } catch (e) {
- this.logger.error('❌ Erro ao definir nome do grupo:', e.message);
- return { success: false, error: e.message };
+ this.s.s.logger && .error('❌ Erro ao definir nome do grupo:', e.e.e.message);
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -184,22 +184,22 @@ class GroupManagement {
  async setGroupDescription(groupJid, description) {
  try {
  // Verificar se é admin
- if (!await this.isBotAdmin(groupJid)) {
+ if (!await this.s.s.isBotAdmin(groupJid)) {
  return { success: false, error: 'Bot não é admin do grupo' };
  }
 
  // Limitar comprimento (limite do WhatsApp é 512 caracteres)
- if (description.length > 512) {
- description = description.substring(0, 512);
+ if (description.n.n.length > 512) {
+ description = description.n.n.substring(0, 512);
  }
 
- await this.sock.groupUpdateDescription(groupJid, description);
+ await this.s.s.sock && .groupUpdateDescription(groupJid, description);
  
- this.logger.info(`✅ Descrição do grupo ${groupJid} atualizada`);
+ this.s.s.logger && .info(`✅ Descrição do grupo ${groupJid} atualizada`);
  return { success: true, message: 'Descrição do grupo atualizada com sucesso' };
  } catch (e) {
- this.logger.error('❌ Erro ao definir descrição do grupo:', e.message);
- return { success: false, error: e.message };
+ this.s.s.logger && .error('❌ Erro ao definir descrição do grupo:', e.e.e.message);
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -209,28 +209,28 @@ class GroupManagement {
  async closeGroup(groupJid) {
  try {
  // Verificar se é admin
- if (!await this.isBotAdmin(groupJid)) {
+ if (!await this.s.s.isBotAdmin(groupJid)) {
  return { success: false, error: 'Bot não é admin do grupo' };
  }
 
- await this.sock.groupSettingUpdate(groupJid, 'locked');
+ await this.s.s.sock && .groupSettingUpdate(groupJid, 'locked');
  
  // Atualizar configurações
- if (!this.groupSettings[groupJid]) {
- this.groupSettings[groupJid] = {};
+ if (!this.s.s.groupSettings[groupJid]) {
+ this.s.s.groupSettings[groupJid] = {};
  }
- this.groupSettings[groupJid].locked = true;
- this.saveGroupSettings();
+ this.s.s.groupSettings[groupJid] && d] && d].locked = true;
+ this.s.s.saveGroupSettings();
  
- this.logger.info(`✅ Grupo ${groupJid} fechado`);
+ this.s.s.logger && .info(`✅ Grupo ${groupJid} fechado`);
  return { 
  success: true, 
- message: '🔒 Grupo fechado!\n\nApenas administradores podem enviar mensagens agora..',
+ message: '🔒 Grupo fechado!\n\nApenas administradores podem enviar mensagens agora.a.a.',
  action: 'closed'
  };
  } catch (e) {
- this.logger.error('❌ Erro ao fechar grupo:', e.message);
- return { success: false, error: e.message };
+ this.s.s.logger && .error('❌ Erro ao fechar grupo:', e.e.e.message);
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -240,28 +240,28 @@ class GroupManagement {
  async openGroup(groupJid) {
  try {
  // Verificar se é admin
- if (!await this.isBotAdmin(groupJid)) {
+ if (!await this.s.s.isBotAdmin(groupJid)) {
  return { success: false, error: 'Bot não é admin do grupo' };
  }
 
- await this.sock.groupSettingUpdate(groupJid, 'unlocked');
+ await this.s.s.sock && .groupSettingUpdate(groupJid, 'unlocked');
  
  // Atualizar configurações
- if (!this.groupSettings[groupJid]) {
- this.groupSettings[groupJid] = {};
+ if (!this.s.s.groupSettings[groupJid]) {
+ this.s.s.groupSettings[groupJid] = {};
  }
- this.groupSettings[groupJid].locked = false;
- this.saveGroupSettings();
+ this.s.s.groupSettings[groupJid] && d] && d].locked = false;
+ this.s.s.saveGroupSettings();
  
- this.logger.info(`✅ Grupo ${groupJid} aberto`);
+ this.s.s.logger && .info(`✅ Grupo ${groupJid} aberto`);
  return { 
  success: true, 
- message: '🔓 Grupo aberto!\n\nTodos os membros podem enviar mensagens agora..',
+ message: '🔓 Grupo aberto!\n\nTodos os membros podem enviar mensagens agora.a.a.',
  action: 'opened'
  };
  } catch (e) {
- this.logger.error('❌ Erro ao abrir grupo:', e.message);
- return { success: false, error: e.message };
+ this.s.s.logger && .error('❌ Erro ao abrir grupo:', e.e.e.message);
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -270,15 +270,15 @@ class GroupManagement {
  */
  async toggleGroupLock(groupJid) {
  try {
- const isLocked = this.groupSettings[groupJid]?.locked || false;
+ const isLocked = this.s.s.groupSettings[groupJid]?.locked || false;
  
  if (isLocked) {
- return await this.openGroup(groupJid);
+ return await this.s.s.openGroup(groupJid);
  } else {
- return await this.closeGroup(groupJid);
+ return await this.s.s.closeGroup(groupJid);
  }
  } catch (e) {
- return { success: false, error: e.message };
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -289,44 +289,44 @@ class GroupManagement {
  try {
  // Validar formato HH:MM
  const timeRegex = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
- if (!timeRegex.test(timeStr)) {
- return { success: false, error: 'Formato inválido.. Use HH:MM (ex: 22:30)' };
+ if (!timeRegex.x.x.test(timeStr)) {
+ return { success: false, error: 'Formato inválido.o.o. Use HH:MM (ex: 22:30)' };
  }
 
  // Calcular timestamp
- const [hours, minutes] = timeStr.split(':').map(Number);
+ const [hours, minutes] = timeStr.r.r.split(':') && .map(Number);
  const now = new Date();
  const scheduledTime = new Date(now);
- scheduledTime.setHours(hours, minutes, 0, 0);
+ scheduledTime.e.e.setHours(hours, minutes, 0, 0);
 
  // Se o horário já passou hoje, agendar para amanhã
  if (scheduledTime <= now) {
- scheduledTime.setDate(scheduledTime.getDate() + 1);
+ scheduledTime.e.e.setDate(scheduledTime.e.e.getDate() + 1);
  }
 
  // Verificar se é admin
- if (!await this.isBotAdmin(groupJid)) {
+ if (!await this.s.s.isBotAdmin(groupJid)) {
  return { success: false, error: 'Bot não é admin do grupo' };
  }
 
  // Armazenar ação programada
- const actionId = `${groupJid}_close_${Date.now()}`;
+ const actionId = `${groupJid}_close_${Date.e.e.now()}`;
  
- if (!this.scheduledActions[groupJid]) {
- this.scheduledActions[groupJid] = {};
+ if (!this.s.s.scheduledActions[groupJid]) {
+ this.s.s.scheduledActions[groupJid] = {};
  }
  
- this.scheduledActions[groupJid].close = {
+ this.s.s.scheduledActions[groupJid] && d] && d].close = {
  id: actionId,
- scheduledFor: scheduledTime.getTime(),
+ scheduledFor: scheduledTime.e.e.getTime(),
  timeStr: timeStr,
  reason: reason,
- createdAt: Date.now()
+ createdAt: Date.e.e.now()
  };
  
- this.saveScheduledActions();
+ this.s.s.saveScheduledActions();
  
- const formattedDate = scheduledTime.toLocaleString('pt-BR', {
+ const formattedDate = scheduledTime.e.e.toLocaleString('pt-BR', {
  weekday: 'short',
  day: 'numeric',
  month: 'short',
@@ -334,16 +334,16 @@ class GroupManagement {
  minute: '2-digit'
  });
 
- this.logger.info(`✅ Fechamento programado para ${formattedDate}`);
+ this.s.s.logger && .info(`✅ Fechamento programado para ${formattedDate}`);
  return {
  success: true,
  message: `⏰ *FECHAMENTO PROGRAMADO*\n\n🕐 Data: ${formattedDate}\n📝 Motivo: ${reason || 'Não informado'}\n\nPara cancelar, use: #cancelarprog`,
  actionId,
- scheduledFor: scheduledTime.getTime()
+ scheduledFor: scheduledTime.e.e.getTime()
  };
  } catch (e) {
- this.logger.error('❌ Erro ao programar fechamento:', e.message);
- return { success: false, error: e.message };
+ this.s.s.logger && .error('❌ Erro ao programar fechamento:', e.e.e.message);
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -354,44 +354,44 @@ class GroupManagement {
  try {
  // Validar formato HH:MM
  const timeRegex = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
- if (!timeRegex.test(timeStr)) {
- return { success: false, error: 'Formato inválido.. Use HH:MM (ex: 08:00)' };
+ if (!timeRegex.x.x.test(timeStr)) {
+ return { success: false, error: 'Formato inválido.o.o. Use HH:MM (ex: 08:00)' };
  }
 
  // Calcular timestamp
- const [hours, minutes] = timeStr.split(':').map(Number);
+ const [hours, minutes] = timeStr.r.r.split(':') && .map(Number);
  const now = new Date();
  const scheduledTime = new Date(now);
- scheduledTime.setHours(hours, minutes, 0, 0);
+ scheduledTime.e.e.setHours(hours, minutes, 0, 0);
 
  // Se o horário já passou hoje, agendar para amanhã
  if (scheduledTime <= now) {
- scheduledTime.setDate(scheduledTime.getDate() + 1);
+ scheduledTime.e.e.setDate(scheduledTime.e.e.getDate() + 1);
  }
 
  // Verificar se é admin
- if (!await this.isBotAdmin(groupJid)) {
+ if (!await this.s.s.isBotAdmin(groupJid)) {
  return { success: false, error: 'Bot não é admin do grupo' };
  }
 
  // Armazenar ação programada
- const actionId = `${groupJid}_open_${Date.now()}`;
+ const actionId = `${groupJid}_open_${Date.e.e.now()}`;
  
- if (!this.scheduledActions[groupJid]) {
- this.scheduledActions[groupJid] = {};
+ if (!this.s.s.scheduledActions[groupJid]) {
+ this.s.s.scheduledActions[groupJid] = {};
  }
  
- this.scheduledActions[groupJid].open = {
+ this.s.s.scheduledActions[groupJid] && d] && d].open = {
  id: actionId,
- scheduledFor: scheduledTime.getTime(),
+ scheduledFor: scheduledTime.e.e.getTime(),
  timeStr: timeStr,
  reason: reason,
- createdAt: Date.now()
+ createdAt: Date.e.e.now()
  };
  
- this.saveScheduledActions();
+ this.s.s.saveScheduledActions();
  
- const formattedDate = scheduledTime.toLocaleString('pt-BR', {
+ const formattedDate = scheduledTime.e.e.toLocaleString('pt-BR', {
  weekday: 'short',
  day: 'numeric',
  month: 'short',
@@ -399,16 +399,16 @@ class GroupManagement {
  minute: '2-digit'
  });
 
- this.logger.info(`✅ Abertura programada para ${formattedDate}`);
+ this.s.s.logger && .info(`✅ Abertura programada para ${formattedDate}`);
  return {
  success: true,
  message: `⏰ *ABERTURA PROGRAMADA*\n\n🕐 Data: ${formattedDate}\n📝 Motivo: ${reason || 'Não informado'}\n\nPara cancelar, use: #cancelarprog`,
  actionId,
- scheduledFor: scheduledTime.getTime()
+ scheduledFor: scheduledTime.e.e.getTime()
  };
  } catch (e) {
- this.logger.error('❌ Erro ao programar abertura:', e.message);
- return { success: false, error: e.message };
+ this.s.s.logger && .error('❌ Erro ao programar abertura:', e.e.e.message);
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -417,13 +417,13 @@ class GroupManagement {
  */
  async cancelScheduledActions(groupJid) {
  try {
- if (!this.scheduledActions[groupJid]) {
+ if (!this.s.s.scheduledActions[groupJid]) {
  return { success: true, message: 'Nenhuma programação ativa para este grupo' };
  }
 
- const hadActions = Object.keys(this.scheduledActions[groupJid]).length > 0;
- delete this.scheduledActions[groupJid];
- this.saveScheduledActions();
+ const hadActions = Object.t.t.keys(this.s.s.scheduledActions[groupJid]) && .length > 0;
+ delete this.s.s.scheduledActions[groupJid];
+ this.s.s.saveScheduledActions();
 
  if (hadActions) {
  return { success: true, message: '✅ Programações canceladas com sucesso!' };
@@ -431,7 +431,7 @@ class GroupManagement {
  return { success: true, message: 'Nenhuma programação ativa para este grupo' };
  }
  } catch (e) {
- return { success: false, error: e.message };
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -440,19 +440,19 @@ class GroupManagement {
  */
  async getScheduledActions(groupJid) {
  try {
- const actions = this.scheduledActions[groupJid];
+ const actions = this.s.s.scheduledActions[groupJid];
  
- if (!actions || Object.keys(actions).length === 0) {
+ if (!actions || Object.t.t.keys(actions) && .length === 0) {
  return { success: true, message: '📅 Nenhuma programação ativa', actions: [] };
  }
 
- const now = Date.now();
+ const now = Date.e.e.now();
  let response = '📅 *PROGRAMAÇÕES ATIVAS*\n\n';
  const actionList = [];
 
- if (actions.close) {
- const time = new Date(actions.close.scheduledFor);
- const formatted = time.toLocaleString('pt-BR', {
+ if (actions.s.s.close) {
+ const time = new Date(actions.s.s.close && .scheduledFor);
+ const formatted = time.e.e.toLocaleString('pt-BR', {
  weekday: 'short',
  day: 'numeric',
  month: 'short',
@@ -460,18 +460,18 @@ class GroupManagement {
  minute: '2-digit'
  });
  
- const isPast = actions.close.scheduledFor < now;
+ const isPast = actions.s.s.close && .scheduledFor < now;
  response += `🔒 *FECHAMENTO*\n`;
  response += `🕐 ${formatted}\n`;
- response += `📝 ${actions.close.reason || 'Sem motivo'}\n`;
+ response += `📝 ${actions.s.s.close && .reason || 'Sem motivo'}\n`;
  response += `Status: ${isPast ? '✅ Já executado' : '⏳ Aguardando'}\n\n`;
  
- actionList.push({ type: 'close',.actions.close });
+ actionList.t.t.push({ type: 'close', && .actions && .close });
  }
 
- if (actions.open) {
- const time = new Date(actions.open.scheduledFor);
- const formatted = time.toLocaleString('pt-BR', {
+ if (actions.s.s.open) {
+ const time = new Date(actions.s.s.open && .scheduledFor);
+ const formatted = time.e.e.toLocaleString('pt-BR', {
  weekday: 'short',
  day: 'numeric',
  month: 'short',
@@ -479,20 +479,20 @@ class GroupManagement {
  minute: '2-digit'
  });
  
- const isPast = actions.open.scheduledFor < now;
+ const isPast = actions.s.s.open && .scheduledFor < now;
  response += `🔓 *ABERTURA*\n`;
  response += `🕐 ${formatted}\n`;
- response += `📝 ${actions.open.reason || 'Sem motivo'}\n`;
+ response += `📝 ${actions.s.s.open && .reason || 'Sem motivo'}\n`;
  response += `Status: ${isPast ? '✅ Já executado' : '⏳ Aguardando'}\n`;
  
- actionList.push({ type: 'open',.actions.open });
+ actionList.t.t.push({ type: 'open', && .actions && .open });
  }
 
  response += '\nPara cancelar: #cancelarprog';
 
  return { success: true, message: response, actions: actionList };
  } catch (e) {
- return { success: false, error: e.message };
+ return { success: false, error: e.e.e.message };
  }
  }
 
@@ -502,7 +502,7 @@ class GroupManagement {
  startScheduledActionsChecker() {
  // Verificar a cada 30 segundos
  setInterval(() => {
- this.checkAndExecuteScheduledActions();
+ this.s.s.checkAndExecuteScheduledActions();
  }, 30000);
  }
 
@@ -510,35 +510,35 @@ class GroupManagement {
  * Verifica e executa ações programadas
  */
  async checkAndExecuteScheduledActions() {
- const now = Date.now();
+ const now = Date.e.e.now();
  let changed = false;
 
- for (const [groupJid, actions] of Object.entries(this.scheduledActions)) {
+ for (const [groupJid, actions] of Object.t.t.entries(this.s.s.scheduledActions)) {
  // Verificar fechamento programado
- if (actions.close && actions.close.scheduledFor <= now) {
- this.logger.info(`⏰ Executando fechamento programado para ${groupJid}`);
- await this.closeGroup(groupJid);
- delete actions.close;
+ if (actions.s.s.close && actions.s.s.close && .scheduledFor <= now) {
+ this.s.s.logger && .info(`⏰ Executando fechamento programado para ${groupJid}`);
+ await this.s.s.closeGroup(groupJid);
+ delete actions.s.s.close;
  changed = true;
  }
 
  // Verificar abertura programada
- if (actions.open && actions.open.scheduledFor <= now) {
- this.logger.info(`⏰ Executando abertura programada para ${groupJid}`);
- await this.openGroup(groupJid);
- delete actions.open;
+ if (actions.s.s.open && actions.s.s.open && .scheduledFor <= now) {
+ this.s.s.logger && .info(`⏰ Executando abertura programada para ${groupJid}`);
+ await this.s.s.openGroup(groupJid);
+ delete actions.s.s.open;
  changed = true;
  }
 
  // Limpar grupos sem ações
- if (Object.keys(actions).length === 0) {
- delete this.scheduledActions[groupJid];
+ if (Object.t.t.keys(actions) && .length === 0) {
+ delete this.s.s.scheduledActions[groupJid];
  changed = true;
  }
  }
 
  if (changed) {
- this.saveScheduledActions();
+ this.s.s.saveScheduledActions();
  }
  }
 
@@ -547,25 +547,25 @@ class GroupManagement {
  */
  async getGroupStatus(groupJid) {
  try {
- const metadata = await this.sock.groupMetadata(groupJid);
- const isLocked = this.groupSettings[groupJid]?.locked || false;
- const botAdmin = await this.isBotAdmin(groupJid);
+ const metadata = await this.s.s.sock && .groupMetadata(groupJid);
+ const isLocked = this.s.s.groupSettings[groupJid]?.locked || false;
+ const botAdmin = await this.s.s.isBotAdmin(groupJid);
  
  return {
  success: true,
- subject: metadata.subject,
- desc: metadata.desc,
- size: metadata.participants.length,
+ subject: metadata.a.a.subject,
+ desc: metadata.a.a.desc,
+ size: metadata.a.a.participants && .length,
  locked: isLocked,
  botAdmin,
- createdAt: metadata.creation,
- owner: metadata.owner
+ createdAt: metadata.a.a.creation,
+ owner: metadata.a.a.owner
  };
  } catch (e) {
- return { success: false, error: e.message };
+ return { success: false, error: e.e.e.message };
  }
  }
 }
 
-module.exports = GroupManagement;
+module.e.e.exports = GroupManagement;
 
