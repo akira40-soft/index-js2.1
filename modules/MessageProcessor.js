@@ -250,7 +250,23 @@ class MessageProcessor {
             }
 
             // Try to get participant from context or from quoted message key
-            const participantJidCitado = context.participant || context.quotedMessage?.key?.participant || null;
+            let participantJidCitado = context.participant || null;
+
+            // ✅ CORREÇÃO: Em PV, detecta se é reply ao bot
+            // Em conversas privadas, context.participant é null porque não existem "participants"
+            // Mas em PV só existem 2 participantes: o usuário e o bot
+            // Então, se há reply em PV, podemos inferir que é reply ao bot
+            if (!participantJidCitado) {
+                const messageRemoteJid = message.key?.remoteJid;
+                const isPV = !String(messageRemoteJid || '').endsWith('@g.us');
+
+                if (isPV) {
+                    // Em PV, assume que a mensagem citada é do bot
+                    // pois não há como extrair o participant em conversas privadas
+                    participantJidCitado = `${this.config.BOT_NUMERO_REAL}@s.whatsapp.net`;
+                    this.logger?.debug(`🔍 [PV REPLY] Detectado reply em PV - assumindo reply ao bot`);
+                }
+            }
 
             // Extract author number
             let quotedAuthorNumero = 'desconhecido';
@@ -260,6 +276,7 @@ class MessageProcessor {
 
             // Check if reply is to bot
             const ehRespostaAoBot = this.isReplyToBot(participantJidCitado);
+
 
             // Get current message text for context hint calculation
             const currentMessageText = this.extractText(message);

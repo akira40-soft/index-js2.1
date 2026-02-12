@@ -555,8 +555,8 @@ class MediaProcessor {
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
 
             const command = process.platform === 'win32'
-                ? `"${tool.cmd}" --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`
-                : `${tool.cmd} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`;
+                ? `"${tool.cmd}" --cookies-from-browser chrome --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`
+                : `${tool.cmd} --cookies-from-browser chrome --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`;
 
             await new Promise((resolve, reject) => {
                 exec(command, { timeout: 120000, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {

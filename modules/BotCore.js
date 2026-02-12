@@ -786,9 +786,10 @@ class BotCore {
                 if (replyInfo && replyInfo.ehRespostaAoBot) {
                     deveResponder = true;
                 } else if (!ehGrupo) {
-                    // Em PV: NÃO responde se não for reply ao bot
-                    // O usuário deve responder em reply para Akira responder em reply no PV
-                    deveResponder = false;
+                    // ✅ CORREÇÃO: Em PV sempre responde para qualquer mensagem
+                    // Removido comportamento anterior que exigia reply ao bot
+                    deveResponder = true;
+                    this.logger.debug(`✅ [PV] Respondendo a mensagem privada de ${nome}`);
                 } else {
                     // Em grupo, responde se mencionado ou se contém palavra "akira"
                     if (this.messageProcessor.isBotMentioned(m)) {
@@ -823,6 +824,8 @@ class BotCore {
                 numero: numeroReal,
                 mensagem: texto,
                 tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+                grupo_id: ehGrupo ? m.key.remoteJid : null,
+                grupo_nome: ehGrupo ? (m.key.remoteJid.split('@')[0] || 'Grupo') : null,
                 tipo_mensagem: foiAudio ? 'audio' : 'texto',
                 mensagem_citada: (replyInfo && replyInfo.textoMensagemCitada) || '',
                 reply_metadata: replyMetadata
@@ -865,6 +868,7 @@ class BotCore {
                 const opcoes = ehGrupo || (replyInfo && replyInfo.ehRespostaAoBot) ? { quoted: m } : {};
                 await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
             }
+
 
             this.logger.info(`✅ [RESPONDIDO] ${resposta.substring(0, 80)}..\n`);
 

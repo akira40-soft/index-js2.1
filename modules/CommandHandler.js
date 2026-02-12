@@ -219,30 +219,50 @@ class CommandHandler {
     // ═══════════════════════════════════════════════════════════════════════
 
     async _showMenu(m) {
-        const menuText = `╔══════════════════════════════╗
-║  🤖 *AKIRA BOT V21* 🤖       ║
-╚══════════════════════════════╝
+        const menuText = `╔══════════════════════════════════════╗
+║       🤖 *AKIRA BOT V21* 🤖          ║
+╚══════════════════════════════════════╝
 
-📱 *PREFIXO:* \`${this.config.PREFIXO}\`
+📱 *PREFIXO:* #
 
-🎨 *MÍDIA*
-• \`#sticker\` - Criar figurinha
-• \`#play\` - Baixar música/vídeo
+🎨 *MÍDIA & CRIAÇÃO*
+• #sticker | #s | #fig - Criar figurinha
+• #play | #p [música] - Baixar áudio/vídeo
 
-🛡️ *SEGURANÇA (ADMIN)*
-• \`#nmap\` | \`#sqlmap\` | \`#whois\`
-• \`#dns\` | \`#geo\` | \`#nuclei\`
+🖼️ *EFEITOS DE IMAGEM*
+• #hd - Melhorar qualidade (HD)
+• #communist - Efeito vermelho
+• #angola - Fundo bandeira de Angola
+• #removebg - Remover fundo
+• #gradient - Fundo gradiente
 
 👥 *GRUPOS (ADMIN)*
-• \`#antilink\` | \`#mute\` | \`#kick\`
-• \`#promote\` | \`#level on/off\`
+• #antilink - Anti-link on/off
+• #mute | #desmute - Silenciar grupo
+• #kick @user - Remover membro
+• #add [número] - Adicionar membro  
+• #promote @user - Promover a admin
+• #demote @user - Rebaixar admin
+• #level on/off - Sistema de níveis
+• #fechar | #abrir - Fechar/abrir grupo
+
+🛡️ *CYBERSECURITY (ADMIN)*
+• #nmap [alvo] - Scanner de portas
+• #sqlmap [url] - SQL injection scanner
+• #hydra [alvo] - Brute force tool
+• #nuclei [alvo] - Vulnerability scanner
+• #whois [domínio] - Info de domínio
+• #dns [domínio] - DNS lookup
+• #geo [IP] - Geolocalização IP
 
 🎮 *UTILIDADES*
-• \`#perfil\` - Ver seus dados
-• \`#registrar\` - Criar sua conta
-• \`#level\` - Ver seu nível e XP
+• #perfil - Ver seus dados
+• #registrar - Criar conta
+• #level | #nivel - Ver XP e nível
+• #ping - Ver latência do bot
 
-*Desenvolvido por Isaac Quarenta*`;
+*Desenvolvido por Isaac Quarenta*
+*Powered by AKIRA V21 ULTIMATE*`;
         await this.bot.reply(m, menuText);
         return true;
     }
