@@ -11,6 +11,8 @@
  */
 
 import ConfigManager from './ConfigManager.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 class ModerationSystem {
     constructor(logger = null) {
@@ -47,6 +49,83 @@ class ModerationSystem {
 
         // ═══ LOG DETALHADO ═══
         this.enableDetailedLogging = true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BLACKLIST (PERSISTENTE)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    _loadBlacklist() {
+        try {
+            if (!fs.existsSync(this.blacklistPath)) {
+                // Cria diretório se não existir
+                const dir = path.dirname(this.blacklistPath);
+                if (!fs.existsSync(dir)) {
+                    fs.mkdirSync(dir, { recursive: true });
+                }
+                fs.writeFileSync(this.blacklistPath, JSON.stringify([]));
+                return [];
+            }
+            const data = fs.readFileSync(this.blacklistPath, 'utf8');
+            const parsed = JSON.parse(data);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+            this.logger.error(`❌ Erro ao ler blacklist: ${error.message}`);
+            return [];
+        }
+    }
+
+    _saveBlacklist(list) {
+        try {
+            const dir = path.dirname(this.blacklistPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(this.blacklistPath, JSON.stringify(list, null, 2));
+        } catch (error) {
+            this.logger.error(`❌ Erro ao salvar blacklist: ${error.message}`);
+        }
+    }
+
+    isBlacklisted(jid) {
+        try {
+            const list = this._loadBlacklist();
+            // Normaliza JID para remover sufixos se necessário, mas a comparação exata é preferível
+            // O bot recebe o remoteJid ou participant
+            const found = list.find(entry => entry && (entry.id === jid || entry.id === jid.split('@')[0]));
+            return !!found;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    addToBlacklist(jid, reason = 'spam_auto') {
+        const list = this._loadBlacklist();
+        if (!list.find(x => x && x.id === jid)) {
+            list.push({
+                id: jid,
+                reason,
+                addedAt: Date.now(),
+                date_str: new Date().toLocaleString('pt-BR')
+            });
+            this._saveBlacklist(list);
+            this.logger.warn(`🚫 Usuário adicionado à Blacklist: ${jid} (${reason})`);
+            return true;
+        }
+        return false;
+    }
+
+    removeFromBlacklist(jid) {
+        const list = this._loadBlacklist();
+        const initialLength = list.length;
+        const newList = list.filter(x => x && x.id !== jid);
+
+        if (newList.length < initialLength) {
+            this._saveBlacklist(newList);
+            this.logger.info(`✅ Usuário removido da Blacklist: ${jid}`);
+            return true;
+        }
+        return false;
     }
 
     /**
