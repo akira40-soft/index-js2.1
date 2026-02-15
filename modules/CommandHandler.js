@@ -41,18 +41,20 @@ const adminLog = new Map();
 // O PresenceSimulator é gerenciado via instância do BotCore ou localmente
 
 class CommandHandler {
-    constructor(sock, config, bot = null) {
+    constructor(sock, config, bot = null, messageProcessor = null) {
         this.sock = sock;
         this.config = config;
-        this.bot = bot; // Referência direta para injetar messageProcessor e outros
-        this.media = new MediaProcessor(); // Uso local se necessário, mas idealmente usa this.bot.mediaProcessor
+        this.bot = bot; // Referência para o BotCore
+        // Injeção robusta: tenta usar o passado explicitamente, ou pega do bot, ou tenta instanciar (não recomendado)
+        this.messageProcessor = messageProcessor || bot?.messageProcessor;
+        console.log(`[DEBUG] CommandHandler init. MP injetado: ${!!messageProcessor}, Bot.MP: ${!!bot?.messageProcessor}, Final: ${!!this.messageProcessor}`);
 
         // Inicializa handlers de mídia
         if (sock) {
             this.stickerHandler = new StickerViewOnceHandler(sock, this.config);
-            this.mediaProcessor = new MediaProcessor();
-            // console.log('✅ Handlers de mídia inicializados');
+            // Removido: this.mediaProcessor = new MediaProcessor(); // Redundante e perigoso
         }
+        // console.log('✅ Handlers de mídia inicializados');
 
         // Inicializa ferramentas de cybersecurity (ENTERPRISE)
         this.cybersecurityToolkit = new CybersecurityToolkit(this.config);
@@ -118,10 +120,18 @@ class CommandHandler {
         try {
             const { nome, numeroReal, texto, replyInfo, ehGrupo } = meta;
             // Extrai comando e argumentos
-            const mp = this.bot?.messageProcessor;
+            const mp = this.messageProcessor || this.bot?.messageProcessor;
 
             if (!mp) {
-                console.error('❌ [CRITICAL] messageProcessor não acessível no CommandHandler');
+                // Tentativa desesperada de recuperar do bot
+                if (this.bot?.messageProcessor) {
+                    this.messageProcessor = this.bot.messageProcessor;
+                    mp = this.messageProcessor;
+                }
+            }
+
+            if (!mp) {
+                console.error(`❌ [CRITICAL] messageProcessor não acessível. Bot: ${!!this.bot}, MP Reference: ${!!this.messageProcessor}, Bot.MP: ${!!this.bot?.messageProcessor}`);
                 return false;
             }
 
@@ -176,6 +186,22 @@ class CommandHandler {
                 case 'profile':
                 case 'info':
                     return await this._handleProfile(m, meta);
+
+                case 'rank':
+                case 'ranking':
+                case 'top':
+                    return await this._handleRank(m, ehGrupo);
+
+                case 'dono':
+                case 'owner':
+                case 'criador':
+                case 'creator':
+                    return await this._handleDono(m);
+
+                case 'report':
+                case 'bug':
+                case 'reportar':
+                    return await this._handleReport(m, fullArgs, nome, senderId, ehGrupo);
 
                 case 'registrar':
                 case 'reg':
@@ -449,6 +475,107 @@ class CommandHandler {
         const record = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
         const txt = `👤 *PERFIL:* ${nome}\n📱 *Número:* ${numeroReal}\n🎮 *Nível:* ${record.level || 0}\n⭐ *XP:* ${record.xp || 0}`;
         await this.bot.reply(m, txt);
+        return true;
+    }
+
+    async _handleRank(m, ehGrupo) {
+        if (!ehGrupo) {
+            await this.bot.reply(m, '📵 Ranking disponível apenas em grupos.');
+            return true;
+        }
+
+        if (!this.bot.levelSystem || !this.bot.levelSystem.getTopUsers) {
+            await this.bot.reply(m, '📉 Sistema de Level não disponível.');
+            return true;
+        }
+
+        const topUsers = this.bot.levelSystem.getTopUsers(m.key.remoteJid, 10);
+        if (!topUsers || topUsers.length === 0) {
+            await this.bot.reply(m, '📉 Sem dados de ranking para este grupo ainda.');
+            return true;
+        }
+
+        let msg = `🏆 *TOP 10 RANKING* 🏆\n\n`;
+        topUsers.forEach((u, i) => {
+            let medal = '';
+            if (i === 0) medal = '🥇';
+            else if (i === 1) medal = '🥈';
+            else if (i === 2) medal = '🥉';
+            else medal = `${i + 1}º`;
+
+            // Tenta obter nome do contato se possível, ou usa formatação do ID
+            const name = u.name || u.userId.split('@')[0];
+            msg += `${medal} *${name}*\n   ├ 🆙 Nível: ${u.level}\n   └ ⭐ XP: ${u.xp}\n\n`;
+        });
+
+        await this.bot.reply(m, msg);
+        return true;
+    }
+
+    async _handleDono(m) {
+        const donos = this.config.DONO_USERS;
+        if (!donos || donos.length === 0) {
+            await this.bot.reply(m, '❌ Nenhum dono configurado.');
+            return true;
+        }
+
+        // Prioriza o número solicitado pelo usuário: 244937035662
+        const principal = donos.find(d => d.numero === '244937035662') || donos[0];
+
+        // Envia contato (VCard)
+        const vcard = 'BEGIN:VCARD\n' + // metadata of the contact card
+            'VERSION:3.0\n' +
+            `FN:${principal.nomeExato}\n` + // full name
+            `ORG:Akira Enterprise;\n` + // the organization of the contact
+            `TEL;type=CELL;type=VOICE;waid=${principal.numero}:${principal.numero}\n` + // WhatsApp ID + phone number
+            'END:VCARD';
+
+        await this.sock.sendMessage(m.key.remoteJid, {
+            contacts: {
+                displayName: principal.nomeExato,
+                contacts: [{ vcard }]
+            }
+        }, { quoted: m });
+
+        // Mensagem de texto de apoio com link wa.me explícito
+        await this.bot.reply(m, `👑 *DONO DO BOT*\n\nDesenvolvido por: *${principal.nomeExato}*\n📱 *Contato Direto:* https://wa.me/${principal.numero}\n\nPowered by: *Akira V21 Ultimate*`);
+        return true;
+    }
+
+    async _handleReport(m, fullArgs, nome, senderId, ehGrupo) {
+        if (!fullArgs) {
+            await this.bot.reply(m, '❌ Uso: #report <mensagem do bug/sugestão>');
+            return true;
+        }
+
+        const reportId = Math.random().toString(36).substring(7).toUpperCase();
+        const origem = ehGrupo ? `Grupo (${m.key.remoteJid.split('@')[0]})` : 'Privado (PV)';
+        const timestamp = new Date().toLocaleString('pt-BR');
+
+        const reportMsg = `🚨 *NOVO REPORT [${reportId}]* 🚨\n\n` +
+            `👤 *De:* ${nome}\n` +
+            `📱 *Número:* ${senderId.split('@')[0]}\n` +
+            `📍 *Origem:* ${origem}\n` +
+            `🕒 *Data:* ${timestamp}\n\n` +
+            `📝 *Conteúdo:*\n${fullArgs}`;
+
+        const donos = this.config.DONO_USERS;
+        let sentCount = 0;
+
+        for (const dono of donos) {
+            if (dono.numero) {
+                const donoJid = dono.numero + '@s.whatsapp.net';
+                await this.sock.sendMessage(donoJid, { text: reportMsg });
+                sentCount++;
+            }
+        }
+
+        if (sentCount > 0) {
+            await this.bot.reply(m, `✅ *Report enviado com sucesso!*\nID: #${reportId}\n\nObrigado por colaborar com o desenvolvimento do Akira.`);
+        } else {
+            await this.bot.reply(m, '⚠️ Erro ao enviar report: Nenhum administrador disponível, mas sua mensagem foi registrada no log.');
+            console.warn(`[REPORT FALHO] ${reportMsg}`);
+        }
         return true;
     }
 

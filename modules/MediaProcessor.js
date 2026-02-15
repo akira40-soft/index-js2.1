@@ -96,19 +96,34 @@ class MediaProcessor {
             this.logger?.debug(`📋 Tipo de mensagem: ${typeof message}`);
 
             // Timeout de 30 segundos para download
-            const downloadPromise = downloadContentFromMessage(message, mimeType);
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout ao baixar mídia (30s)')), 30000)
-            );
-
-            const stream = await Promise.race([downloadPromise, timeoutPromise]);
+            // Retry loop
             let buffer = Buffer.from([]);
+            let lastError = null;
             let chunksReceived = 0;
 
-            for await (const chunk of stream) {
-                buffer = Buffer.concat([buffer, chunk]);
-                chunksReceived++;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    const downloadPromise = downloadContentFromMessage(message, mimeType);
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Timeout ao baixar mídia (30s)')), 30000)
+                    );
+
+                    const stream = await Promise.race([downloadPromise, timeoutPromise]);
+                    buffer = Buffer.from([]);
+
+                    for await (const chunk of stream) {
+                        buffer = Buffer.concat([buffer, chunk]);
+                    }
+
+                    if (buffer.length > 0) break; // Sucesso
+                } catch (err) {
+                    lastError = err;
+                    this.logger?.warn(`⚠️ Tentativa ${attempt} falhou: ${err.message}`);
+                    await new Promise(r => setTimeout(r, 1000)); // Wait 1s
+                }
             }
+
+            if (buffer.length === 0 && lastError) throw lastError;
 
             this.logger?.debug(`✅ Download concluído: ${buffer.length} bytes (${chunksReceived} chunks)`);
 
