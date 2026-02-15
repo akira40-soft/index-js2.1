@@ -27,8 +27,13 @@ import PresenceSimulator from './PresenceSimulator.js';
 
 class BotCore {
     constructor() {
+
         this.config = ConfigManager.getInstance();
-        this.logger = this.config.logger;
+        // Inicializa logger (usa o do config ou cria um novo com pino)
+        this.logger = this.config.logger || pino({
+            level: this.config.LOG_LEVEL || 'info',
+            timestamp: () => `,"time":"${new Date().toISOString()}"`
+        });
         this.sock = null;
         this.isConnected = false;
         this.reconnectAttempts = 0;
