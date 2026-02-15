@@ -275,8 +275,16 @@ class BotCore {
     */
     async processMessage(m) {
         try {
-            if (!m.message) return;
-            if (m.key.fromMe) return; // Ignora mensagens do próprio bot
+            this.logger.debug('🔹 [PIPELINE] Iniciando processMessage');
+            if (!m.message) {
+                this.logger.debug('🔹 [PIPELINE] Mensagem vazia, retornando');
+                return;
+            }
+            if (m.key.fromMe) {
+                this.logger.debug('🔹 [PIPELINE] Mensagem do próprio bot, ignorando');
+                return; // Ignora mensagens do próprio bot
+            }
+            this.logger.debug('🔹 [PIPELINE] Mensagem válida, prosseguindo');
 
             // Trata status de 'protocolMessage' (ex: mensagens apagadas)
             if (m.message.protocolMessage) return;
@@ -288,8 +296,10 @@ class BotCore {
             if (ehStatus) return; // Ignora status updates
 
             // Extrai dados básicos
+            this.logger.debug('🔹 [PIPELINE] Extraindo dados básicos');
             const nome = m.pushName || 'Usuário';
             const numeroReal = this.messageProcessor.extractUserNumber(m);
+            this.logger.debug(`🔹 [PIPELINE] Nome: ${nome}, Número: ${numeroReal}`);
 
             // Verifica lista negra
             if (this.moderationSystem && this.moderationSystem.isBlacklisted(numeroReal)) {
@@ -304,9 +314,11 @@ class BotCore {
             }
 
             // Detecta tipo de conteúdo e extrai texto
+            this.logger.debug('🔹 [PIPELINE] Detectando tipo de conteúdo');
             const texto = this.messageProcessor.extractText(m);
             const temImagem = this.messageProcessor.hasImage(m);
             const temAudio = this.messageProcessor.hasAudio(m);
+            this.logger.debug(`🔹 [PIPELINE] Texto: ${!!texto}, Imagem: ${temImagem}, Áudio: ${temAudio}`);
 
             // Verifica Anti-Link (se tiver texto)
             if (ehGrupo && texto && this.moderationSystem && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
@@ -318,7 +330,9 @@ class BotCore {
             // mas poderia ser aqui. Vamos deixar no handleTextMessage para permitir que imagens passem por enquanto ou replicar logica.
 
             // Extrai informações de Reply
+            this.logger.debug('🔹 [PIPELINE] Extraindo replyInfo');
             const replyInfo = this.messageProcessor.extractReplyInfo(m);
+            this.logger.debug('🔹 [PIPELINE] ReplyInfo extraído, iniciando roteamento');
 
             // Roteamento de tipos
             if (temImagem) {
@@ -333,8 +347,10 @@ class BotCore {
             }
 
         } catch (error) {
-            this.logger.error('❌ Erro no pipeline de mensagem:', error.message);
-            this.logger.error('📍 Stack trace:', error.stack);
+            this.logger.error('❌ Erro no pipeline de mensagem:', error?.message || 'SEM MENSAGEM');
+            this.logger.error('📍 Stack trace:', error?.stack || 'SEM STACK TRACE');
+            this.logger.error('🔍 Tipo de erro:', typeof error);
+            this.logger.error('🔍 Erro completo:', JSON.stringify(error, null, 2));
         }
     }
 
