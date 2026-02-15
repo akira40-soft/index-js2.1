@@ -334,6 +334,7 @@ class BotCore {
 
         } catch (error) {
             this.logger.error('❌ Erro no pipeline de mensagem:', error.message);
+            this.logger.error('📍 Stack trace:', error.stack);
         }
     }
 
@@ -394,11 +395,6 @@ class BotCore {
             } catch (conversionError) {
                 this.logger.error('❌ Erro na conversão base64:', conversionError.message);
                 await this.reply(m, '❌ Erro ao processar imagem...');
-                return;
-            }
-
-            if (!base64Image) {
-                this.logger.error('❌ Falha na conversão para Base64');
                 return;
             }
 
