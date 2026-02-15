@@ -274,4 +274,4 @@ class PresenceSimulator {
     }
 }
 
-module.exports = PresenceSimulator;
+export default PresenceSimulator;
