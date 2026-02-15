@@ -179,7 +179,7 @@ class BotCore {
             this.sock = makeWASocket(socketConfig);
 
             // Atualiza referência do sock nos componentes
-            if (this.commandHandler) this.commandHandler.bot = this.sock;
+            if (this.commandHandler) this.commandHandler.sock = this.sock;
             if (this.presenceSimulator) this.presenceSimulator.sock = this.sock;
 
 
@@ -292,13 +292,13 @@ class BotCore {
             const numeroReal = this.messageProcessor.extractUserNumber(m);
 
             // Verifica lista negra
-            if (this.moderationSystem && this.moderationSystem.isBlacklisted(numeroReal)) {
+            if (this.moderationSystem && this.moderationSystem.isUserBlacklisted(numeroReal)) {
                 this.logger.debug(`🚫 Mensagem ignorada de usuário banido: ${nome} (${numeroReal})`);
                 return;
             }
 
             // Verifica Mute (apenas grupos)
-            if (ehGrupo && this.moderationSystem && this.moderationSystem.isMuted(remoteJid, m.key.participant)) {
+            if (ehGrupo && this.moderationSystem && this.moderationSystem.isUserMuted(remoteJid, m.key.participant)) {
                 await this.handleMutedUserMessage(m, nome);
                 return;
             }
@@ -309,7 +309,7 @@ class BotCore {
             const temAudio = this.messageProcessor.hasAudio(m);
 
             // Verifica Anti-Link (se tiver texto)
-            if (ehGrupo && texto && this.moderationSystem && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
+            if (ehGrupo && texto && this.moderationSystem && this.moderationSystem.isAntiLinkActive(remoteJid) && this.moderationSystem.containsLink(texto)) {
                 await this.handleAntiLinkViolation(m, nome);
                 return;
             }
@@ -365,7 +365,7 @@ class BotCore {
 
             if (!imageBuffer || imageBuffer.length === 0) {
                 this.logger.error('❌ Falha: Buffer de imagem vazio ou nulo após download/decifragem');
-                await this.bot.reply(m, '❌ Não consegui baixar essa imagem...');
+                await this.reply(m, '❌ Não consegui baixar essa imagem...');
                 return;
             }
 

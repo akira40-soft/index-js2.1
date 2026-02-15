@@ -38,8 +38,7 @@ const premiumFeatureUsage = new Map();
 // Log de ações administrativas
 const adminLog = new Map();
 
-// Variável para instância do simulador
-let presenceSimulator = null;
+// O PresenceSimulator é gerenciado via instância do BotCore ou localmente
 
 class CommandHandler {
     constructor(botCore, sock = null) {
@@ -72,7 +71,7 @@ class CommandHandler {
 
         // Inicializa PresenceSimulator se socket for fornecido
         if (sock) {
-            presenceSimulator = new PresenceSimulator(sock);
+            this.presenceSimulator = new PresenceSimulator(sock);
             // console.log('✅ PresenceSimulator inicializado');
         }
     }
@@ -130,8 +129,11 @@ class CommandHandler {
             // this.logger?.debug(`[CMD] ${command} por ${nome} em ${chatJid}`);
 
             // Simulador de presença (digitação)
-            if (presenceSimulator) {
-                await presenceSimulator.simulateTyping(chatJid, command);
+            const simulator = this.presenceSimulator || (this.bot && this.bot.presenceSimulator);
+            if (simulator) {
+                // Calcula duração realista baseada no comando ou usa padrão
+                const duration = simulator.calculateTypingDuration(command);
+                await simulator.simulateTyping(chatJid, duration);
             }
 
             // Verifica permissões de dono
