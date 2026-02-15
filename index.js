@@ -87,6 +87,8 @@ let server = null;
 function initializeServer() {
   app = express();
   app.use(express.json());
+  // Ko-fi envia webhooks como application/x-www-form-urlencoded
+  app.use(express.urlencoded({ extended: true }));
 
   // ═══ Middleware para logging ═══
   app.use((req, res, next) => {
