@@ -41,10 +41,11 @@ const adminLog = new Map();
 // O PresenceSimulator é gerenciado via instância do BotCore ou localmente
 
 class CommandHandler {
-    constructor(sock, config) {
+    constructor(sock, config, bot = null) {
         this.sock = sock;
         this.config = config;
-        this.media = new MediaProcessor();
+        this.bot = bot; // Referência direta para injetar messageProcessor e outros
+        this.media = new MediaProcessor(); // Uso local se necessário, mas idealmente usa this.bot.mediaProcessor
 
         // Inicializa handlers de mídia
         if (sock) {
@@ -116,9 +117,14 @@ class CommandHandler {
         // meta: { nome, numeroReal, texto, replyInfo, ehGrupo }
         try {
             const { nome, numeroReal, texto, replyInfo, ehGrupo } = meta;
-            const mp = this.bot.messageProcessor;
-
             // Extrai comando e argumentos
+            const mp = this.bot?.messageProcessor;
+
+            if (!mp) {
+                console.error('❌ [CRITICAL] messageProcessor não acessível no CommandHandler');
+                return false;
+            }
+
             const parsed = mp.parseCommand(texto);
             if (!parsed) return false;
 

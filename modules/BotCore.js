@@ -121,9 +121,8 @@ class BotCore {
 
             // CommandHandler pode falhar no Hugging Face, tratar separadamente
             try {
-                this.commandHandler = new CommandHandler(this.sock, this.config);
-                this.commandHandler.bot = this;
-                this.logger.debug('✅ CommandHandler inicializado');
+                this.commandHandler = new CommandHandler(this.sock, this.config, this);
+                this.logger.debug('✅ CommandHandler inicializado com injeção de dependência');
             } catch (commandError) {
                 this.logger.warn(`⚠️ CommandHandler falhou: ${commandError.message}`);
                 this.logger.warn('⚠️Continuando sem CommandHandler (modo limitado)');
