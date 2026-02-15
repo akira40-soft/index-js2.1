@@ -21,6 +21,24 @@ class AudioProcessor {
         this.tempFolder = this.config?.TEMP_FOLDER || './temp';
         this.sttCache = new Map();
         this.ttsCache = new Map();
+
+        // Filtros de Áudio (Legacy + Novos)
+        this.AUDIO_FILTERS = {
+            'bass': 'firequalizer=gain_entry=\'entry(0,10);entry(250,20);entry(4000,-10)\'',
+            'esquilo': 'asetrate=44100*2,atempo=0.5',
+            'gemuk': 'asetrate=44100*0.5,atempo=2.0',
+            'nightcore': 'asetrate=44100*1.25,atempo=1.0',
+            'earrape': 'volume=100',
+            'fast': 'atempo=1.63,atempo=1.63',
+            'fat': 'atempo=1.6,asetrate=22100',
+            'reverse': 'areverse',
+            'robot': 'afftfilt=real=\'hypot(re,im)*sin(0)\':imag=\'hypot(re,im)*cos(0)\':win_size=512:overlap=0.75',
+            'slow': 'atempo=0.7,atempo=0.7',
+            'smooth': 'minterpolate=\'mi_mode=mci:mc_mode=aobmc:vsbmc=1:fps=120\'',
+            'tupai': 'atempo=0.5,asetrate=65100',
+            'treble': 'treble=g=10',
+            'echo': 'aecho=0.8:0.9:1000:0.3'
+        };
     }
 
     /**
@@ -269,65 +287,48 @@ class AudioProcessor {
     /**
     * Aplica efeito de áudio (nightcore, slow, bass, etc)
     */
-    async applyAudioEffect(inputBuffer, effect = 'normal') {
+    /**
+    * Aplica efeito de áudio (nightcore, slow, bass, etc)
+    */
+    async applyAudioEffect(inputBuffer, effectName = 'normal') {
         try {
+            const effectKey = effectName.toLowerCase();
+            const filterStr = this.AUDIO_FILTERS[effectKey];
+
+            if (!filterStr && effectKey !== 'normal') {
+                return {
+                    sucesso: false,
+                    error: `Efeito '${effectName}' não encontrado.`
+                };
+            }
+
+            // Se for normal ou sem filtro, retorna original
+            if (effectKey === 'normal' || !filterStr) {
+                return { sucesso: true, buffer: inputBuffer, effect: 'normal' };
+            }
+
             const inputPath = this.generateRandomFilename('mp3');
             const outputPath = this.generateRandomFilename('mp3');
 
             fs.writeFileSync(inputPath, inputBuffer);
 
-            let audioFilter = '';
-            let speed = 1;
-            let pitch = 0;
-
-            switch (effect.toLowerCase()) {
-                case 'nightcore':
-                    speed = 1.5;
-                    pitch = 8;
-                    audioFilter = 'asetrate=44100*1.5,atempo=1/1.5';
-                    break;
-                case 'slow':
-                    speed = 0.7;
-                    audioFilter = 'atempo=0.7';
-                    break;
-                case 'fast':
-                    speed = 1.3;
-                    audioFilter = 'atempo=1.3';
-                    break;
-                case 'bass':
-                    audioFilter = 'bass=g=10';
-                    break;
-                case 'treble':
-                    audioFilter = 'treble=g=10';
-                    break;
-                case 'echo':
-                    audioFilter = 'aecho=0.8:0.9:1000:0.3';
-                    break;
-                default:
-                    // normal - no filter
-                    break;
-            }
-
-            if (!audioFilter) {
-                // Sem efeito, copia direto
-                await this.cleanupFile(inputPath);
-                return { sucesso: true, buffer: inputBuffer };
-            }
+            this.logger?.info(`🎵 Aplicando efeito '${effectName}'...`);
 
             await new Promise((resolve, reject) => {
-                let cmd = ffmpeg(inputPath);
-                if (audioFilter) {
-                    cmd = cmd.audioFilter(audioFilter);
-                }
-                cmd
-                    .outputOptions('-q:a 5')
+                ffmpeg(inputPath)
+                    .audioFilters(filterStr)
+                    .outputOptions('-q:a 5') // Qualidade VBR
+                    .save(outputPath)
                     .on('end', resolve)
-                    .on('error', reject)
-                    .save(outputPath);
+                    .on('error', (err) => {
+                        this.logger?.error(`❌ Erro FFmpeg (${effectName}):`, err.message);
+                        reject(err);
+                    });
             });
 
             const resultBuffer = fs.readFileSync(outputPath);
 
+            // Cleanup
             await Promise.all([
                 this.cleanupFile(inputPath),
                 this.cleanupFile(outputPath)
@@ -336,12 +337,12 @@ class AudioProcessor {
             return {
                 sucesso: true,
                 buffer: resultBuffer,
-                effect: effect,
+                effect: effectName,
                 size: resultBuffer.length
             };
 
         } catch (error) {
-            this.logger?.error(`❌ Erro ao aplicar efeito ${effect}:`, error.message);
+            this.logger?.error(`❌ Erro ao aplicar efeito ${effectName}:`, error.message);
             return {
                 sucesso: false,
                 error: error.message

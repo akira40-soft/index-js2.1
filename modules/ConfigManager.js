@@ -23,12 +23,13 @@ class ConfigManager {
         this.API_TIMEOUT = parseInt(process.env?.API_TIMEOUT || 120000);
         this.API_RETRY_ATTEMPTS = parseInt(process.env?.API_RETRY_ATTEMPTS || 3);
         this.API_RETRY_DELAY = parseInt(process.env?.API_RETRY_DELAY || 1000);
+        this.BASE_URL = process.env?.BASE_URL || 'https://index-js21-production.up.railway.app'; // URL de Produção
 
         // ═══ BOT IDENTITY ═══
         this.BOT_NUMERO_REAL = process.env?.BOT_NUMERO || '40755431264474';
         this.BOT_NAME = process.env?.BOT_NAME || 'belmira';
         this.BOT_VERSION = 'v21.1.02.2025';
-        this.PREFIXO = process.env?.PREFIXO || '#';
+        this.PREFIXO = process.env?.PREFIXO || '*';
 
         // ═══ PATHS E FOLDERS ═══
         // HF SPACES: Usar /tmp para garantir permissões de escrita
@@ -42,9 +43,9 @@ class ConfigManager {
         this.LOGS_FOLDER = process.env?.LOGS_FOLDER || path.join(baseDataPath, 'logs');
 
         // ═══ STT (SPEECH-TO-TEXT) ═══
-        this.DEEPGRAM_API_KEY = process.env?.DEEPGRAM_API_KEY || '';
+        this.DEEPGRAM_API_KEY = process.env?.DEEPGRAM_API_KEY || '2700019dc80925c32932ab0aba44d881d20d39f7';
         this.DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
-        this.DEEPGRAM_MODEL = process.env?.DEEPGRAM_MODEL || 'nova-2';
+        this.DEEPGRAM_MODEL = process.env?.DEEPGRAM_MODEL || 'nova-3';
         this.STT_LANGUAGE = process.env?.STT_LANGUAGE || 'pt';
 
         // ═══ TTS (TEXT-TO-SPEECH) ═══
@@ -92,7 +93,10 @@ class ConfigManager {
         this.DONO_USERS = [
             { numero: '244937035662', nomeExato: 'Isaac Quarenta' },
             { numero: '244978787009', nomeExato: 'Isaac Quarenta' },
-            { numero: '24478787009', nomeExato: 'Isaac Quarenta' }
+            { numero: '202391978787009', nomeExato: 'Isaac Quarenta' },
+            { numero: '24491978787009', nomeExato: 'Isaac Quarenta' },
+            { numero: '24478787009', nomeExato: 'Isaac Quarenta' },
+            { numero: '37839265886398', nomeExato: 'Bot Admin' }
         ];
 
         // ═══ FEATURES ═══

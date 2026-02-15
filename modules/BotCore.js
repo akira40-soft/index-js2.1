@@ -1,34 +1,17 @@
 /**
-* ═══════════════════════════════════════════════════════════════════════
-* CLASSE: BotCore
-* ═══════════════════════════════════════════════════════════════════════
-* Núcleo do bot: Baileys wrapper, event handling, orquestração
-* Main loop e gerenciamento de conexão
-* ═══════════════════════════════════════════════════════════════════════
-*/
+ * ═══════════════════════════════════════════════════════════════════════
+ * CLASSE: BotCore
+ * ═══════════════════════════════════════════════════════════════════════
+ * Núcleo central do bot Akira.
+ * Gerencia conexão, eventos do socket, e orquestra os módulos de processamento.
+ * ═══════════════════════════════════════════════════════════════════════
+ */
 
-// ═══════════════════════════════════════════════════════════════════════
-// HF SPACES DNS CORRECTIONS - CORREÇÃO CRÍTICA PARA QR CODE
-// ═══════════════════════════════════════════════════════════════════════
-import HFCorrections from './HFCorrections.js';
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay } from '@whiskeysockets/baileys';
+import fs from 'fs';
+import path from 'path';
+import pino from 'pino'; // Logger usado pelo Baileys
 
-// Inicializa correções DNS para HF Spaces
-HFCorrections.configureDNS();
-
-// Função helper para obter IP direto do WhatsApp
-function getWhatsAppFallbackIP() {
-    return HFCorrections.getWhatsAppIP();
-}
-
-import {
-    default as makeWASocket,
-    useMultiFileAuthState,
-    fetchLatestBaileysVersion,
-    Browsers,
-    delay,
-    getContentType
-} from '@whiskeysockets/baileys';
-import pino from 'pino';
 import ConfigManager from './ConfigManager.js';
 import APIClient from './APIClient.js';
 import AudioProcessor from './AudioProcessor.js';
@@ -36,18 +19,24 @@ import MediaProcessor from './MediaProcessor.js';
 import MessageProcessor from './MessageProcessor.js';
 import ModerationSystem from './ModerationSystem.js';
 import LevelSystem from './LevelSystem.js';
+import RegistrationSystem from './RegistrationSystem.js';
+import PaymentManager from './PaymentManager.js';
 import CommandHandler from './CommandHandler.js';
-import fs from 'fs';
-import path from 'path';
+import HFCorrections from './HFCorrections.js';
+import PresenceSimulator from './PresenceSimulator.js';
 
 class BotCore {
     constructor() {
         this.config = ConfigManager.getInstance();
-        // Pino configuration optimized for Railway - SIMPLIFIED
-        // Remove pino-pretty transport to avoid "unable to determine transport target" error
-        this.logger = pino({
-            level: this.config.LOG_LEVEL || 'info'
-        });
+        this.logger = this.config.logger;
+        this.sock = null;
+        this.isConnected = false;
+        this.reconnectAttempts = 0;
+        this.MAX_RECONNECT_ATTEMPTS = 5; // Limite de tentativas antes de desistir temporariamente
+        this.connectionStartTime = null;
+        this.qrTimeout = null;
+        this.currentQR = null;
+        this.BOT_JID = null;
 
         // Componentes
         this.apiClient = null;
@@ -56,23 +45,12 @@ class BotCore {
         this.messageProcessor = null;
         this.moderationSystem = null;
         this.levelSystem = null;
+        this.registrationSystem = null;
+        this.paymentManager = null;
         this.commandHandler = null;
+        this.presenceSimulator = null;
 
-        // Estado
-        this.sock = null;
-        this.BOT_JID = null;
-        this.currentQR = null;
-        this.isConnected = false;
-        this.lastProcessedTime = 0;
-        this.processadas = new Set();
-        this.reconnectAttempts = 0;
-        this.qrTimeout = null;
-        this.connectionStartTime = null;
-
-        // Armazenamento
-        this.store = null;
-
-        // Event listeners
+        // Event listeners externos
         this.eventListeners = {
             onQRGenerated: null,
             onConnected: null,
@@ -81,120 +59,32 @@ class BotCore {
     }
 
     /**
-    * Inicializa o bot
+    * Inicializa e conecta o bot
     */
-    async initialize() {
+    async start() {
         try {
-            this.logger.info('🔧 Inicializando BotCore..');
+            this.logger.info('🚀 Iniciando BotCore..');
 
-            // Log da porta do servidor
-            this.logger.info(`🌐 Porta do servidor: ${this.config.PORT}`);
+            // Aplica correções para HF Spaces se necessário
+            HFCorrections.apply();
 
-            // Valida configurações
-            if (!this.config.validate()) {
-                throw new Error('Configurações inválidas');
-            }
+            // Valida diretórios
+            this.config.validateDirectories();
 
-            // Mostra configurações
-            this.config.logConfig();
-
-            // Cria pastas necessárias com tratamento de erro
-            this.ensureFolders();
-
-            // Inicializa componentes
+            // Inicializa componentes (agora seguro chamar antes do socket completo,
+            // mas CommandHandler precisa ser reinicializado depois que o socket existir)
             this.initializeComponents();
 
-            this.logger.info('✅ BotCore inicializado');
-            return true;
+            await this.connect();
 
         } catch (error) {
-            this.logger.error('❌ Erro ao inicializar:', error.message);
-            throw error;
+            this.logger.error('❌ Erro fatal ao iniciar bot:', error.message);
+            process.exit(1);
         }
     }
 
     /**
-    * Cria pastas necessárias com tratamento robusto para Hugging Face
-    */
-    ensureFolders() {
-        // Primeiro, tenta os caminhos padrão
-        const defaultFolders = [
-            this.config.TEMP_FOLDER,
-            this.config.AUTH_FOLDER,
-            this.config.DATABASE_FOLDER,
-            this.config.LOGS_FOLDER
-        ];
-
-        // Lista de fallbacks para Hugging Face
-        const fallbackBase = '/tmp/akira_data';
-        const fallbackFolders = [
-            path.join(fallbackBase, 'temp'),
-            path.join(fallbackBase, 'auth_info_baileys'),
-            path.join(fallbackBase, 'database'),
-            path.join(fallbackBase, 'logs')
-        ];
-
-        this.logger.info('📁 Criando diretórios necessários..');
-
-        // Tentar criar diretórios padrão primeiro
-        let useFallback = false;
-        for (let i = 0; i < defaultFolders.length; i++) {
-            const folder = defaultFolders[i];
-            try {
-                if (!fs.existsSync(folder)) {
-                    fs.mkdirSync(folder, { recursive: true });
-                    this.logger.debug(`✅ Pasta criada (padrão): ${folder}`);
-                } else {
-                    this.logger.debug(`✅ Pasta já existe: ${folder}`);
-                }
-            } catch (error) {
-                this.logger.warn(`⚠️ Erro ao criar pasta padrão ${folder}: ${error.message}`);
-                useFallback = true;
-                break;
-            }
-        }
-
-        // Se falhou em algum diretório padrão, usar fallback para Hugging Face
-        if (useFallback) {
-            this.logger.info('🔄 Usando diretórios de fallback para Hugging Face Spaces..');
-
-            // Primeiro cria a pasta base de fallback
-            try {
-                if (!fs.existsSync(fallbackBase)) {
-                    fs.mkdirSync(fallbackBase, { recursive: true });
-                    this.logger.info(`✅ Pasta base de fallback criada: ${fallbackBase}`);
-                }
-            } catch (error) {
-                this.logger.error(`❌ Erro crítico ao criar pasta base de fallback: ${error.message}`);
-                throw error;
-            }
-
-            // Cria todas as subpastas de fallback
-            fallbackFolders.forEach(folder => {
-                try {
-                    if (!fs.existsSync(folder)) {
-                        fs.mkdirSync(folder, { recursive: true });
-                        this.logger.info(`✅ Pasta de fallback criada: ${folder}`);
-                    }
-                } catch (error) {
-                    this.logger.error(`❌ Erro ao criar pasta de fallback ${folder}: ${error.message}`);
-                }
-            });
-
-            // Atualiza configurações para usar os caminhos de fallback
-            this.config.TEMP_FOLDER = fallbackFolders[0];
-            this.config.AUTH_FOLDER = fallbackFolders[1];
-            this.config.DATABASE_FOLDER = fallbackFolders[2];
-            this.config.LOGS_FOLDER = fallbackFolders[3];
-
-            this.logger.info('🔄 Configurações atualizadas para usar caminhos de fallback');
-        } else {
-            this.logger.info('✅ Todos os diretórios criados com sucesso');
-        }
-    }
-
-    /**
-    * Inicializa todos os componentes
+    * Inicializa módulos auxiliares
     */
     initializeComponents() {
         try {
@@ -206,14 +96,22 @@ class BotCore {
             this.messageProcessor = new MessageProcessor(this.logger);
             this.moderationSystem = new ModerationSystem(this.logger);
             this.levelSystem = new LevelSystem(this.logger);
+            this.registrationSystem = new RegistrationSystem(this.logger);
+
+            // Inicializa PaymentManager (passando this para acessar SubscriptionManager depois)
+            // Nota: PaymentManager precisa de this.subscriptionManager que já foi init acima
+            this.paymentManager = new PaymentManager(this, this.subscriptionManager);
+
+            // Inicializa PresenceSimulator
+            this.presenceSimulator = new PresenceSimulator(this.sock || null);
 
             // CommandHandler pode falhar no Hugging Face, tratar separadamente
             try {
-                this.commandHandler = new CommandHandler(this);
+                this.commandHandler = new CommandHandler(this, this.sock);
                 this.logger.debug('✅ CommandHandler inicializado');
             } catch (commandError) {
                 this.logger.warn(`⚠️ CommandHandler falhou: ${commandError.message}`);
-                this.logger.warn('⚠️ Continuando sem CommandHandler (modo limitado)');
+                this.logger.warn('⚠️Continuando sem CommandHandler (modo limitado)');
                 this.commandHandler = null;
             }
 
@@ -225,474 +123,297 @@ class BotCore {
     }
 
     /**
-    * Cria agente HTTP personalizado para ambientes restritos (HF Spaces)
-    */
-    _createCustomAgent() {
-        return HFCorrections.createHFAgent();
-    }
-
-    /**
-    * Verifica e limpa credenciais antigas se necessário
-    */
-    async _checkAndCleanOldAuth() {
-
-        const authPath = this.config.AUTH_FOLDER;
-        const credsPath = path.join(authPath, 'creds.json');
-
-        try {
-            if (fs.existsSync(credsPath)) {
-                const stats = fs.statSync(credsPath);
-                const ageHours = (Date.now() - stats.mtime.getTime()) / (1000 * 60 * 60);
-
-                this.logger.info(`📄 Credenciais encontradas (${ageHours.toFixed(1)}h atrás)`);
-
-                // REMOVIDO: Limpeza automática após 24h - Mantém conexão estável no HF
-                // Credenciais são mantidas indefinidamente para evitar QR code diário
-
-                // Verifica se o arquivo de credenciais é válido
-                const credsContent = fs.readFileSync(credsPath, 'utf8');
-                const creds = JSON.parse(credsContent);
-
-                if (!creds || !creds.me) {
-                    this.logger.warn('📄 Credenciais inválidas detectadas. Forçando novo login..');
-                    fs.rmSync(authPath, { recursive: true, force: true });
-                    this.isConnected = false;
-                    this.currentQR = null;
-                    this.BOT_JID = null;
-                    return;
-                }
-
-                this.logger.info('✅ Credenciais válidas encontradas');
-                this.logger.info(`🤖 Bot registrado como: ${creds.me.id || 'Desconhecido'}`);
-            } else {
-                this.logger.info('📱 Nenhuma credencial salva. Aguardando QR code..');
-                this.isConnected = false;
-                this.BOT_JID = null;
-            }
-        } catch (error) {
-            this.logger.warn('⚠️ Erro ao verificar credenciais:', error.message);
-            // Em caso de erro, limpa tudo e força novo login
-            try {
-                if (fs.existsSync(authPath)) {
-                    fs.rmSync(authPath, { recursive: true, force: true });
-                }
-            } catch (e) {
-                this.logger.warn('Erro ao limpar pasta auth:', e.message);
-            }
-            this.isConnected = false;
-            this.currentQR = null;
-            this.BOT_JID = null;
-        }
-    }
-
-    /**
-    * Conecta ao WhatsApp
+    * Estabelece conexão com WhatsApp
     */
     async connect() {
         try {
-            // Marca o tempo de início da conexão
-            this.connectionStartTime = Date.now();
-
-            // Limpa timeout anterior se existir
-            if (this.qrTimeout) {
-                clearTimeout(this.qrTimeout);
-                this.qrTimeout = null;
-            }
-
-            // Evita múltiplas conexões simultâneas
-            if (this.sock && this.sock.ws && this.sock.ws.readyState === 1) {
-                this.logger.info('🔄 Já conectado, ignorando tentativa de reconexão');
-                return;
-            }
-
-            this.logger.info('🔗 Conectando ao WhatsApp..');
-            this.logger.info(`📁 Usando pasta de auth: ${this.config.AUTH_FOLDER}`);
-
-            // ═══ VERIFICAÇÃO DE DNS OTIMIZADA PARA HF SPACES ═══
-            console.log('🔍 Verificando resolução DNS (via HFCorrections)..');
-
-            // Verifica conectividade de rede antes de tentar conectar
-            try {
-                await HFCorrections.verifyHFNetwork();
-            } catch (netError) {
-                console.log('⚠️ Verificação de rede ignorada, continuando..');
-            }
-
-            // Verifica se devemos limpar credenciais antigas
-            await this._checkAndCleanOldAuth();
-
             const { state, saveCreds } = await useMultiFileAuthState(this.config.AUTH_FOLDER);
-            const { version } = await fetchLatestBaileysVersion();
+            const { version, isLatest } = await fetchLatestBaileysVersion();
 
-            this.logger.info(`📦 Versão Baileys: ${version}`);
+            this.logger.info(`📡 Conectando ao WhatsApp v${version.join('.')} (Latest: ${isLatest})`);
 
-            // Configurações otimizadas para Hugging Face Spaces
+            // Configuração do Socket
             const socketConfig = {
                 version,
-                auth: state,
-                logger: pino({ level: 'silent' }), // Silencia logs do Baileys
-                browser: Browsers.ubuntu('Chrome'), // Alterado para Ubuntu/Chrome (mais estável em container)
-                markOnlineOnConnect: true,
-                syncFullHistory: false,
-                printQRInTerminal: false, // Não mostra QR no terminal (usamos web)
-                connectTimeoutMs: 180000, // Aumentado para 3 minutos para ambientes lentos
-                qrTimeout: 120000, // 120 segundos para QR
-                defaultQueryTimeoutMs: 60000,
-                // Configurações otimizadas para ambientes com conectividade limitada
-                keepAliveIntervalMs: 45000, // Aumentado para manter conexão
-                retryRequestDelayMs: 8000, // Aumentado delay entre retentativas
-                maxRetries: 3, // Reduzido número de retentativas
-                // Configurações específicas para ambientes restritos
-                agent: this._createCustomAgent(),
-                // Força uso de IPv4
-                fetchAgent: this._createCustomAgent(),
-                // Configurações de WebSocket otimizadas
-                wsOptions: HFCorrections.createWebSocketOptions(),
+                logger: pino({ level: 'silent' }), // Silencia logs internos do Baileys para limpar console
+                printQRInTerminal: true, // Útil para dev local
+                auth: {
+                    creds: state.creds,
+                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
+                },
+                browser: ['Akira Bot', 'Chrome', '1.0.0'],
+                generateHighQualityLinkPreview: true,
                 getMessage: async (key) => {
-                    if (!key) return undefined;
-                    try {
-                        if (this.store && typeof this.store.loadMessage === 'function') {
-                            const msg = await this.store.loadMessage(key.remoteJid, key.id);
-                            return msg ? msg.message : undefined;
-                        }
-                    } catch (e) {
-                        this.logger.debug('Erro ao carregar mensagem:', e.message);
-                    }
-                    return undefined;
-                }
+                    // Necessário para suportar mensagens antigas/contexto
+                    return { conversation: 'hello' };
+                },
+                connectTimeoutMs: 60000,
+                defaultQueryTimeoutMs: 60000,
+                keepAliveIntervalMs: 10000,
+                emitOwnEvents: false,
+                retryRequestDelayMs: 250
             };
 
-            this.logger.debug('⚙️ Configuração do socket:', JSON.stringify(socketConfig, null, 2));
+            // Ajuste para proxy/agente se estiver no HF Space ou ambiente restrito
+            const agent = HFCorrections.getAgent();
+            if (agent) {
+                socketConfig.agent = agent;
+                this.logger.info('🌐 Usando agente HTTP personalizado para conexão');
+            }
 
+            // Cria o socket
             this.sock = makeWASocket(socketConfig);
 
-            // Vincula store se existir
-            try {
-                if (this.store && typeof this.store.bind === 'function') {
-                    this.store.bind(this.sock.ev);
-                    this.logger.debug('✅ Store vinculada ao socket');
+            // Atualiza referência do sock nos componentes
+            if (this.commandHandler) this.commandHandler.bot = this.sock;
+            if (this.presenceSimulator) this.presenceSimulator.sock = this.sock;
+
+
+            // ═══ EVENTOS DE CONEXÃO ═══
+            this.sock.ev.on('connection.update', async (update) => {
+                const { connection, lastDisconnect, qr } = update;
+
+                if (qr) {
+                    this.logger.info('📸 QR Code recebido');
+                    this.currentQR = qr;
+
+                    // Notifica listener externo (para frontend/API)
+                    if (this.eventListeners.onQRGenerated) {
+                        this.eventListeners.onQRGenerated(qr);
+                    }
                 }
-            } catch (e) {
-                this.logger.warn('⚠️ Erro ao vincular store:', e.message);
-            }
 
-            // Event listeners
-            this.sock.ev.on('creds.update', saveCreds);
-            this.sock.ev.on('connection.update', this.handleConnectionUpdate.bind(this));
-            this.sock.ev.on('messages.upsert', this.handleMessagesUpsert.bind(this));
+                if (connection === 'close') {
+                    this.isConnected = false;
+                    this.currentQR = null;
+                    const reason = lastDisconnect?.error?.output?.statusCode;
+                    const shouldReconnect = reason !== DisconnectReason.loggedOut;
 
-            // Timeout para forçar geração de QR se não vier automaticamente
-            this.qrTimeout = setTimeout(() => {
-                if (!this.currentQR && !this.isConnected) {
-                    this.logger.warn('⏰ QR não gerado automaticamente. Tentando forçar..');
-                    this._forceQRGeneration();
+                    this.logger.warn(`🔴 Conexão fechada. Motivo: ${reason}. Reconectar: ${shouldReconnect}`);
+
+                    if (this.eventListeners.onDisconnected) {
+                        this.eventListeners.onDisconnected(reason);
+                    }
+
+                    if (shouldReconnect) {
+                        if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
+                            this.reconnectAttempts++;
+                            const delayMs = Math.min(this.reconnectAttempts * 2000, 10000); // Backoff exponencial
+                            this.logger.info(`⏳ Tentando reconectar em ${delayMs}ms (Tentativa ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})..`);
+                            await delay(delayMs);
+                            this.connect();
+                        } else {
+                            this.logger.error('❌ Muitas falhas de conexão. Reiniciando processo..');
+                            // Em containers, sair faz o orquestrador reiniciar
+                            // Em dev local, força restart seguro
+                            process.exit(1);
+                        }
+                    } else {
+                        this.logger.info('🔒 Desconectado permanentemente (Logout ou Sessão Inválida)');
+                        // Limpa auth folder para forçar novo QR na próxima vez
+                        this._cleanAuthOnError();
+                    }
+                } else if (connection === 'open') {
+                    this.logger.info('✅ CONEXÃO ESTABELECIDA COM SUCESSO!');
+                    this.isConnected = true;
+                    this.reconnectAttempts = 0;
+                    this.currentQR = null;
+                    this.connectionStartTime = Date.now();
+
+                    const userJid = this.sock.user?.id;
+                    this.BOT_JID = userJid;
+                    this.logger.info(`🤖 Logado como: ${userJid}`);
+
+                    if (this.eventListeners.onConnected) {
+                        this.eventListeners.onConnected(userJid);
+                    }
+
+                    // Envia mensagem de "Estou online" para o número do dono (opcional)
+                    const ownerNumber = this.config.BOT_NUMERO_REAL; // ou owner number real
+                    // await this.sock.sendMessage(ownerNumber + '@s.whatsapp.net', { text: '🤖 Akira Online!' });
                 }
-            }, 25000); // Aumentado para 25 segundos
-
-            this.logger.info('✅ Conexão inicializada - Aguardando QR code ou conexão..');
-
-        } catch (error) {
-            this.logger.error('❌ Erro na conexão:', error.message);
-            this.logger.error(error.stack);
-
-            // Reconecta automaticamente após erro
-            this._scheduleReconnect();
-            throw error;
-        }
-    }
-
-    /**
-    * Agenda reconexão automática
-    */
-    _scheduleReconnect() {
-        const reconnectDelay = Math.min(10000 * Math.pow(1.5, this.reconnectAttempts), 120000);
-        this.reconnectAttempts = (this.reconnectAttempts || 0) + 1;
-
-        this.logger.info(`🔄 Reconectando em ${reconnectDelay / 1000}s.. (tentativa ${this.reconnectAttempts})`);
-
-        setTimeout(() => {
-            this.logger.info('🔄 Iniciando reconexão..');
-            this.connect().catch(e => this.logger.error('Erro na reconexão:', e.message));
-        }, reconnectDelay);
-    }
-
-    /**
-    * Handle connection update
-    */
-    async handleConnectionUpdate(update) {
-        try {
-            const { connection, lastDisconnect, qr } = update;
-
-            // Log detalhado para debugging
-            this.logger.debug(`🔄 Connection update received:`, {
-                connection,
-                hasQR: !!qr,
-                lastDisconnect: lastDisconnect ? 'yes' : 'no'
             });
 
-            if (qr) {
-                this.currentQR = qr;
-                this.logger.info('📱 QR Code gerado - pronto para scan!');
-                this.logger.info(`🔗 Acesse: http://localhost:${this.config.PORT}/qr`);
+            // ═══ EVENTOS DE CREDENCIAIS ═══
+            this.sock.ev.on('creds.update', saveCreds);
 
-                // Log extra para web
-                console.log('\n' + '═'.repeat(70));
-                console.log('📱 QR CODE DISPONÍVEL NA WEB!');
-                console.log('═'.repeat(70));
-                console.log(`🔗 URL: http://localhost:${this.config.PORT}/qr`);
-                console.log('⏳ Válido por 120 segundos');
-                console.log('📱 Abra essa URL no seu navegador');
-                console.log('═'.repeat(70) + '\n');
+            // ═══ EVENTOS DE MENSAGEM ═══
+            this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+                if (type !== 'notify') return;
 
-                // Chama callback se existir
-                if (this.eventListeners.onQRGenerated) {
-                    this.eventListeners.onQRGenerated(qr);
+                for (const m of messages) {
+                    await this.processMessage(m);
                 }
+            });
 
-                // Limpa timeout de força
-                if (this.qrTimeout) {
-                    clearTimeout(this.qrTimeout);
-                    this.qrTimeout = null;
-                }
-            }
-
-            if (connection === 'open') {
-                this.BOT_JID = (this.sock.user && this.sock.user.id) || null;
-                this.isConnected = true;
-                this.lastProcessedTime = Date.now();
-                this.currentQR = null; // Limpa QR após conexão
-                this.reconnectAttempts = 0; // Reseta contador de tentativas
-
-                // Calcula tempo de conexão
-                const connectionTime = Date.now() - this.connectionStartTime;
-
-                // Limpa timeout de força
-                if (this.qrTimeout) {
-                    clearTimeout(this.qrTimeout);
-                    this.qrTimeout = null;
-                }
-
-                this.logger.info('\n' + '═'.repeat(70));
-                this.logger.info('✅ AKIRA BOT V21 ONLINE!');
-                this.logger.info('═'.repeat(70));
-                this.logger.info(`🤖 Nome: ${this.config.BOT_NAME}`);
-                this.logger.info(`📱 Número: ${this.config.BOT_NUMERO_REAL}`);
-                this.logger.info(`🔗 JID: ${this.BOT_JID}`);
-                this.logger.info(`⏱️ Tempo de conexão: ${connectionTime}ms`);
-                this.logger.info('═'.repeat(70) + '\n');
-
-                // Chama callback se existir
-                if (this.eventListeners.onConnected) {
-                    this.eventListeners.onConnected(this.BOT_JID);
-                }
-
-                // Log extra para web
-                console.log('\n' + '═'.repeat(70));
-                console.log('✅ BOT CONECTADO COM SUCESSO!');
-                console.log('═'.repeat(70));
-                console.log(`🤖 Bot está online e pronto para uso`);
-                console.log(`📱 Número: ${this.config.BOT_NUMERO_REAL}`);
-                console.log(`🔗 JID: ${this.BOT_JID}`);
-                console.log('═'.repeat(70) + '\n');
-
-            } else if (connection === 'close') {
-                this.isConnected = false;
-                this.currentQR = null;
-
-                const code = (lastDisconnect && lastDisconnect.error && lastDisconnect.error.output && lastDisconnect.error.output.statusCode) || undefined;
-                const reason = (lastDisconnect && lastDisconnect.error && lastDisconnect.error.message) || 'desconhecido';
-
-                this.logger.warn(`⚠️ Conexão perdida (código: ${code}, motivo: ${reason})`);
-
-                // Códigos de erro específicos
-                if (code === 408) {
-                    this.logger.warn('⏰ Timeout de conexão - possível problema de rede');
-                } else if (code === 401) {
-                    this.logger.warn('🔐 Credenciais rejeitadas - será necessário novo login');
-                    // Limpa credenciais em caso de auth error
-                    this._cleanAuthOnError();
-                } else if (code === 403) {
-                    this.logger.warn('🚫 Conta banida ou bloqueada');
-                } else if (code === 503) {
-                    this.logger.warn('🌐 Serviço indisponível - servidor WhatsApp offline');
-                }
-
-                // Chama callback se existir
-                if (this.eventListeners.onDisconnected) {
-                    this.eventListeners.onDisconnected(code, reason);
-                }
-
-                // Reconecta com backoff exponencial otimizado
-                const reconnectDelay = Math.min(8000 * Math.pow(1.5, this.reconnectAttempts || 0), 90000); // Máximo 90 segundos
-                this.reconnectAttempts = (this.reconnectAttempts || 0) + 1;
-
-                this.logger.info(`🔄 Reconectando em ${reconnectDelay / 1000}s.. (tentativa ${this.reconnectAttempts})`);
-
-                // Limpa socket atual
-                if (this.sock) {
-                    try {
-                        this.sock.ev.removeAllListeners();
-                        if (this.sock.ws) {
-                            this.sock.ws.close();
-                        }
-                    } catch (e) {
-                        this.logger.warn('Erro ao limpar socket:', e.message);
-                    }
-                    this.sock = null;
-                }
-
-                setTimeout(() => {
-                    this.logger.info('🔄 Iniciando reconexão..');
-                    this.connect().catch(e => this.logger.error('Erro na reconexão:', e.message));
-                }, reconnectDelay);
-
-            } else if (connection === 'connecting') {
-                this.logger.info('🔄 Conectando ao WhatsApp..');
-                // Limpa QR code anterior ao tentar nova conexão
-                this.currentQR = null;
-            }
+            // ═══ CASOS ESPECIAIS (Call, Group Update, etc) ═══
+            // Implementar conforme necessidade...
 
         } catch (error) {
-            this.logger.error('❌ Erro em handleConnectionUpdate:', error.message);
-            this.logger.error(error.stack);
+            this.logger.error('❌ Erro na função connect:', error.message);
+            await delay(5000);
+            this.connect(); // Tenta de novo em loop seguro
         }
     }
 
     /**
-    * Handle messages upsert
-    */
-    async handleMessagesUpsert({ messages }) {
-        try {
-            const m = messages[0];
-            if (!m || !m.message || m.key.fromMe) return;
-
-            // Deduplicação
-            if (this.processadas.has(m.key.id)) return;
-            this.processadas.add(m.key.id);
-            setTimeout(() => this.processadas.delete(m.key.id), this.config.MESSAGE_DEDUP_TIME_MS);
-
-            // Ignorar mensagens antigas (mais de 10 segundos)
-            const messageTime = m.messageTimestamp * 1000;
-            const currentTime = Date.now();
-            if (messageTime && messageTime < currentTime - 10000) {
-                this.logger.debug(`⏭️ Mensagem antiga ignorada: ${messageTime}`);
-                return;
-            }
-
-            // Processa mensagem
-            await this.processMessage(m);
-
-        } catch (error) {
-            this.logger.error('❌ Erro em handleMessagesUpsert:', error.message);
-        }
-    }
-
-    /**
-    * Processa mensagem
+    * Processa uma única mensagem recebida
     */
     async processMessage(m) {
         try {
-            const ehGrupo = String(m.key.remoteJid || '').endsWith('@g.us');
+            if (!m.message) return;
+            if (m.key.fromMe) return; // Ignora mensagens do próprio bot
+
+            // Trata status de 'protocolMessage' (ex: mensagens apagadas)
+            if (m.message.protocolMessage) return;
+
+            const remoteJid = m.key.remoteJid;
+            const ehGrupo = remoteJid.endsWith('@g.us');
+            const ehStatus = remoteJid === 'status@broadcast';
+
+            if (ehStatus) return; // Ignora status updates
+
+            // Extrai dados básicos
+            const nome = m.pushName || 'Usuário';
             const numeroReal = this.messageProcessor.extractUserNumber(m);
-            const nome = m.pushName || numeroReal;
-            const texto = this.messageProcessor.extractText(m).trim();
+
+            // Verifica lista negra
+            if (this.moderationSystem && this.moderationSystem.isBlacklisted(numeroReal)) {
+                this.logger.debug(`🚫 Mensagem ignorada de usuário banido: ${nome} (${numeroReal})`);
+                return;
+            }
+
+            // Verifica Mute (apenas grupos)
+            if (ehGrupo && this.moderationSystem && this.moderationSystem.isMuted(remoteJid, m.key.participant)) {
+                await this.handleMutedUserMessage(m, nome);
+                return;
+            }
+
+            // Detecta tipo de conteúdo e extrai texto
+            const texto = this.messageProcessor.extractText(m);
+            const temImagem = this.messageProcessor.hasImage(m);
             const temAudio = this.messageProcessor.hasAudio(m);
 
-            // Log da mensagem recebida
-            this.logger.info(`📩 [${ehGrupo ? 'GRUPO' : 'PV'}] ${nome}: ${texto.substring(0, 50)}${texto.length > 50 ? '..' : ''}`);
-
-            // Verifica ban
-            if (this.moderationSystem.isBanned(numeroReal)) {
-                this.logger.warn(`🚫 Mensagem de usuário banido ignorada: ${nome}`);
+            // Verifica Anti-Link (se tiver texto)
+            if (ehGrupo && texto && this.moderationSystem && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
+                await this.handleAntiLinkViolation(m, nome);
                 return;
             }
 
-            // Verifica spam
-            if (this.moderationSystem.checkSpam(numeroReal)) {
-                this.logger.warn(`⚠️ Spam detectado de ${nome}`);
-                return;
-            }
+            // Anti-Spam (Rate Limit) -> Verificado dentro do handleTextMessage para economizar calls, 
+            // mas poderia ser aqui. Vamos deixar no handleTextMessage para permitir que imagens passem por enquanto ou replicar logica.
 
-            // Moderação em grupos
-            if (ehGrupo && m.key.participant) {
-                if (this.moderationSystem.isUserMuted(m.key.remoteJid, m.key.participant)) {
-                    await this.handleMutedUserMessage(m, nome);
-                    return;
-                }
-
-                if (this.moderationSystem.isAntiLinkActive(m.key.remoteJid) && texto && this.moderationSystem.containsLink(texto)) {
-                    await this.handleAntiLinkViolation(m, nome);
-                    return;
-                }
-            }
-
-            // Award group XP (auto XP system) - DESATIVADO POR PADRÃO
-            // O dono do grupo deve ativar com #level on
-            try {
-                if (ehGrupo) {
-                    const gid = m.key.remoteJid;
-                    const togglesPath = path.join(this.config.DATABASE_FOLDER, 'group_settings.s.json');
-                    let toggles = {};
-
-                    if (fs.existsSync(togglesPath)) {
-                        try {
-                            toggles = JSON.parse(fs.readFileSync(togglesPath, 'utf8') || '{}');
-                        } catch (e) {
-                            toggles = {};
-                        }
-                    }
-
-                    // Verifica se leveling está ativado para este grupo
-                    const isLevelingEnabled = toggles[gid] && toggles[gid].levelingEnabled === true;
-
-                    if (isLevelingEnabled) {
-                        const uid = m.key.participant || m.key.remoteJid;
-                        const xpAmount = Math.floor(Math.random() * (25 - 15 + 1)) + 15;
-                        const { rec, leveled } = this.levelSystem.awardXp(m.key.remoteJid, uid, xpAmount);
-                        if (leveled) {
-                            const patente = this.levelSystem.getPatente(rec.level);
-                            await this.sock.sendMessage(m.key.remoteJid, {
-                                text: `🎉 @${uid.split('@')[0]} você foi elevado ao nível ${rec.level} e a ${patente}`,
-                                contextInfo: { mentionedJid: [uid] }
-                            });
-                            if (rec.level >= this.levelSystem.maxLevel) {
-                                const maxRes = await this.levelSystem.registerMaxLevelUser(m.key.remoteJid, uid, m.pushName || uid, this.sock);
-                                if (maxRes && maxRes.promoted) {
-                                    await this.sock.sendMessage(m.key.remoteJid, {
-                                        text: `🎊 ${m.pushName || uid} foi promovido automaticamente a ADM!`
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                this.logger.warn('Erro awarding XP:', e.message);
-            }
-
-            // Obtém contexto de reply
+            // Extrai informações de Reply
             const replyInfo = this.messageProcessor.extractReplyInfo(m);
 
-            // Processa áudio
-            if (temAudio) {
-                await this.handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo);
-                return;
-            }
-
-            // Processa imagem
-            const temImagem = this.messageProcessor.hasImage(m);
+            // Roteamento de tipos
             if (temImagem) {
                 await this.handleImageMessage(m, nome, numeroReal, replyInfo, ehGrupo);
-                return;
-            }
-
-            // Processa texto
-            if (texto) {
+            } else if (temAudio) {
+                await this.handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo);
+            } else if (texto) {
                 await this.handleTextMessage(m, nome, numeroReal, texto, replyInfo, ehGrupo);
+            } else {
+                // Outros tipos (stickers, videos, documentos) - por enquanto ignora ou loga
+                // this.logger.debug('Tipo de mensagem não tratado:', Object.keys(m.message));
             }
 
         } catch (error) {
-            this.logger.error('❌ Erro ao processar mensagem:', error.message);
+            this.logger.error('❌ Erro no pipeline de mensagem:', error.message);
+        }
+    }
+
+    /**
+    * Handle image message (Computer Vision)
+    * FLUXO CRÍTICO:
+    * 1. Recebe mensagem com imageMessage (criptografada pelo WhatsApp)
+    * 2. MediaProcessor baixa e DECIFRA a imagem -> retorna Buffer RAW
+    * 3. BotCore converte Buffer RAW -> Base64
+    * 4. Envia Base64 para API Python (ComputerVision)
+    */
+    async handleImageMessage(m, nome, numeroReal, replyInfo, ehGrupo) {
+        this.logger.info(`🖼️ [IMAGEM] Iniciando processamento para ${nome}`);
+
+        try {
+            // Marca como entregue/lido
+            await this.presenceSimulator.simulateTicks(m, true, false);
+
+            // Simula "olhando" a imagem (digitação breve)
+            await this.presenceSimulator.simulateTyping(m.key.remoteJid, 1500);
+
+            this.logger.debug('⬇️ Baixando e decifrando imagem...');
+
+            // Baixa a imagem (MediaProcessor cuida da decifragem usando chaves da mensagem)
+            const imageBuffer = await this.mediaProcessor.downloadMedia(
+                m.message.imageMessage,
+                'image'
+            );
+
+            if (!imageBuffer || imageBuffer.length === 0) {
+                this.logger.error('❌ Falha: Buffer de imagem vazio ou nulo após download/decifragem');
+                await this.bot.reply(m, '❌ Não consegui baixar essa imagem...');
+                return;
+            }
+
+            this.logger.debug(`✅ Imagem decifrada com sucesso! Tamanho: ${imageBuffer.length} bytes`);
+
+            // Converte para base64 (Formato esperado pelo computervision.py)
+            const base64Image = imageBuffer.toString('base64');
+
+            if (!base64Image) {
+                this.logger.error('❌ Falha na conversão para Base64');
+                return;
+            }
+
+            this.logger.debug('🔄 Convertido para Base64. Preparando payload...');
+
+            // Prepara payload para Computer Vision
+            const caption = this.messageProcessor.extractText(m) || '';
+
+            const payload = this.apiClient.buildPayload({
+                usuario: nome,
+                numero: numeroReal,
+                mensagem: caption || 'O que tem nesta imagem?', // Prompt default se vazio
+                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+                grupo_id: ehGrupo ? m.key.remoteJid : null,
+                grupo_nome: ehGrupo ? (m.key.remoteJid.split('@')[0] || 'Grupo') : null,
+                tipo_mensagem: 'imagem', // Importante para API saber que deve usar CV
+                imagem_base64: base64Image, // Campo específico para imagem
+                mensagem_citada: (replyInfo && replyInfo.textoMensagemCitada) || '',
+                reply_metadata: replyInfo ? {
+                    is_reply: replyInfo.isReply || true,
+                    reply_to_bot: replyInfo.ehRespostaAoBot,
+                    quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido'
+                } : null
+            });
+
+            this.logger.info(`👁️ Enviando imagem para análise (Computer Vision)...`);
+
+            // Chama API
+            const resultado = await this.apiClient.processMessage(payload);
+
+            if (!resultado.success) {
+                this.logger.error('❌ Erro na API de Visão:', resultado.error);
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    text: 'Minha visão está embaçada agora... Tenta depois?'
+                });
+                return;
+            }
+
+            let resposta = resultado.resposta || 'Não sei o que dizer sobre isso.';
+
+            // Envia resposta
+            await this.presenceSimulator.simulateTyping(m.key.remoteJid, this.presenceSimulator.calculateTypingDuration(resposta));
+
+            const opcoes = ehGrupo || (replyInfo && replyInfo.isReply) || !ehGrupo ? { quoted: m } : {};
+            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
+
+            // Marca como lido final
+            await this.presenceSimulator.simulateTicks(m, true, false);
+
+        } catch (error) {
+            this.logger.error('❌ Erro ao processar imagem:', error.message);
+            this.logger.error(error.stack);
         }
     }
 
@@ -857,16 +578,28 @@ class BotCore {
                     }, { quoted: m });
                 }
             } else {
-                // Simula digitação
-                const tempoDigitacao = Math.min(
-                    Math.max(resposta.length * this.config.TYPING_SPEED_MS, this.config.MIN_TYPING_TIME_MS),
-                    this.config.MAX_TYPING_TIME_MS
-                );
+                // Simula comportamento completo (digitação + resposta + ticks)
+                // Usa o novo PresenceSimulator
+                if (this.presenceSimulator) {
+                    await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta, false);
+                } else {
+                    // Fallback se simulator não estiver pronto
+                    await this.simulateTyping(m.key.remoteJid, Math.min(resposta.length * 50, 5000));
+                }
 
-                await this.simulateTyping(m.key.remoteJid, tempoDigitacao);
+                // Lógica de Reply Otimizada
+                // PV: Sempre responde com reply para manter contexto visual
+                // Grupo: Responde com reply se for resposta direta ao bot ou se for áudio
+                const deveResponderComReply = !ehGrupo || (replyInfo && replyInfo.isReply) || (replyInfo && replyInfo.ehRespostaAoBot);
 
-                const opcoes = ehGrupo || (replyInfo && replyInfo.ehRespostaAoBot) ? { quoted: m } : {};
+                const opcoes = deveResponderComReply ? { quoted: m } : {};
+
                 await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
+
+                // Marca como lido final se ter simulador
+                if (this.presenceSimulator) {
+                    await this.presenceSimulator.markAsRead(m);
+                }
             }
 
 

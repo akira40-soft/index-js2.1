@@ -427,6 +427,32 @@ class ImageEffects {
     }
 
     /**
+    * Efeito Grayscale (Preto e Branco)
+    */
+    async applyGrayscale(imageBuffer) {
+        try {
+            const processed = sharp(imageBuffer).grayscale();
+            const outputBuffer = await processed.toBuffer();
+            return { success: true, buffer: outputBuffer, effect: 'grayscale' };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
+    * Efeito Negativo (Invert)
+    */
+    async applyNegate(imageBuffer) {
+        try {
+            const processed = sharp(imageBuffer).negate({ alpha: false });
+            const outputBuffer = await processed.toBuffer();
+            return { success: true, buffer: outputBuffer, effect: 'negate' };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
     * Processa imagem com efeito especificado
     */
     async processImage(imageBuffer, effect, options = {}) {
@@ -469,10 +495,22 @@ class ImageEffects {
                 result = await this.addGradientBackground(imageBuffer, color1, color2);
                 break;
 
+            case 'grey':
+            case 'gray':
+            case 'pb':
+            case 'bw':
+                result = await this.applyGrayscale(imageBuffer);
+                break;
+
+            case 'invert':
+            case 'negativo':
+                result = await this.applyNegate(imageBuffer);
+                break;
+
             default:
                 return {
                     success: false,
-                    error: `Efeito desconhecido: ${effect}`
+                    error: `Efeito desconhecido ou não implementado: ${effect}`
                 };
         }
 

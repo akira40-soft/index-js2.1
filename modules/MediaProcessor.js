@@ -86,6 +86,9 @@ class MediaProcessor {
     */
     async downloadMedia(message, mimeType = 'image') {
         try {
+            this.logger?.debug(`⬇️ Baixando mídia (mime: ${mimeType})...`);
+
+            // downloadContentFromMessage cuida da decifragem usando as chaves da mensagem
             const stream = await downloadContentFromMessage(message, mimeType);
             let buffer = Buffer.from([]);
 
@@ -93,9 +96,10 @@ class MediaProcessor {
                 buffer = Buffer.concat([buffer, chunk]);
             }
 
+            this.logger?.debug(`✅ Download e decifragem concluídos: ${buffer.length} bytes`);
             return buffer;
         } catch (e) {
-            this.logger?.error('❌ Erro ao baixar mídia:', e.message);
+            this.logger?.error('❌ Erro ao baixar/decifrar mídia:', e.message);
             return null;
         }
     }
@@ -184,27 +188,37 @@ class MediaProcessor {
 
             // Filtro otimizado: escala mantendo proporção + padding transparente para 512x512
             // 0x00000000 = transparente (ARGB)
+            // Filtro otimizado: escala mantendo proporção + padding transparente para 512x512
+            // 0x00000000 = transparente (ARGB)
             const videoFilter = 'fps=15,scale=512:512:flags=lanczos:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000';
+
+            // Configuração do FFmpeg path (se necessário, mas fluent-ffmpeg geralmente acha no PATH)
+            // Se o usuário tem ffmpeg no sistema, isso deve funcionar direto
+            // this.logger?.info('🔧 Usando FFmpeg do sistema...');
 
             await new Promise((resolve, reject) => {
                 ffmpeg(inputPath)
+                    .inputOptions(['-y']) // Forçar overwrite no input se precisar
                     .outputOptions([
                         '-y',
                         '-v', 'error',
                         '-c:v', 'libwebp',
                         '-lossless', '0',
-                        '-compression_level', '6',
-                        '-q:v', '80',
+                        '-compression_level', '4', // Mais rápido
+                        '-q:v', '75', // Qualidade boa
                         '-preset', 'default',
                         '-vf', videoFilter,
                         '-s', '512x512'
                     ])
+                    .on('start', (cmdLine) => {
+                        this.logger?.debug(`⚡ FFmpeg comando: ${cmdLine}`);
+                    })
                     .on('end', () => {
-                        this.logger?.debug('✅ FFmpeg processamento concluído');
+                        this.logger?.debug('✅ Sticker criado com sucesso (FFmpeg)');
                         resolve();
                     })
                     .on('error', (err) => {
-                        this.logger?.error('❌ Erro FFmpeg:', err.message);
+                        this.logger?.error(`❌ Erro crítico FFmpeg: ${err.message}`);
                         reject(err);
                     })
                     .save(outputPath);
@@ -761,6 +775,94 @@ class MediaProcessor {
 
         } catch (error) {
             this.logger?.error('❌ Erro geral no download:', error.message);
+            return { sucesso: false, error: error.message };
+        }
+    }
+
+    /**
+    * Download de VÍDEO do YouTube
+    */
+    async downloadYouTubeVideo(url) {
+        try {
+            this.logger?.info('🎬 Iniciando download de VÍDEO do YouTube...');
+
+            const videoId = this.extractYouTubeVideoId(url);
+            if (!videoId) {
+                return { sucesso: false, error: 'URL do YouTube inválida' };
+            }
+
+            const ytdlpTool = this.findYtDlp();
+            if (!ytdlpTool) {
+                return { sucesso: false, error: 'yt-dlp não encontrado. Necessário para baixar vídeos.' };
+            }
+
+            const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
+            // Formato compatível com WhatsApp (mp4 + aac)
+            const command = process.platform === 'win32'
+                ? `"${ytdlpTool.cmd}" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`
+                : `${ytdlpTool.cmd} -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`;
+
+            this.logger?.debug(`Executando: ${command}`);
+
+            await new Promise((resolve, reject) => {
+                exec(command, { timeout: 180000, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+                    // yt-dlp pode criar mkv se não conseguir mp4, ou mp4 direto
+                    const possibleExts = ['.mp4', '.mkv', '.webm'];
+                    let found = false;
+                    for (const ext of possibleExts) {
+                        if (fs.existsSync(outputTemplate + ext)) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (found) {
+                        resolve();
+                    } else if (error) {
+                        reject(error);
+                    } else {
+                        reject(new Error('Arquivo de vídeo não encontrado após download'));
+                    }
+                });
+            });
+
+            // Encontrar o arquivo gerado
+            const possibleExts = ['.mp4', '.mkv', '.webm'];
+            let actualPath = null;
+            for (const ext of possibleExts) {
+                if (fs.existsSync(outputTemplate + ext)) {
+                    actualPath = outputTemplate + ext;
+                    break;
+                }
+            }
+
+            if (!actualPath) {
+                return { sucesso: false, error: 'Falha ao localizar arquivo baixado' };
+            }
+
+            const stats = fs.statSync(actualPath);
+            if (stats.size > this.config?.YT_MAX_SIZE_MB * 1024 * 1024) {
+                await this.cleanupFile(actualPath);
+                return { sucesso: false, error: `Vídeo muito grande (>${this.config?.YT_MAX_SIZE_MB}MB)` };
+            }
+
+            const videoBuffer = fs.readFileSync(actualPath);
+            await this.cleanupFile(actualPath);
+
+            // Obter título
+            const titleResult = await this._getYouTubeTitle(url, ytdlpTool);
+
+            return {
+                sucesso: true,
+                buffer: videoBuffer,
+                titulo: titleResult.titulo || 'Vídeo do YouTube',
+                tamanho: videoBuffer.length,
+                metodo: 'yt-dlp',
+                mimetype: 'video/mp4' // Assumindo mp4, mas o buffer é o que importa
+            };
+
+        } catch (error) {
+            this.logger?.error('❌ Erro download vídeo:', error.message);
             return { sucesso: false, error: error.message };
         }
     }

@@ -253,72 +253,71 @@ class LevelSystem {
     }
 
     // Retorna o nome da patente baseado no nível
-    getPatente(level) {
-        const patentes = {
-            0: 'Recruta',
-            1: 'Soldado',
-            2: 'Cabo',
-            3: 'Sargento',
-            4: 'Tenente',
-            5: 'Capitão',
-            6: 'Major',
-            7: 'Coronel',
-            8: 'General',
-            9: 'Marechal',
-            10: 'Comandante Supremo',
-            11: 'Líder Elite',
-            12: 'Mestre das Sombras',
-            13: 'Guardião da Ordem',
-            14: 'Senhor da Guerra',
-            15: 'Imperador',
-            16: 'Deus da Guerra',
-            17: 'Lenda Viva',
-            18: 'Mito Imortal',
-            19: 'Divindade Suprema',
-            20: 'Criador de Mundos',
-            21: 'Destruidor de Galáxias',
-            22: 'Senhor do Tempo',
-            23: 'Mestre do Espaço',
-            24: 'Guardião do Multiverso',
-            25: 'Entidade Cósmica',
-            26: 'Força Primordial',
-            27: 'Essência Divina',
-            28: 'Poder Absoluto',
-            29: 'Ser Supremo',
-            30: 'Transcendente',
-            31: 'Onipresente',
-            32: 'Onipotente',
-            33: 'Onisciente',
-            34: 'Existência Pura',
-            35: 'Vazio Absoluto',
-            36: 'Nada e Tudo',
-            37: 'Além da Compreensão',
-            38: 'Indescritível',
-            39: 'Inconcebível',
-            40: 'O Último Nível',
-            41: 'O Inatingível',
-            42: 'O Impossível',
-            43: 'O Inexplicável',
-            44: 'O Misterioso',
-            45: 'O Enigmático',
-            46: 'O Arcano',
-            47: 'O Esotérico',
-            48: 'O Oculto',
-            49: 'O Secreto',
-            50: 'O Desconhecido',
-            51: 'O Inexplorado',
-            52: 'O Inacessível',
-            53: 'O Proibido',
-            54: 'O Sagrado',
-            55: 'O Divino',
-            56: 'O Celestial',
-            57: 'O Eterno',
-            58: 'O Infinito',
-            59: 'O Absoluto',
-            60: 'O Máximo'
-        };
+    getPatente(nivelAtual) {
+        let patt = 'Recruta 🔰';
+        if (nivelAtual >= 61) patt = 'A Lenda  легенда 🛐';
+        else if (nivelAtual >= 60) patt = 'Transcendente V ✨';
+        else if (nivelAtual >= 59) patt = 'Transcendente IV ✨';
+        else if (nivelAtual >= 58) patt = 'Transcendente III ✨';
+        else if (nivelAtual >= 57) patt = 'Transcendente II ✨';
+        else if (nivelAtual >= 56) patt = 'Transcendente I ✨';
+        else if (nivelAtual >= 55) patt = 'Divino V 💠';
+        else if (nivelAtual >= 54) patt = 'Divino IV 💠';
+        else if (nivelAtual >= 53) patt = 'Divino III 💠';
+        else if (nivelAtual >= 52) patt = 'Divino II 💠';
+        else if (nivelAtual >= 51) patt = 'Divino I 💠';
+        else if (nivelAtual >= 50) patt = 'Imortal V ⚡';
+        else if (nivelAtual >= 49) patt = 'Imortal IV ⚡';
+        else if (nivelAtual >= 48) patt = 'Imortal III ⚡';
+        else if (nivelAtual >= 47) patt = 'Imortal II ⚡';
+        else if (nivelAtual >= 46) patt = 'Imortal I ⚡';
+        else if (nivelAtual >= 45) patt = 'Lendário V 🎖️';
+        else if (nivelAtual >= 44) patt = 'Lendário IV 🎖️';
+        else if (nivelAtual >= 43) patt = 'Lendário III 🎖️';
+        else if (nivelAtual >= 42) patt = 'Lendário II 🎖️';
+        else if (nivelAtual >= 41) patt = 'Lendário I 🎖️';
+        else if (nivelAtual >= 40) patt = 'God V 🕴️';
+        else if (nivelAtual >= 39) patt = 'God IV 🕴️';
+        else if (nivelAtual >= 38) patt = 'God III 🕴️';
+        else if (nivelAtual >= 37) patt = 'God II 🕴️';
+        else if (nivelAtual >= 36) patt = 'God I 🕴️';
+        else if (nivelAtual >= 35) patt = 'Mítico V 🔮';
+        else if (nivelAtual >= 34) patt = 'Mítico IV 🔮';
+        else if (nivelAtual >= 33) patt = 'Mítico III 🔮';
+        else if (nivelAtual >= 32) patt = 'Mítico II 🔮';
+        else if (nivelAtual >= 31) patt = 'Mítico I 🔮';
+        else if (nivelAtual >= 30) patt = 'Mestre V 🐂';
+        else if (nivelAtual >= 29) patt = 'Mestre IV 🐂';
+        else if (nivelAtual >= 28) patt = 'Mestre III 🐂';
+        else if (nivelAtual >= 27) patt = 'Mestre II 🐂';
+        else if (nivelAtual >= 26) patt = 'Mestre I 🐂';
+        else if (nivelAtual >= 25) patt = 'Diamante V 💎';
+        else if (nivelAtual >= 24) patt = 'Diamante IV 💎';
+        else if (nivelAtual >= 23) patt = 'Diamante III 💎';
+        else if (nivelAtual >= 22) patt = 'Diamante II 💎';
+        else if (nivelAtual >= 21) patt = 'Diamante I 💎';
+        else if (nivelAtual >= 20) patt = 'Campeão V 🏆';
+        else if (nivelAtual >= 19) patt = 'Campeão IV 🏆';
+        else if (nivelAtual >= 18) patt = 'Campeão III 🏆';
+        else if (nivelAtual >= 17) patt = 'Campeão II 🏆';
+        else if (nivelAtual >= 16) patt = 'Campeão I 🏆';
+        else if (nivelAtual >= 15) patt = 'Ouro V 🥇';
+        else if (nivelAtual >= 14) patt = 'Ouro IV 🥇';
+        else if (nivelAtual >= 13) patt = 'Ouro III 🥇';
+        else if (nivelAtual >= 12) patt = 'Ouro II 🥇';
+        else if (nivelAtual >= 11) patt = 'Ouro I 🥇';
+        else if (nivelAtual >= 10) patt = 'Prata V 🥈';
+        else if (nivelAtual >= 9) patt = 'Prata IV 🥈';
+        else if (nivelAtual >= 8) patt = 'Prata III 🥈';
+        else if (nivelAtual >= 7) patt = 'Prata II 🥈';
+        else if (nivelAtual >= 6) patt = 'Prata I 🥈';
+        else if (nivelAtual >= 5) patt = 'Bronze V 🥉';
+        else if (nivelAtual >= 4) patt = 'Bronze IV 🥉';
+        else if (nivelAtual >= 3) patt = 'Bronze III 🥉';
+        else if (nivelAtual >= 2) patt = 'Bronze II 🥉';
+        else if (nivelAtual >= 1) patt = 'Bronze I 🥉';
 
-        return patentes[level] || `Nível ${level}`;
+        return patt;
     }
 
     // status info
