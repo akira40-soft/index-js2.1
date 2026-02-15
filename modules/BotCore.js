@@ -24,6 +24,7 @@ import PaymentManager from './PaymentManager.js';
 import CommandHandler from './CommandHandler.js';
 import HFCorrections from './HFCorrections.js';
 import PresenceSimulator from './PresenceSimulator.js';
+import SubscriptionManager from './SubscriptionManager.js';
 
 class BotCore {
     constructor() {
@@ -52,6 +53,7 @@ class BotCore {
         this.levelSystem = null;
         this.registrationSystem = null;
         this.paymentManager = null;
+        this.subscriptionManager = null;
         this.commandHandler = null;
         this.presenceSimulator = null;
 
@@ -63,9 +65,6 @@ class BotCore {
         };
     }
 
-    /**
-    * Inicializa e conecta o bot
-    */
     /**
     * Inicializa o bot (prepara componentes e diretórios) sem conectar
     */
@@ -111,6 +110,7 @@ class BotCore {
             this.moderationSystem = new ModerationSystem(this.logger);
             this.levelSystem = new LevelSystem(this.logger);
             this.registrationSystem = new RegistrationSystem(this.logger);
+            this.subscriptionManager = new SubscriptionManager(this.logger);
 
             // Inicializa PaymentManager (passando this para acessar SubscriptionManager depois)
             // Nota: PaymentManager precisa de this.subscriptionManager que já foi init acima
@@ -169,7 +169,7 @@ class BotCore {
             };
 
             // Ajuste para proxy/agente se estiver no HF Space ou ambiente restrito
-            const agent = HFCorrections.getAgent();
+            const agent = HFCorrections.createHFAgent();
             if (agent) {
                 socketConfig.agent = agent;
                 this.logger.info('🌐 Usando agente HTTP personalizado para conexão');

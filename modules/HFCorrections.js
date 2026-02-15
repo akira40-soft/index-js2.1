@@ -138,12 +138,17 @@ function configureDNS() {
     }
 }
 
+function apply() {
+    configureDNS();
+}
+
 const HFCorrections = {
     getWhatsAppIP,
     createHFAgent,
     createWebSocketOptions,
     verifyHFNetwork,
-    configureDNS
+    configureDNS,
+    apply
 };
 
 export default HFCorrections;
