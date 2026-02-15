@@ -8,7 +8,7 @@
  * ═══════════════════════════════════════════════════════════════════════
  */
 
-const { delay } = require('@whiskeysockets/baileys');
+import { delay } from '@whiskeysockets/baileys';
 
 class PresenceSimulator {
     constructor(sock) {
