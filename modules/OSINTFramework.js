@@ -31,6 +31,10 @@ class OSINTFramework {
         this.GITHUB_TOKEN = process.env.GITHUB_TOKEN || config.GITHUB_TOKEN;
     }
 
+    setSocket(sock) {
+        this.sock = sock;
+    }
+
     /**
     * GOOGLE DORKING
     * Executa dorks reais via Google Search API ou Scraper

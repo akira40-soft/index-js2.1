@@ -20,6 +20,10 @@ class StickerViewOnceHandler {
         this.media = new MediaProcessor();
     }
 
+    setSocket(sock) {
+        this.sock = sock;
+    }
+
     /**
     * Processa comando #sticker / #s / #fig
     * Cria sticker a partir de imagem ou sticker existente

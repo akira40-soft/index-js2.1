@@ -110,7 +110,7 @@ class BotCore {
             this.moderationSystem = new ModerationSystem(this.logger);
             this.levelSystem = new LevelSystem(this.logger);
             this.registrationSystem = new RegistrationSystem(this.logger);
-            this.subscriptionManager = new SubscriptionManager(this.logger);
+            this.subscriptionManager = new SubscriptionManager(this.config);
 
             // Inicializa PaymentManager (passando this para acessar SubscriptionManager depois)
             // Nota: PaymentManager precisa de this.subscriptionManager que já foi init acima
@@ -121,7 +121,8 @@ class BotCore {
 
             // CommandHandler pode falhar no Hugging Face, tratar separadamente
             try {
-                this.commandHandler = new CommandHandler(this, this.sock);
+                this.commandHandler = new CommandHandler(this.sock, this.config);
+                this.commandHandler.bot = this;
                 this.logger.debug('✅ CommandHandler inicializado');
             } catch (commandError) {
                 this.logger.warn(`⚠️ CommandHandler falhou: ${commandError.message}`);
@@ -129,10 +130,37 @@ class BotCore {
                 this.commandHandler = null;
             }
 
+            this.osintFramework = new OSINTFramework(this.config, this.sock);
+
             this.logger.debug('✅ Componentes inicializados');
         } catch (error) {
             this.logger.error('❌ Erro ao inicializar componentes:', error.message);
             // Não lançar erro fatal, tentar continuar com componentes disponíveis
+        }
+    }
+
+    /**
+     * Atualiza o socket em todos os componentes que dependem dele
+     * Chamado após a conexão ser estabelecida
+     */
+    _updateComponentsSocket(sock) {
+        try {
+            this.logger.info('🔄 Atualizando socket nos componentes...');
+
+            // Core Handlers
+            if (this.commandHandler?.setSocket) this.commandHandler.setSocket(sock);
+
+            // Modules
+            // if (this.stickerViewOnceHandler?.setSocket) this.stickerViewOnceHandler.setSocket(sock); // Não existe no código atual
+            // if (this.groupManagement?.setSocket) this.groupManagement.setSocket(sock); // Não existe no código atual
+            if (this.osintFramework?.setSocket) this.osintFramework.setSocket(sock);
+
+            // Não têm setSocket mas podem precisar (verificar implementações futuras)
+            // this.advancedPentestingToolkit não usa socket no código atual
+
+            this.logger.info('✅ Socket injetado nos componentes com sucesso');
+        } catch (e) {
+            this.logger.error('❌ Erro ao atualizar socket nos componentes:', e);
         }
     }
 
@@ -234,6 +262,9 @@ class BotCore {
                     this.currentQR = null;
                     this.connectionStartTime = Date.now();
 
+                    // ✅ Atualiza socket em todos os componentes dependentes
+                    this._updateComponentsSocket(this.sock);
+
                     const userJid = this.sock.user?.id;
                     this.BOT_JID = userJid;
                     this.logger.info(`🤖 Logado como: ${userJid}`);
@@ -275,16 +306,18 @@ class BotCore {
     */
     async processMessage(m) {
         try {
-            this.logger.debug('🔹 [PIPELINE] Iniciando processMessage');
-            if (!m.message) {
-                this.logger.debug('🔹 [PIPELINE] Mensagem vazia, retornando');
+            this.logger.warn('🔹 [PIPELINE 1] Iniciando');
+            if (!m) {
+                this.logger.warn('🔹 [PIPELINE] "m" é null/undefined');
                 return;
             }
-            if (m.key.fromMe) {
-                this.logger.debug('🔹 [PIPELINE] Mensagem do próprio bot, ignorando');
-                return; // Ignora mensagens do próprio bot
+            if (!m.message) {
+                this.logger.warn('🔹 [PIPELINE] Mensagem vazia, retornando');
+                return;
             }
-            this.logger.debug('🔹 [PIPELINE] Mensagem válida, prosseguindo');
+            if (m.key.fromMe) return; // Mensagem do próprio bot
+
+            this.logger.warn('🔹 [PIPELINE 2] Mensagem válida');
 
             // Trata status de 'protocolMessage' (ex: mensagens apagadas)
             if (m.message.protocolMessage) return;
@@ -296,9 +329,12 @@ class BotCore {
             if (ehStatus) return; // Ignora status updates
 
             // Extrai dados básicos
-            this.logger.debug('🔹 [PIPELINE] Extraindo dados básicos');
+            this.logger.warn('🔹 [PIPELINE 3] Extraindo dados básicos');
+            if (!this.messageProcessor) throw new Error('messageProcessor não inicializado');
+
             const nome = m.pushName || 'Usuário';
             const numeroReal = this.messageProcessor.extractUserNumber(m);
+            this.logger.warn(`🔹 [PIPELINE 4] Dados extraídos: ${numeroReal}`);
             this.logger.debug(`🔹 [PIPELINE] Nome: ${nome}, Número: ${numeroReal}`);
 
             // Verifica lista negra
@@ -314,11 +350,11 @@ class BotCore {
             }
 
             // Detecta tipo de conteúdo e extrai texto
-            this.logger.debug('🔹 [PIPELINE] Detectando tipo de conteúdo');
+            this.logger.warn('🔹 [PIPELINE 5] Detectando conteúdo');
             const texto = this.messageProcessor.extractText(m);
             const temImagem = this.messageProcessor.hasImage(m);
             const temAudio = this.messageProcessor.hasAudio(m);
-            this.logger.debug(`🔹 [PIPELINE] Texto: ${!!texto}, Imagem: ${temImagem}, Áudio: ${temAudio}`);
+            this.logger.warn(`🔹 [PIPELINE 6] Conteúdo detectado: txt=${!!texto} img=${temImagem} aud=${temAudio}`);
 
             // Verifica Anti-Link (se tiver texto)
             if (ehGrupo && texto && this.moderationSystem && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
@@ -347,10 +383,12 @@ class BotCore {
             }
 
         } catch (error) {
+            // Log bruto para garantir visibilidade
+            console.error('❌ [CRITICAL ERROR RAW]:', error);
+
             this.logger.error('❌ Erro no pipeline de mensagem:', error?.message || 'SEM MENSAGEM');
             this.logger.error('📍 Stack trace:', error?.stack || 'SEM STACK TRACE');
-            this.logger.error('🔍 Tipo de erro:', typeof error);
-            this.logger.error('🔍 Erro completo:', JSON.stringify(error, null, 2));
+            this.logger.error('🔍 JSON:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
         }
     }
 

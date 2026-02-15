@@ -28,6 +28,10 @@ class GroupManagement {
         this.startScheduledActionsChecker();
     }
 
+    setSocket(sock) {
+        this.sock = sock;
+    }
+
     /**
     * Carrega configurações de grupos
     */

@@ -41,10 +41,10 @@ const adminLog = new Map();
 // O PresenceSimulator é gerenciado via instância do BotCore ou localmente
 
 class CommandHandler {
-    constructor(botCore, sock = null) {
-        this.bot = botCore;
-        this.config = ConfigManager.getInstance();
+    constructor(sock, config) {
         this.sock = sock;
+        this.config = config;
+        this.media = new MediaProcessor();
 
         // Inicializa handlers de mídia
         if (sock) {
@@ -77,7 +77,7 @@ class CommandHandler {
     }
 
     /**
-    * Inicializa o socket do Baileys (usado se não foi passado no construtor)
+    * Define o socket e inicializa componentes dependentes
     */
     setSocket(sock) {
         this.sock = sock;

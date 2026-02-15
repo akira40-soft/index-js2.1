@@ -15,6 +15,10 @@ class UserProfile {
         this.logger = console;
     }
 
+    setSocket(sock) {
+        this.sock = sock;
+    }
+
     /**
     * Formata JID para número legível
     */

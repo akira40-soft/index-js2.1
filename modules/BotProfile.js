@@ -16,6 +16,10 @@ class BotProfile {
         this.logger = console;
     }
 
+    setSocket(sock) {
+        this.sock = sock;
+    }
+
     /**
     * Verifica se o bot está conectado
     */
