@@ -55,7 +55,7 @@ class CommandHandler {
 
         // Inicializa ferramentas de cybersecurity (ENTERPRISE)
         this.cybersecurityToolkit = new CybersecurityToolkit(this.config);
-        this.osintFramework = new OSINTFramework(this.config);
+        this.osintFramework = new OSINTFramework(this.config, sock);
         this.subscriptionManager = new SubscriptionManager(this.config);
         this.securityLogger = new SecurityLogger(this.config);
         // console.log('✅ Ferramentas ENTERPRISE inicializadas');
@@ -96,13 +96,16 @@ class CommandHandler {
             this.imageEffects = new ImageEffects(this.config);
         }
 
-        if (!presenceSimulator && sock) {
-            presenceSimulator = new PresenceSimulator(sock);
+        if (!this.presenceSimulator && sock) {
+            this.presenceSimulator = new PresenceSimulator(sock);
         }
 
         // Atualiza referências nos módulos que precisam do socket
         if (this.cybersecurityToolkit && typeof this.cybersecurityToolkit.setSocket === 'function') {
             this.cybersecurityToolkit.setSocket(sock);
+        }
+        if (this.osintFramework && typeof this.osintFramework.setSocket === 'function') {
+            this.osintFramework.setSocket(sock);
         }
     }
 
@@ -375,8 +378,8 @@ class CommandHandler {
         await this.bot.reply(m, menuText);
 
         // Simula leitura após enviar menu
-        if (presenceSimulator) {
-            await presenceSimulator.markAsRead(m);
+        if (this.presenceSimulator) {
+            await this.presenceSimulator.markAsRead(m);
         }
 
         return true;

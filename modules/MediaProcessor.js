@@ -86,20 +86,42 @@ class MediaProcessor {
     */
     async downloadMedia(message, mimeType = 'image') {
         try {
-            this.logger?.debug(`⬇️ Baixando mídia (mime: ${mimeType})...`);
+            // Validação prévia
+            if (!message) {
+                this.logger?.error('❌ Mensagem é null ou undefined');
+                return null;
+            }
 
-            // downloadContentFromMessage cuida da decifragem usando as chaves da mensagem
-            const stream = await downloadContentFromMessage(message, mimeType);
+            this.logger?.debug(`⬇️ Baixando mídia (mime: ${mimeType})...`);
+            this.logger?.debug(`📋 Tipo de mensagem: ${typeof message}`);
+
+            // Timeout de 30 segundos para download
+            const downloadPromise = downloadContentFromMessage(message, mimeType);
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Timeout ao baixar mídia (30s)')), 30000)
+            );
+
+            const stream = await Promise.race([downloadPromise, timeoutPromise]);
             let buffer = Buffer.from([]);
+            let chunksReceived = 0;
 
             for await (const chunk of stream) {
                 buffer = Buffer.concat([buffer, chunk]);
+                chunksReceived++;
             }
 
-            this.logger?.debug(`✅ Download e decifragem concluídos: ${buffer.length} bytes`);
+            this.logger?.debug(`✅ Download concluído: ${buffer.length} bytes (${chunksReceived} chunks)`);
+
+            // Validação de tamanho mínimo (imagens válidas têm pelo menos 100 bytes)
+            if (buffer.length < 100) {
+                this.logger?.error(`❌ Buffer muito pequeno: ${buffer.length} bytes`);
+                return null;
+            }
+
             return buffer;
         } catch (e) {
             this.logger?.error('❌ Erro ao baixar/decifrar mídia:', e.message);
+            this.logger?.error('Stack trace:', e.stack);
             return null;
         }
     }

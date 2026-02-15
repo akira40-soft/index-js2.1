@@ -179,7 +179,7 @@ class BotCore {
             this.sock = makeWASocket(socketConfig);
 
             // Atualiza referência do sock nos componentes
-            if (this.commandHandler) this.commandHandler.sock = this.sock;
+            if (this.commandHandler) this.commandHandler.bot = this.sock;
             if (this.presenceSimulator) this.presenceSimulator.sock = this.sock;
 
 
@@ -292,13 +292,13 @@ class BotCore {
             const numeroReal = this.messageProcessor.extractUserNumber(m);
 
             // Verifica lista negra
-            if (this.moderationSystem && this.moderationSystem.isUserBlacklisted(numeroReal)) {
+            if (this.moderationSystem && this.moderationSystem.isBlacklisted(numeroReal)) {
                 this.logger.debug(`🚫 Mensagem ignorada de usuário banido: ${nome} (${numeroReal})`);
                 return;
             }
 
             // Verifica Mute (apenas grupos)
-            if (ehGrupo && this.moderationSystem && this.moderationSystem.isUserMuted(remoteJid, m.key.participant)) {
+            if (ehGrupo && this.moderationSystem && this.moderationSystem.isMuted(remoteJid, m.key.participant)) {
                 await this.handleMutedUserMessage(m, nome);
                 return;
             }
@@ -309,7 +309,7 @@ class BotCore {
             const temAudio = this.messageProcessor.hasAudio(m);
 
             // Verifica Anti-Link (se tiver texto)
-            if (ehGrupo && texto && this.moderationSystem && this.moderationSystem.isAntiLinkActive(remoteJid) && this.moderationSystem.containsLink(texto)) {
+            if (ehGrupo && texto && this.moderationSystem && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
                 await this.handleAntiLinkViolation(m, nome);
                 return;
             }
@@ -355,7 +355,16 @@ class BotCore {
             // Simula "olhando" a imagem (digitação breve)
             await this.presenceSimulator.simulateTyping(m.key.remoteJid, 1500);
 
+            // Validação prévia da mensagem
+            if (!m.message || !m.message.imageMessage) {
+                this.logger.error('❌ Mensagem de imagem inválida ou ausente');
+                await this.reply(m, '❌ Formato de imagem não suportado...');
+                return;
+            }
+
             this.logger.debug('⬇️ Baixando e decifrando imagem...');
+            this.logger.debug(`📋 MimeType: ${m.message.imageMessage.mimetype || 'desconhecido'}`);
+            this.logger.debug(`📏 Tamanho relatado: ${m.message.imageMessage.fileLength || 'desconhecido'} bytes`);
 
             // Baixa a imagem (MediaProcessor cuida da decifragem usando chaves da mensagem)
             const imageBuffer = await this.mediaProcessor.downloadMedia(
@@ -365,14 +374,28 @@ class BotCore {
 
             if (!imageBuffer || imageBuffer.length === 0) {
                 this.logger.error('❌ Falha: Buffer de imagem vazio ou nulo após download/decifragem');
-                await this.reply(m, '❌ Não consegui baixar essa imagem...');
+                await this.reply(m, '❌ Não consegui baixar essa imagem. Tente enviar novamente em um formato diferente (JPG/PNG)...');
                 return;
             }
 
             this.logger.debug(`✅ Imagem decifrada com sucesso! Tamanho: ${imageBuffer.length} bytes`);
 
             // Converte para base64 (Formato esperado pelo computervision.py)
-            const base64Image = imageBuffer.toString('base64');
+            let base64Image;
+            try {
+                base64Image = imageBuffer.toString('base64');
+
+                // Validação do base64 (deve ter comprimento razoável)
+                if (!base64Image || base64Image.length < 100) {
+                    throw new Error(`Base64 inválido: comprimento ${base64Image?.length || 0}`);
+                }
+
+                this.logger.debug(`✅ Conversão base64 OK: ${base64Image.length} caracteres`);
+            } catch (conversionError) {
+                this.logger.error('❌ Erro na conversão base64:', conversionError.message);
+                await this.reply(m, '❌ Erro ao processar imagem...');
+                return;
+            }
 
             if (!base64Image) {
                 this.logger.error('❌ Falha na conversão para Base64');
@@ -419,7 +442,8 @@ class BotCore {
             // Envia resposta
             await this.presenceSimulator.simulateTyping(m.key.remoteJid, this.presenceSimulator.calculateTypingDuration(resposta));
 
-            const opcoes = ehGrupo || (replyInfo && replyInfo.isReply) || !ehGrupo ? { quoted: m } : {};
+            // Grupos: SEMPRE reply | PV: reply apenas se usuário respondeu ao bot
+            const opcoes = ehGrupo ? { quoted: m } : (replyInfo && replyInfo.ehRespostaAoBot) ? { quoted: m } : {};
             await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
 
             // Marca como lido final
@@ -602,11 +626,9 @@ class BotCore {
                 }
 
                 // Lógica de Reply Otimizada
-                // PV: Sempre responde com reply para manter contexto visual
-                // Grupo: Responde com reply se for resposta direta ao bot ou se for áudio
-                const deveResponderComReply = !ehGrupo || (replyInfo && replyInfo.isReply) || (replyInfo && replyInfo.ehRespostaAoBot);
-
-                const opcoes = deveResponderComReply ? { quoted: m } : {};
+                // Grupos: SEMPRE reply (contexto visual obrigatório)
+                // PV: Reply apenas se usuário respondeu em reply ao bot
+                const opcoes = ehGrupo ? { quoted: m } : (replyInfo && replyInfo.ehRespostaAoBot) ? { quoted: m } : {};
 
                 await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
 

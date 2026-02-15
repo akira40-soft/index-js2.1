@@ -21,8 +21,9 @@ import * as cheerio from 'cheerio';
 import * as fs from 'node:fs';
 
 class OSINTFramework {
-    constructor(config) {
+    constructor(config, sock = null) {
         this.config = config;
+        this.sock = sock;
 
         // API Keys (Carregadas do config/env)
         this.HIBP_KEY = process.env.HIBP_API_KEY || config.HIBP_API_KEY;
@@ -140,6 +141,48 @@ class OSINTFramework {
         } catch (e) {
             return { error: `Erro na API de GeoIP: ${e.message}` };
         }
+    }
+
+    /**
+     * Atualiza referência do socket
+     */
+    setSocket(sock) {
+        this.sock = sock;
+    }
+
+    /**
+     * Handler centralizado de comandos OSINT
+     */
+    async handleCommand(m, command, args) {
+        const commands = {
+            'dork': async () => {
+                if (!args[0]) return await this.sock.sendMessage(m.key.remoteJid, { text: '❌ Uso: #dork <query>' });
+                return await this.googleDork(args.join(' '), m);
+            },
+            'email': async () => {
+                if (!args[0]) return await this.sock.sendMessage(m.key.remoteJid, { text: '❌ Uso: #email <email>' });
+                return await this.checkEmail(args[0], m);
+            },
+            'phone': async () => {
+                if (!args[0]) return await this.sock.sendMessage(m.key.remoteJid, { text: '❌ Uso: #phone <número>' });
+                return await this.lookupPhone(args[0], m);
+            },
+            'username': async () => {
+                if (!args[0]) return await this.sock.sendMessage(m.key.remoteJid, { text: '❌ Uso: #username <user>' });
+                return await this.checkUsername(args[0], m);
+            },
+            'geo': async () => {
+                if (!args[0]) return await this.sock.sendMessage(m.key.remoteJid, { text: '❌ Uso: #geo <IP>' });
+                return await this.ipGeo(args[0], m);
+            }
+        };
+
+        if (commands[command]) {
+            await commands[command]();
+            return true;
+        }
+
+        return false;
     }
 }
 
