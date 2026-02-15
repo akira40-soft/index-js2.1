@@ -33,33 +33,10 @@
 // HF SPACES DNS CORRECTIONS - CORREÇÃO CRÍTICA PARA QR CODE
 // ═══════════════════════════════════════════════════════════════════════
 import dns from 'dns';
+import HFCorrections from './modules/HFCorrections.js';
 
-// 1. Força IPv4 para todas as operações DNS (CRÍTICO PARA HF SPACES)
-dns.setDefaultResultOrder('ipv4first');
-
-// 2. Sobrescreve resolve4 para usar fallback automático
-const originalResolve4 = dns.resolve4.bind(dns);
-dns.resolve4 = function (hostname, options, callback) {
-  if (typeof options === 'function') {
-    callback = options;
-    options = { timeout: 10000, family: 4 };
-  }
-
-  originalResolve4(hostname, options, (err, addresses) => {
-    if (err && (err.code === 'ENODATA' || err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN')) {
-      console.log(`🔄 DNS fallback para ${hostname}, tentando novamente...`);
-      setTimeout(() => {
-        originalResolve4(hostname, options, callback);
-      }, 3000);
-    } else {
-      callback(err, addresses);
-    }
-  });
-};
-
-// ═══════════════════════════════════════════════════════════════════════
-// FIM DAS CORREÇÕES HF SPACES
-// ═══════════════════════════════════════════════════════════════════════
+// Aplica correções globais (DNS, IPv4, Fallbacks)
+HFCorrections.apply();
 
 // @ts-nocheck
 import express from 'express';
