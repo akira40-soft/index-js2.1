@@ -130,7 +130,14 @@ class BotCore {
                 this.commandHandler = null;
             }
 
-            this.osintFramework = new OSINTFramework(this.config, this.sock);
+            // Inicializa OSINTFramework (BotCore level)
+            try {
+                this.osintFramework = new OSINTFramework(this.config, this.sock);
+                this.logger.debug('✅ OSINTFramework inicializado');
+            } catch (osintError) {
+                this.logger.warn(`⚠️ OSINTFramework falhou na inicialização: ${osintError.message || osintError}`);
+                // Não impede o boot, apenas deixa sem o framework no nível core
+            }
 
             this.logger.debug('✅ Componentes inicializados');
         } catch (error) {
