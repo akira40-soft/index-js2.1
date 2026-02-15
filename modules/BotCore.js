@@ -75,8 +75,8 @@ class BotCore {
             // Aplica correções para HF Spaces se necessário
             HFCorrections.apply();
 
-            // Valida diretórios
-            this.config.validateDirectories();
+            // Valida configurações
+            this.config.validate();
 
             // Inicializa componentes
             this.initializeComponents();
