@@ -681,10 +681,11 @@ class BotCore {
                     await this.simulateTyping(m.key.remoteJid, Math.min(resposta.length * 50, 5000));
                 }
 
-                // Lógica de Reply Otimizada
-                // Grupos: SEMPRE reply (contexto visual obrigatório)
-                // PV: Reply apenas se usuário respondeu em reply ao bot
-                const opcoes = ehGrupo ? { quoted: m } : (replyInfo && replyInfo.ehRespostaAoBot) ? { quoted: m } : {};
+                // Lógica de Reply Otimizada (PV)
+                // Se ehGrupo: SEMPRE reply (padrão)
+                // Se PV: Reply SE E SOMENTE SE usuário mandou reply (independentemente de para quem)
+                // Isso atende ao pedido: "se mandar msg normal ela só manda msg nomla, se reply ela responde em reply"
+                const opcoes = ehGrupo ? { quoted: m } : (replyInfo) ? { quoted: m } : {};
 
                 await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
 
@@ -993,6 +994,17 @@ class BotCore {
             this.logger.info('✅ Bot desconectado');
         } catch (error) {
             this.logger.error('❌ Erro ao desconectar:', error.message);
+        }
+    }
+    /**
+     * Helper para responder mensagens (atalho)
+     */
+    async reply(m, text, options = {}) {
+        try {
+            if (!this.sock) return;
+            return await this.sock.sendMessage(m.key.remoteJid, { text, ...options }, { quoted: m });
+        } catch (e) {
+            this.logger.error('Erro ao enviar reply:', e.message);
         }
     }
 }
