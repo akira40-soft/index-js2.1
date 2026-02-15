@@ -139,7 +139,39 @@ function configureDNS() {
 }
 
 function apply() {
-    configureDNS();
+    try {
+        // 1. Força IPv4 para todas as operações DNS (CRÍTICO PARA AMBIENTES COM IPV6 QUEBRADO)
+        dns.setDefaultResultOrder('ipv4first');
+
+        // 2. Sobrescreve resolve4 para usar fallback automático se falhar
+        const originalResolve4 = dns.resolve4?.bind(dns);
+        if (originalResolve4) {
+            dns.resolve4 = function (hostname, options, callback) {
+                if (typeof options === 'function') {
+                    callback = options;
+                    options = { timeout: 10000, family: 4 };
+                }
+
+                originalResolve4(hostname, options, (err, addresses) => {
+                    if (err && (err.code === 'ENODATA' || err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN')) {
+                        // console.log(`🔄 DNS fallback para ${hostname}, tentando novamente...`);
+                        setTimeout(() => {
+                            originalResolve4(hostname, options, callback);
+                        }, 3000);
+                    } else {
+                        callback(err, addresses);
+                    }
+                });
+            };
+        }
+
+        // 3. Configura DNS Servers do Google como fallback global
+        configureDNS();
+
+        // console.log('✅ HFCorrections: Todas as correções aplicadas com sucesso.');
+    } catch (e) {
+        console.warn('⚠️ HFCorrections: Erro parcial ao aplicar patches:', e.message);
+    }
 }
 
 const HFCorrections = {
