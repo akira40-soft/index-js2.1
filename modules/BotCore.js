@@ -61,9 +61,12 @@ class BotCore {
     /**
     * Inicializa e conecta o bot
     */
-    async start() {
+    /**
+    * Inicializa o bot (prepara componentes e diretórios) sem conectar
+    */
+    async initialize() {
         try {
-            this.logger.info('🚀 Iniciando BotCore..');
+            this.logger.info('🚀 Inicializando BotCore...');
 
             // Aplica correções para HF Spaces se necessário
             HFCorrections.apply();
@@ -71,16 +74,22 @@ class BotCore {
             // Valida diretórios
             this.config.validateDirectories();
 
-            // Inicializa componentes (agora seguro chamar antes do socket completo,
-            // mas CommandHandler precisa ser reinicializado depois que o socket existir)
+            // Inicializa componentes
             this.initializeComponents();
 
-            await this.connect();
-
+            return true;
         } catch (error) {
-            this.logger.error('❌ Erro fatal ao iniciar bot:', error.message);
-            process.exit(1);
+            this.logger.error('❌ Erro ao inicializar bot:', error.message);
+            throw error;
         }
+    }
+
+    /**
+    * Conecta o bot (Atalho para start completo)
+    */
+    async start() {
+        await this.initialize();
+        await this.connect();
     }
 
     /**
