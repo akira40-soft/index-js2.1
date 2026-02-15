@@ -29,7 +29,12 @@ class ModerationSystem {
 
         // ═══ ESTRUTURAS DE DADOS ═══
         this.mutedUsers = new Map(); // {groupId_userId} -> {expires, mutedAt, minutes}
+        this.mutedUsers = new Map(); // {groupId_userId} -> {expires, mutedAt, minutes}
         this.antiLinkGroups = new Set(); // groupIds com anti-link ativo
+        this.antiLinkPath = '/tmp/akira_data/data/antilink.json'; // Persistência do AntiLink
+        this._loadAntiLinkSettings();
+
+        this.muteCounts = new Map(); // {groupId_userId} -> {count, lastMuteDate}
         this.muteCounts = new Map(); // {groupId_userId} -> {count, lastMuteDate}
         this.bannedUsers = new Map(); // {userId} -> {reason, bannedAt, expiresAt}
         this.spamCache = new Map(); // {userId} -> [timestamps]
@@ -126,6 +131,77 @@ class ModerationSystem {
             return true;
         }
         return false;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SISTEMA DE MUTE (EM MEMÓRIA)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Verifica se um usuário está mutado em um grupo
+     */
+    isMuted(groupId, userId) {
+        if (!groupId || !userId) return false;
+        const key = `${groupId}_${userId}`;
+        const muteData = this.mutedUsers.get(key);
+
+        if (!muteData) return false;
+
+        if (Date.now() > muteData.expires) {
+            this.mutedUsers.delete(key);
+            this.logger.info(`🔊 Mute expirado para ${userId} no grupo ${groupId}`);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Muta um usuário
+     */
+    muteUser(groupId, userId, minutes = 5) {
+        const key = `${groupId}_${userId}`;
+
+        // Lógica de incremento de mute (reincidência no mesmo dia)
+        const today = new Date().toDateString();
+        let countData = this.muteCounts.get(key) || { count: 0, lastMuteDate: today };
+
+        if (countData.lastMuteDate !== today) {
+            countData = { count: 0, lastMuteDate: today };
+        }
+
+        countData.count += 1;
+        this.muteCounts.set(key, countData);
+
+        // Calcula tempo com base na reincidência
+        let muteMinutes = minutes;
+        if (countData.count > 1) {
+            muteMinutes = minutes * Math.pow(2, countData.count - 1); // Exponencial: 5, 10, 20...
+            this.logger.warn(`⚠️ [MUTE INTENSIFICADO] ${userId} muteado ${countData.count}x hoje. Tempo: ${muteMinutes} min`);
+        }
+
+        const expires = Date.now() + (muteMinutes * 60 * 1000);
+        this.mutedUsers.set(key, {
+            expires,
+            mutedAt: Date.now(),
+            minutes: muteMinutes,
+            muteCount: countData.count
+        });
+
+        return { expires, muteMinutes, muteCount: countData.count };
+    }
+
+    /**
+     * Desmuta um usuário
+     */
+    unmuteUser(groupId, userId) {
+        const key = `${groupId}_${userId}`;
+        const wasMuted = this.mutedUsers.has(key);
+        this.mutedUsers.delete(key);
+        if (wasMuted) {
+            this.logger.info(`🔊 Usuário ${userId} desmutado manualmente no grupo ${groupId}`);
+        }
+        return wasMuted;
     }
 
     /**
@@ -431,14 +507,50 @@ class ModerationSystem {
     }
 
     /**
+    * Carrega configurações de AntiLink
+    */
+    _loadAntiLinkSettings() {
+        try {
+            if (!fs.existsSync(this.antiLinkPath)) {
+                const dir = path.dirname(this.antiLinkPath);
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(this.antiLinkPath, JSON.stringify([]));
+                return;
+            }
+            const data = fs.readFileSync(this.antiLinkPath, 'utf8');
+            const groups = JSON.parse(data);
+            if (Array.isArray(groups)) {
+                groups.forEach(g => this.antiLinkGroups.add(g));
+            }
+        } catch (e) {
+            this.logger.error(`❌ Erro ao carregar AntiLink: ${e.message}`);
+        }
+    }
+
+    /**
+    * Salva configurações de AntiLink
+    */
+    _saveAntiLinkSettings() {
+        try {
+            const groups = Array.from(this.antiLinkGroups);
+            const dir = path.dirname(this.antiLinkPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(this.antiLinkPath, JSON.stringify(groups, null, 2));
+        } catch (e) {
+            this.logger.error(`❌ Erro ao salvar AntiLink: ${e.message}`);
+        }
+    }
+
+    /**
     * Ativa/desativa anti-link
     */
     toggleAntiLink(groupId, enable = true) {
         if (enable) {
-            this.antiLinkGroups?.add(groupId);
+            this.antiLinkGroups.add(groupId);
         } else {
-            this.antiLinkGroups?.delete(groupId);
+            this.antiLinkGroups.delete(groupId);
         }
+        this._saveAntiLinkSettings();
         return enable;
     }
 
@@ -446,16 +558,19 @@ class ModerationSystem {
     * Verifica se anti-link ativo
     */
     isAntiLinkActive(groupId) {
-        return this.antiLinkGroups?.has(groupId);
+        return this.antiLinkGroups.has(groupId);
     }
 
     /**
-    * Detecta link em texto
+    * Detecta link em texto e verifica permissão
     */
-    containsLink(text) {
-        if (!text) return false;
+    checkLink(text, groupId, userId, isAdmin = false) {
+        if (!this.isAntiLinkActive(groupId)) return false;
+        if (isAdmin) return false; // Admins podem enviar links
 
-        const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(bit\.ly\/[^\s]+)|(t\.me\/[^\s]+)|(wa\.me\/[^\s]+)|(chat\.whatsapp\.com\/[^\s]+)/gi;
+        // Regex robusto para links (http, www, wa.me, t.me, IPs)
+        const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(bit\.ly\/[^\s]+)|(t\.me\/[^\s]+)|(wa\.me\/[^\s]+)|(chat\.whatsapp\.com\/[^\s]+)|(\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)/gi;
+
         return linkRegex.test(text);
     }
 
