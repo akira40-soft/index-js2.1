@@ -650,6 +650,9 @@ class CommandHandler {
         const uid = m.key.participant || m.key.remoteJid;
 
         try {
+            if (!this.bot?.levelSystem) {
+                throw new Error('LevelSystem não inicializado');
+            }
             // Obtém dados do levelSystem
             const record = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
 
@@ -884,8 +887,13 @@ class CommandHandler {
             return true;
         }
         const uid = m.key.participant || m.key.remoteJid;
+        if (!this.bot?.levelSystem) {
+            await this._reply(m, '📉 Sistema de Level não disponível no momento.');
+            return true;
+        }
         const rec = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
-        await this._reply(m, `📊 *Seu Status:* Nível ${rec.level || 0} | XP ${rec.xp || 0}`);
+        const patente = this.bot.levelSystem.getPatente ? this.bot.levelSystem.getPatente(rec.level || 0) : 'Usuário';
+        await this._reply(m, `📊 *Seu Status:* \n🎮 Nível: ${rec.level || 0}\n⭐ XP: ${rec.xp || 0}\n🎖️ Patente: ${patente}`);
         return true;
     }
 

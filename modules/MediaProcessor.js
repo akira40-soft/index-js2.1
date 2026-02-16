@@ -186,9 +186,22 @@ class MediaProcessor {
     * Author = Akira-Bot
     */
     async addStickerMetadata(webpBuffer, packName = 'akira-bot', author = 'Akira-Bot') {
+        let tempStickerPath, tempResultPath;
         try {
-            const tempStickerPath = this.generateRandomFilename('webp');
-            const tempResultPath = this.generateRandomFilename('webp');
+            // Garante que o diretório temporário esteja acessível
+            if (!this.tempFolder || this.tempFolder === '.' || this.tempFolder === './') {
+                this.tempFolder = this.config?.TEMP_FOLDER || '/tmp/akira_data/temp';
+            }
+            if (!fs.existsSync(this.tempFolder)) fs.mkdirSync(this.tempFolder, { recursive: true });
+
+            tempStickerPath = this.generateRandomFilename('webp');
+            tempResultPath = this.generateRandomFilename('webp');
+
+            this.logger?.debug(`📂 Caminhos temporários: input=${tempStickerPath}, output=${tempResultPath}`);
+
+            if (!tempStickerPath || !tempResultPath) {
+                throw new Error('Falha ao gerar caminhos temporários (undefined)');
+            }
 
             fs.writeFileSync(tempStickerPath, webpBuffer);
 

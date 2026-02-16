@@ -33,6 +33,7 @@ import OSINTFramework from './OSINTFramework.js';
 import ImageEffects from './ImageEffects.js';
 import StickerViewOnceHandler from './StickerViewOnceHandler.js';
 import PermissionManager from './PermissionManager.js';
+import AdvancedPentestingToolkit from './AdvancedPentestingToolkit.js';
 
 class BotCore {
     constructor() {
@@ -126,6 +127,7 @@ class BotCore {
             this.imageEffects = new ImageEffects(this.logger);
             this.permissionManager = new PermissionManager(this.logger);
             this.stickerViewOnceHandler = new StickerViewOnceHandler(this.sock, this.logger);
+            this.advancedPentestingToolkit = new AdvancedPentestingToolkit(this.config);
 
             // Inicializa PaymentManager (passando this para acessar SubscriptionManager depois)
             this.paymentManager = new PaymentManager(this, this.subscriptionManager);
@@ -168,7 +170,10 @@ class BotCore {
             this.logger.info('🔄 Atualizando socket nos componentes...');
 
             // Core Handlers
-            if (this.commandHandler?.setSocket) this.commandHandler.setSocket(sock);
+            if (this.commandHandler) {
+                if (this.commandHandler.setSocket) this.commandHandler.setSocket(sock);
+                this.commandHandler.bot = this; // Garante referência ao BotCore instanciado
+            }
 
             // Modules
             // if (this.stickerViewOnceHandler?.setSocket) this.stickerViewOnceHandler.setSocket(sock); // Não existe no código atual
@@ -177,6 +182,10 @@ class BotCore {
             if (this.osintFramework?.setSocket) this.osintFramework.setSocket(sock);
             if (this.stickerViewOnceHandler?.setSocket) this.stickerViewOnceHandler.setSocket(sock);
             if (this.botProfile?.setSocket) this.botProfile.setSocket(sock);
+
+            // Novos módulos
+            if (this.advancedPentestingToolkit?.setSocket) this.advancedPentestingToolkit.setSocket(sock);
+            if (this.presenceSimulator) this.presenceSimulator.sock = sock;
 
             // Não têm setSocket mas podem precisar (verificar implementações futuras)
             // this.advancedPentestingToolkit não usa socket no código atual
@@ -426,6 +435,11 @@ class BotCore {
     async handleImageMessage(m, nome, numeroReal, replyInfo, ehGrupo) {
         this.logger.info(`🖼️ [IMAGEM] Iniciando processamento para ${nome}`);
 
+        // Premiar XP por imagem
+        if (ehGrupo && this.levelSystem) {
+            this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 15);
+        }
+
         try {
             // ✅ VERIFICAÇÃO DE ATIVAÇÃO RIGOROSA (Mesma regra do texto)
             let deveResponder = false;
@@ -662,6 +676,11 @@ class BotCore {
                     const handled = await this.commandHandler.handle(m, { nome, numeroReal, texto, replyInfo, ehGrupo });
                     if (handled) {
                         this.logger.info(`⚡ Comando tratado: ${texto.substring(0, 30)}..`);
+
+                        // Premiar XP por comando (opcional mas bom para engajamento)
+                        if (ehGrupo && this.levelSystem) {
+                            this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
+                        }
                         return;
                     }
                 }
@@ -728,6 +747,11 @@ class BotCore {
                 context_hint: replyInfo.contextHint || '',
                 priority_level: replyInfo.priorityLevel || 2
             } : { is_reply: false, reply_to_bot: false };
+
+            // Premiar XP por mensagem de texto
+            if (ehGrupo && this.levelSystem) {
+                this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 10);
+            }
 
             const payload = this.apiClient.buildPayload({
                 usuario: nome,

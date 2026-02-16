@@ -510,9 +510,9 @@ class ImageEffects {
         try {
             const metadata = await sharp(imageBuffer).metadata();
             const wastedSvg = Buffer.from(
-                `<svg width="${metadata.width}" height="${metadata.height}">
-                    <rect x="0" y="${metadata.height / 2 - 50}" width="100%" height="100" fill="rgba(0,0,0,0.5)"/>
-                    <text x="50%" y="50%" font-family="Arial" font-weight="bold" font-size="${metadata.width / 10}" fill="red" text-anchor="middle" dominant-baseline="middle">wasted</text>
+                `<svg width="${metadata.width}" height="${metadata.height}" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="0" y="${metadata.height / 2 - metadata.height * 0.1}" width="100%" height="${metadata.height * 0.2}" fill="rgba(0,0,0,0.6)"/>
+                    <text x="50%" y="54%" font-family="Impact, sans-serif" font-weight="bold" font-size="${metadata.width / 6}" fill="#ff0000" text-anchor="middle" dominant-baseline="middle" stroke="#ffffff" stroke-width="${metadata.width / 150}">WASTED</text>
                 </svg>`
             );
             return {
