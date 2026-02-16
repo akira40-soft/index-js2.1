@@ -91,7 +91,20 @@ class MessageProcessor {
             const tipo = getContentType(message.message);
             if (!tipo) return '';
 
-            const msg = message.message;
+            let msg = message.message;
+
+            // Suporte a viewOnceMessage (aninhada)
+            if (tipo === 'viewOnceMessage' || tipo === 'viewOnceMessageV2') {
+                msg = msg[tipo].message;
+                const subTipo = getContentType(msg);
+                if (!subTipo) return '';
+
+                switch (subTipo) {
+                    case 'imageMessage': return msg.imageMessage.caption || '';
+                    case 'videoMessage': return msg.videoMessage.caption || '';
+                    default: return '';
+                }
+            }
 
             switch (tipo) {
                 case 'conversation':
@@ -326,7 +339,13 @@ class MessageProcessor {
     hasAudio(message) {
         try {
             const tipo = getContentType(message.message);
-            return tipo === 'audioMessage';
+            if (tipo === 'audioMessage') return true;
+
+            if (tipo === 'viewOnceMessage' || tipo === 'viewOnceMessageV2') {
+                const subMsg = message.message[tipo].message;
+                return getContentType(subMsg) === 'audioMessage';
+            }
+            return false;
         } catch (e) {
             return false;
         }
@@ -338,7 +357,13 @@ class MessageProcessor {
     hasImage(message) {
         try {
             const tipo = getContentType(message.message);
-            return tipo === 'imageMessage';
+            if (tipo === 'imageMessage') return true;
+
+            if (tipo === 'viewOnceMessage' || tipo === 'viewOnceMessageV2') {
+                const subMsg = message.message[tipo].message;
+                return getContentType(subMsg) === 'imageMessage';
+            }
+            return false;
         } catch (e) {
             return false;
         }
@@ -391,25 +416,17 @@ class MessageProcessor {
     /**
     * Verifica se é comando
     */
-    /**
-    * Verifica se é comando
-    */
     isCommand(text) {
         if (!text) return false;
-        const prefixes = [this.config.PREFIXO, '#', '*', '!', '/', '.'];
-        return prefixes.some(p => text.trim().startsWith(p));
+        const prefix = this.config.PREFIXO || '*';
+        return text.trim().startsWith(prefix);
     }
 
-    /**
-    * Parseia comando
-    */
     parseCommand(text) {
         if (!this.isCommand(text)) return null;
 
-        const prefixes = [this.config.PREFIXO, '#', '*', '!', '/', '.'];
-        const prefix = prefixes.find(p => text.trim().startsWith(p));
-
-        const args = text.slice(prefix.length).trim().split(/ +/);
+        const prefix = this.config.PREFIXO || '*';
+        const args = text.trim().slice(prefix.length).trim().split(/ +/);
         const comando = args.shift().toLowerCase();
 
         return {

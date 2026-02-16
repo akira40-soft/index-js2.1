@@ -183,9 +183,9 @@ class MediaProcessor {
             await img.load(webpBuffer);
 
             const json = {
-                'sticker-pack-id': `akira-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                'sticker-pack-name': String(packName || 'akira-bot').slice(0, 30),
-                'sticker-pack-publisher': String(author || 'Akira-Bot').slice(0, 30),
+                'sticker-pack-id': `akira-${crypto.randomBytes(8).toString('hex')}`,
+                'sticker-pack-name': String(packName || 'akira-bot').trim().slice(0, 30),
+                'sticker-pack-publisher': String(author || 'Akira-Bot').trim().slice(0, 30),
                 'emojis': ['🎨', '🤖']
             };
 
@@ -301,7 +301,7 @@ class MediaProcessor {
                 tipo: 'sticker_image',
                 size: stickerComMetadados.length,
                 packName,
-                author: 'Akira-Bot'
+                author
             };
 
         } catch (error) {
@@ -352,9 +352,8 @@ class MediaProcessor {
                 this.logger?.debug('⚠️ Não foi possível obter duração do vídeo antes da conversão:', probeErr.message);
             }
 
-            // Pack name = apenas nome do usuário, Author = Akira-Bot
-            const { userName = 'User' } = metadata;
-            const packName = userName.split(' ')[0].toLowerCase();
+            // Pack name e Author vindos do metadata (fornecidos pelo Handler)
+            const { packName = 'akira-bot', author = 'Akira-Bot' } = metadata;
 
             // Filtro otimizado: escala aumentando para preencher + crop para 512x512
             // Isso garante formato quadrado preenchido
@@ -376,7 +375,7 @@ class MediaProcessor {
                         '-an',
                         '-t', String(stickerDuration),
                         '-metadata', `title=${packName}`,
-                        '-metadata', 'artist=Akira-Bot',
+                        '-metadata', `artist=${author}`, ,
                         '-metadata', 'comment=Criado por Akira Bot',
                         '-y'
                     ])
@@ -424,7 +423,7 @@ class MediaProcessor {
                             '-an',
                             '-t', String(Math.min(maxDuration, 10)),
                             '-metadata', `title=${packName}`,
-                            '-metadata', 'artist=Akira-Bot',
+                            '-metadata', `artist=${author}`,
                             '-y'
                         ])
                         .on('end', resolve)
@@ -462,7 +461,7 @@ class MediaProcessor {
                 tipo: 'sticker_animado',
                 size: stickerComMetadados.length,
                 packName,
-                author: 'Akira-Bot'
+                author
             };
 
         } catch (error) {

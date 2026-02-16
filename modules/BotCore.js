@@ -438,13 +438,16 @@ class BotCore {
                 // Em PV sempre responde
                 deveResponder = true;
             } else {
-                // Em Grupo: Menção OU Reply ao Bot OU Nome no Caption
+                // Em Grupo: Menção OU Reply ao Bot OU Nome no Caption OU Comando na Legenda
                 if (this.messageProcessor.isBotMentioned(m)) {
                     deveResponder = true;
                 } else if (replyInfo && replyInfo.ehRespostaAoBot) {
                     deveResponder = true;
                 } else if (hasBotName) {
                     deveResponder = true;
+                } else if (this.messageProcessor.isCommand(caption)) {
+                    deveResponder = true;
+                    this.logger.debug(`✅ Ativação por comando na legenda detectada: ${caption.substring(0, 20)}`);
                 }
             }
 
@@ -453,26 +456,47 @@ class BotCore {
                 return;
             }
 
+            // PRIORIDADE: Se a legenda for um comando, desvia para o CommandHandler
+            if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
+                try {
+                    const handled = await this.commandHandler.handle(m, { nome, numeroReal, texto: caption, replyInfo, ehGrupo });
+                    if (handled) {
+                        this.logger.info(`⚡ Comando em legenda de imagem tratado: ${caption.substring(0, 30)}..`);
+                        return;
+                    }
+                } catch (cmdErr) {
+                    this.logger.warn(`⚠️ Falha ao processar comando na legenda: ${cmdErr.message}`);
+                }
+            }
+
             // Marca como entregue/lido
             await this.presenceSimulator.simulateTicks(m, true, false);
 
             // Simula "olhando" a imagem (digitação breve)
             await this.presenceSimulator.simulateTyping(m.key.remoteJid, 1500);
 
-            // Validação prévia da mensagem
-            if (!m.message || !m.message.imageMessage) {
-                this.logger.error('❌ Mensagem de imagem inválida ou ausente');
-                await this.reply(m, '❌ Formato de imagem não suportado...');
+            // Validação de tipo (suporte a viewOnce)
+            const tipoMsg = getContentType(m.message);
+            let imgMsg = m.message.imageMessage;
+
+            if (tipoMsg === 'viewOnceMessage' || tipoMsg === 'viewOnceMessageV2') {
+                imgMsg = m.message[tipoMsg].message?.imageMessage;
+            }
+
+            if (!imgMsg) {
+                this.logger.error('❌ Mensagem de imagem inválida ou ausente (não foi possível localizar imageMessage)');
+                // Se não tem imagem mas chegou aqui, pode ser um comando de texto na legenda que não precisava de imagem
+                // Mas geralmente handleImageMessage é para imagens.
                 return;
             }
 
             this.logger.debug('⬇️ Baixando e decifrando imagem...');
-            this.logger.debug(`📋 MimeType: ${m.message.imageMessage.mimetype || 'desconhecido'}`);
-            this.logger.debug(`📏 Tamanho relatado: ${m.message.imageMessage.fileLength || 'desconhecido'} bytes`);
+            this.logger.debug(`📋 MimeType: ${imgMsg.mimetype || 'desconhecido'}`);
+            this.logger.debug(`📏 Tamanho relatado: ${imgMsg.fileLength || 'desconhecido'} bytes`);
 
             // Baixa a imagem (MediaProcessor cuida da decifragem usando chaves da mensagem)
             const imageBuffer = await this.mediaProcessor.downloadMedia(
-                m.message.imageMessage,
+                imgMsg,
                 'image'
             );
 
@@ -515,7 +539,7 @@ class BotCore {
                 tipo_mensagem: 'image',
                 imagem_dados: {
                     dados: base64Image,
-                    mime_type: m.message.imageMessage.mimetype || 'image/jpeg',
+                    mime_type: imgMsg.mimetype || 'image/jpeg',
                     descricao: caption || 'Imagem enviada'
                 },
                 mensagem_citada: (replyInfo && replyInfo.textoMensagemCitada) || '',
@@ -564,11 +588,36 @@ class BotCore {
         this.logger.info(`🎤 [ÁUDIO] ${nome}`);
 
         try {
+            // Validação de tipo (suporte a viewOnce)
+            const tipoMsg = getContentType(m.message);
+            let audMsg = m.message.audioMessage;
+
+            if (tipoMsg === 'viewOnceMessage' || tipoMsg === 'viewOnceMessageV2') {
+                audMsg = m.message[tipoMsg].message?.audioMessage;
+            }
+
+            if (!audMsg) {
+                this.logger.error('❌ Mensagem de áudio inválida ou ausente');
+                return;
+            }
+
             // Decodifica áudio
             const audioBuffer = await this.mediaProcessor.downloadMedia(
-                m.message.audioMessage,
+                audMsg,
                 'audio'
             );
+
+            this.handleAudioMessage_internal(m, nome, numeroReal, replyInfo, ehGrupo, audioBuffer);
+        } catch (error) {
+            this.logger.error('❌ Erro ao processar áudio:', error.message);
+        }
+    }
+
+    /**
+     * Lógica interna de áudio (transcrição e resposta)
+     */
+    async handleAudioMessage_internal(m, nome, numeroReal, replyInfo, ehGrupo, audioBuffer) {
+        try {
 
             if (!audioBuffer) {
                 this.logger.error('❌ Erro ao baixar áudio');

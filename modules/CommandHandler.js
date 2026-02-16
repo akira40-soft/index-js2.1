@@ -238,6 +238,10 @@ class CommandHandler {
                 case 'fig':
                     return await this._handleSticker(m, nome);
 
+                case 'take':
+                case 'roubar':
+                    return await this._handleTake(m, nome);
+
                 case 'play':
                 case 'p':
                     return await this._handlePlay(m, fullArgs);
@@ -454,47 +458,47 @@ class CommandHandler {
 📱 *PREFIXO:* *
 
 🎨 *MÍDIA & CRIAÇÃO*
-• #sticker | #s - Criar figurinha (preenchimento total)
-• #take - Roubar figurinha com seus metadados
-• #play [nome] - Baixar música (Audio)
-• #video [nome] - Baixar vídeo do YouTube
-• #toimg - Sticker para imagem
-• #tomp3 - Vídeo para áudio
+• *sticker | *s - Criar figurinha (preenchimento total)
+• *take - Roubar figurinha com seus metadados
+• *play [nome] - Baixar música (Audio)
+• *video [nome] - Baixar vídeo do YouTube
+• *toimg - Sticker para imagem
+• *tomp3 - Vídeo para áudio
 
 🖼️ *EFEITOS DE IMAGEM*
-• #hd | #upscale - Melhorar qualidade
-• #removebg - Remover fundo
-• #communism - Efeito Comunista
-• #wasted - Efeito GTA
-• #jail | #triggered | #gay - Efeitos visuais
-• #sepia | #grey | #invert - Filtros
+• *hd | *upscale - Melhorar qualidade
+• *removebg - Remover fundo
+• *communism - Efeito Comunista
+• *wasted - Efeito GTA
+• *jail | *triggered | *gay - Efeitos visuais
+• *sepia | *grey | *invert - Filtros
 
 🕹️ *DIVERSÃO & JOGOS*
-• #pinterest [busca] - Buscar imagens
-• #ship @user @user - Compatibilidade
-• #slot - Máquina de cassino
-• #dado | #moeda - Sorteio
-• #chance [pergunta] - Probabilidade
-• #gay - Medidor de gayzice
+• *pinterest [busca] - Buscar imagens
+• *ship @user @user - Compatibilidade
+• *slot - Máquina de cassino
+• *dado | *moeda - Sorteio
+• *chance [pergunta] - Probabilidade
+• *gay - Medidor de gayzice
 
 👥 *GESTÃO DE GRUPOS*
-• #tagall | #totag - Mencionar todos
-• #hidetag - Mencionar todos (oculto)
-• #welcome [on/off] - Ativar boas-vindas
-• #antilink [on/off] - Proteção contra links
-• #mute | #desmute - Silenciar chat
-• #kick | #add - Gerenciar membros
-• #promote | #demote - Gerenciar ADMs
+• *tagall | *totag - Mencionar todos
+• *hidetag - Mencionar todos (oculto)
+• *welcome [on/off] - Ativar boas-vindas
+• *antilink [on/off] - Proteção contra links
+• *mute | *desmute - Silenciar chat
+• *kick | *add - Gerenciar membros
+• *promote | *demote - Gerenciar ADMs
 
 🛡️ *CYBERSECURITY (ADMIN)*
-• #nmap | #sqlmap | #dns | #whois
-• #geo [ip] | #shodan | #cve
+• *nmap | *sqlmap | *dns | *whois
+• *geo [ip] | *shodan | *cve
 
 📊 *UTILITÁRIOS & PERFIL*
-• #perfil - Seus dados e XP
-• #rank - Ranking de usuários
-• #ping - Status do sistema
-• #broadcast [msg] - Transmissão Global
+• *perfil - Seus dados e XP
+• *rank - Ranking de usuários
+• *ping - Status do sistema
+• *broadcast [msg] - Transmissão Global
 
 *Desenvolvido por Isaac Quarenta*
 *Powered by AKIRA V21 ULTIMATE*`;
@@ -547,9 +551,63 @@ class CommandHandler {
         return true;
     }
 
+    async _handleTake(m, nome) {
+        try {
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            if (!quoted) {
+                await this._reply(m, '❌ Responda a uma figurinha, imagem ou vídeo para usar o *take.');
+                return true;
+            }
+
+            const stickerMsg = quoted.stickerMessage;
+            const imageMsg = quoted.imageMessage;
+            const videoMsg = quoted.videoMessage;
+
+            if (!stickerMsg && !imageMsg && !videoMsg) {
+                await this._reply(m, '❌ A mensagem citada não é uma mídia suportada.');
+                return true;
+            }
+
+            const packName = 'akira-bot';
+            const author = nome || 'Akira-Bot';
+
+            await this._reply(m, '⏳ Alterando metadados da figurinha...');
+
+            let res;
+            if (stickerMsg) {
+                const buf = await this.mediaProcessor.downloadMedia(stickerMsg, 'sticker');
+                if (stickerMsg.isAnimated) {
+                    // Para animados, tentamos reconstruir ou apenas reaplicar EXIF se possível
+                    // Mas MediaProcessor.addStickerMetadata já faz isso se passar o buffer
+                    const bufferComNovosMetadados = await this.mediaProcessor.addStickerMetadata(buf, packName, author);
+                    res = { sucesso: true, buffer: bufferComNovosMetadados };
+                } else {
+                    const bufferComNovosMetadados = await this.mediaProcessor.addStickerMetadata(buf, packName, author);
+                    res = { sucesso: true, buffer: bufferComNovosMetadados };
+                }
+            } else if (imageMsg) {
+                const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
+                res = await this.mediaProcessor.createStickerFromImage(buf, { packName, author });
+            } else {
+                const buf = await this.mediaProcessor.downloadMedia(videoMsg, 'video');
+                res = await this.mediaProcessor.createAnimatedStickerFromVideo(buf, 10, { packName, author });
+            }
+
+            if (res && res.sucesso && res.buffer) {
+                await this.sock.sendMessage(m.key.remoteJid, { sticker: res.buffer }, { quoted: m });
+            } else {
+                await this._reply(m, `❌ Erro no *take: ${res?.error || 'falha interna'}`);
+            }
+        } catch (e) {
+            console.error('Erro em _handleTake:', e);
+            await this._reply(m, '❌ Erro no processamento do comando *take.');
+        }
+        return true;
+    }
+
     async _handlePlay(m, query) {
         if (!query) {
-            await this._reply(m, '❌ Uso: #play <nome da música ou link>');
+            await this._reply(m, '❌ Uso: *play <nome da música ou link>');
             return true;
         }
         await this._reply(m, '⏳ Buscando e processando música...');
@@ -1136,7 +1194,7 @@ class CommandHandler {
             const mentioned = ctx?.mentionedJid || [];
 
             if (mentioned.length < 2) {
-                await this._reply(m, '💞 Uso: #ship @pessoa1 @pessoa2');
+                await this._reply(m, '💞 Uso: *ship @pessoa1 @pessoa2');
                 return true;
             }
 
