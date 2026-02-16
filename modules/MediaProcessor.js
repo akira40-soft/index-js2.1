@@ -186,11 +186,18 @@ class MediaProcessor {
     * Author = Akira-Bot
     */
     async addStickerMetadata(webpBuffer, packName = 'akira-bot', author = 'Akira-Bot') {
+        let tempInput = null;
+        let tempOutput = null;
         try {
             if (!Webpmux) return webpBuffer;
 
+            tempInput = this.generateRandomFilename('webp');
+            tempOutput = this.generateRandomFilename('webp');
+
+            fs.writeFileSync(tempInput, webpBuffer);
+
             const img = new Webpmux.Image();
-            await img.load(webpBuffer); // Carrega direto do buffer
+            await img.load(tempInput); // Carrega do arquivo físico para evitar erro de Buffer no node-webpmux
 
             const json = {
                 'sticker-pack-id': `akira-${crypto.randomBytes(8).toString('hex')}`,
@@ -211,14 +218,23 @@ class MediaProcessor {
 
             img.exif = exif;
 
-            // Gera o buffer final diretamente em memória (sem arquivo temporário)
-            // Para node-webpmux, save(null) retorna o buffer
-            const result = await img.save(null);
+            // Salva em arquivo físico e lê o buffer
+            await img.save(tempOutput);
+            const result = fs.readFileSync(tempOutput);
 
-            this.logger?.debug(`✅ Metadados EXIF inseridos via Buffer: "${packName}" | "${author}"`);
+            this.logger?.debug(`✅ Metadados EXIF inseridos via Arquivo: "${packName}" | "${author}"`);
+
+            // Cleanup imediato
+            await Promise.all([
+                this.cleanupFile(tempInput),
+                this.cleanupFile(tempOutput)
+            ]);
+
             return result;
         } catch (e) {
-            this.logger?.warn('⚠️ Erro ao adicionar EXIF (método Buffer):', e.message);
+            this.logger?.warn('⚠️ Erro ao adicionar EXIF:', e.message);
+            if (tempInput) this.cleanupFile(tempInput);
+            if (tempOutput) this.cleanupFile(tempOutput);
             return webpBuffer;
         }
     }
@@ -917,116 +933,120 @@ class MediaProcessor {
             // Bypass de Captcha e Limite 720p
             const bypassArgs = '--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates';
             const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
-            const command = process.platform === 'win32'
-                ? `"${ytdlpTool.cmd}" ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`
-                : `${ytdlpTool.cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`;
 
-            this.logger?.debug(`Executando: ${command}`);
+            // Força o yt-dlp a ser mais verboso e explícito no output
+            const command = process.platform === 'win32'
+                ? `"${ytdlpTool.cmd}" ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --verbose "${url}"`
+                : `${ytdlpTool.cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --verbose "${url}"`;
+
+            this.logger?.info(`🚀 Executando download: ${command}`);
 
             await new Promise((resolve, reject) => {
-                exec(command, { timeout: 180000, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
-                    // yt-dlp pode criar mkv se não conseguir mp4, ou mp4 direto
+                exec(command, { timeout: 180000, maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
+                    if (error) {
+                        this.logger?.error(`❌ Erro no yt-dlp: ${error.message}`);
+                        this.logger?.debug(`STDOUT: ${stdout}`);
+                        this.logger?.debug(`STDERR: ${stderr}`);
+                        return reject(error);
+                    }
+
+                    // Busca o arquivo gerado com várias extensões possíveis (yt-dlp pode mudar conforme o merge)
                     const possibleExts = ['.mp4', '.mkv', '.webm'];
-                    let found = false;
+                    let foundFile = null;
                     for (const ext of possibleExts) {
-                        if (fs.existsSync(outputTemplate + ext)) {
-                            found = true;
+                        const checkPath = outputTemplate + ext;
+                        if (fs.existsSync(checkPath)) {
+                            foundFile = checkPath;
                             break;
                         }
                     }
 
-                    if (found) {
-                        resolve();
-                    } else if (error) {
-                        reject(error);
+                    if (foundFile) {
+                        this.logger?.info(`✅ Arquivo baixado encontrado: ${path.basename(foundFile)}`);
+                        resolve(foundFile);
                     } else {
-                        reject(new Error('Arquivo de vídeo não encontrado após download'));
+                        this.logger?.warn(`⚠️ yt-dlp terminou mas arquivo não foi localizado. STDOUT: ${stdout.substring(stdout.length - 500)}`);
+                        reject(new Error('Arquivo de vídeo não encontrado no sistema após o download.'));
                     }
                 });
+            }).then(async (foundFile) => {
+                const actualPath = foundFile;
+                const stats = fs.statSync(actualPath);
+
+                if (stats.size > this.config?.YT_MAX_SIZE_MB * 1024 * 1024) {
+                    await this.cleanupFile(actualPath);
+                    throw new Error(`Vídeo muito grande (>${this.config?.YT_MAX_SIZE_MB}MB)`);
+                }
+
+                // 🛠️ ESTÁGIO DE OTIMIZAÇÃO PARA MOBILE (H.264 Baseline)
+                this.logger?.info('🛠️ Otimizando vídeo para compatibilidade mobile...');
+                const optimizedPath = this.generateRandomFilename('mp4');
+
+                try {
+                    await new Promise((resolve, reject) => {
+                        ffmpeg(actualPath)
+                            .outputOptions([
+                                '-c:v', 'libx264',
+                                '-profile:v', 'baseline',
+                                '-level', '3.0',
+                                '-pix_fmt', 'yuv420p',
+                                '-threads', '1',
+                                '-c:a', 'aac',
+                                '-b:a', '128k',
+                                '-ar', '44100',
+                                '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                                '-movflags', '+faststart',
+                                '-preset', 'ultrafast',
+                                '-crf', '26' // Aumentado ligeiramente para garantir tamanho menor e mais rápido
+                            ])
+                            .on('start', (cmd) => this.logger?.debug(`FFMPEG: ${cmd}`))
+                            .on('end', resolve)
+                            .on('error', (err) => {
+                                this.logger?.error(`Erro FFMPEG: ${err.message}`);
+                                reject(err);
+                            })
+                            .save(optimizedPath);
+                    });
+
+                    const videoBuffer = fs.readFileSync(optimizedPath);
+                    const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                    const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
+
+                    await Promise.all([
+                        this.cleanupFile(actualPath),
+                        this.cleanupFile(optimizedPath)
+                    ]);
+
+                    return {
+                        sucesso: true,
+                        buffer: videoBuffer,
+                        titulo: metadata.titulo,
+                        size: videoBuffer.length,
+                        mimetype: 'video/mp4',
+                        ...metadata
+                    };
+                } catch (optError) {
+                    this.logger?.warn('⚠️ Otimização falhou, tentando enviar original se for MP4...');
+                    if (actualPath.endsWith('.mp4')) {
+                        const videoBuffer = fs.readFileSync(actualPath);
+                        const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                        const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
+                        await this.cleanupFile(actualPath);
+                        return {
+                            sucesso: true,
+                            buffer: videoBuffer,
+                            titulo: metadata.titulo,
+                            size: videoBuffer.length,
+                            mimetype: 'video/mp4',
+                            ...metadata
+                        };
+                    } else {
+                        await this.cleanupFile(actualPath);
+                        throw new Error(`Falha na conversão e formato original (${path.extname(actualPath)}) incompatível.`);
+                    }
+                }
             });
 
-            // Encontrar o arquivo gerado
-            const possibleExts = ['.mp4', '.mkv', '.webm'];
-            let actualPath = null;
-            for (const ext of possibleExts) {
-                if (fs.existsSync(outputTemplate + ext)) {
-                    actualPath = outputTemplate + ext;
-                    break;
-                }
-            }
-
-            if (!actualPath) {
-                return { sucesso: false, error: 'Falha ao localizar arquivo baixado' };
-            }
-
-            const stats = fs.statSync(actualPath);
-            if (stats.size > this.config?.YT_MAX_SIZE_MB * 1024 * 1024) {
-                await this.cleanupFile(actualPath);
-                return { sucesso: false, error: `Vídeo muito grande (>${this.config?.YT_MAX_SIZE_MB}MB)` };
-            }
-
-            // 🛠️ ESTÁGIO DE OTIMIZAÇÃO PARA MOBILE (H.264 Baseline)
-            this.logger?.info('🛠️ Otimizando vídeo para compatibilidade mobile...');
-            const optimizedPath = this.generateRandomFilename('mp4');
-
-            try {
-                await new Promise((resolve, reject) => {
-                    ffmpeg(actualPath)
-                        .outputOptions([
-                            '-c:v', 'libx264',
-                            '-profile:v', 'baseline',
-                            '-level', '3.0',
-                            '-pix_fmt', 'yuv420p',
-                            '-threads', '1', // CRÍTICO: Reduz drasticamente o uso de RAM no Railway
-                            '-c:a', 'aac',
-                            '-b:a', '128k',
-                            '-ar', '44100',
-                            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', // Garante dimensões pares
-                            '-movflags', '+faststart',
-                            '-preset', 'ultrafast', // Mais rápido e consome menos recursos instantâneos
-                            '-crf', '23' // Qualidade HD equilibrada
-                        ])
-                        .on('end', resolve)
-                        .on('error', reject)
-                        .save(optimizedPath);
-                });
-
-                const videoBuffer = fs.readFileSync(optimizedPath);
-
-                // Metadados
-                const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
-                const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
-
-                await Promise.all([
-                    this.cleanupFile(actualPath),
-                    this.cleanupFile(optimizedPath)
-                ]);
-
-                return {
-                    sucesso: true,
-                    buffer: videoBuffer,
-                    titulo: metadata.titulo,
-                    size: videoBuffer.length,
-                    mimetype: 'video/mp4',
-                    ...metadata
-                };
-            } catch (optError) {
-                this.logger?.error('⚠️ Erro na otimização mobile, enviando original:', optError.message);
-                const videoBuffer = fs.readFileSync(actualPath);
-
-                const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
-                const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
-
-                await this.cleanupFile(actualPath);
-                return {
-                    sucesso: true,
-                    buffer: videoBuffer,
-                    titulo: metadata.titulo,
-                    size: videoBuffer.length,
-                    mimetype: 'video/mp4',
-                    ...metadata
-                };
-            }
 
         } catch (error) {
             this.logger?.error('❌ Erro download vídeo:', error.message);

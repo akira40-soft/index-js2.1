@@ -509,25 +509,42 @@ class ImageEffects {
     async applyWastedEffect(imageBuffer) {
         try {
             const metadata = await sharp(imageBuffer).metadata();
-            const fontSize = Math.floor(metadata.width / 6);
-            const rectHeight = Math.floor(metadata.height * 0.2);
-            const rectY = Math.floor(metadata.height / 2 - rectHeight / 2);
-            const textY = Math.floor(metadata.height / 2 + fontSize * 0.35); // Ajuste fino para centralizar o texto vertiginosamente
+            const width = metadata.width;
+            const height = metadata.height;
 
+            // Cálculos dinâmicos baseados no tamanho da imagem
+            const fontSize = Math.floor(width / 5);
+            const rectHeight = Math.floor(height * 0.22);
+            const rectY = Math.floor(height / 2 - rectHeight / 2);
+
+            // SVG simplificado para garantir compatibilidade máxima
             const wastedSvg = Buffer.from(
-                `<svg width="${metadata.width}" height="${metadata.height}" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="0" y="${rectY}" width="${metadata.width}" height="${rectHeight}" fill="rgba(0,0,0,0.7)"/>
-                    <text x="${metadata.width / 2}" y="${textY}" font-family="sans-serif" font-weight="900" font-size="${fontSize}px" fill="#ff0000" text-anchor="middle" stroke="#ffffff" stroke-width="${metadata.width / 200}">WASTED</text>
+                `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+                    <!-- Faixa preta clássica do GTA -->
+                    <rect x="0" y="${rectY}" width="${width}" height="${rectHeight}" fill="black" fill-opacity="0.6"/>
+                    
+                    <!-- Texto WASTED centralizado -->
+                    <text x="50%" y="50%" 
+                          font-family="Impact, Arial, sans-serif" 
+                          font-weight="bold" 
+                          font-size="${fontSize}px" 
+                          fill="#ff0000" 
+                          text-anchor="middle" 
+                          dominant-baseline="central"
+                          stroke="black"
+                          stroke-width="${Math.max(1, width / 200)}">WASTED</text>
                 </svg>`
             );
+
             return {
                 success: true,
                 buffer: await sharp(imageBuffer)
                     .greyscale()
-                    .composite([{ input: wastedSvg, blend: 'over' }])
+                    .composite([{ input: wastedSvg, blend: 'over', gravity: 'centre' }])
                     .toBuffer()
             };
         } catch (e) {
+            this.logger?.error('Erro no efeito Wasted:', e.message);
             return { success: false, error: e.message };
         }
     }
