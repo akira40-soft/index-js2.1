@@ -407,7 +407,7 @@ class CommandHandler {
 *Desenvolvido por Isaac Quarenta*
 *Powered by AKIRA V21 ULTIMATE*`;
 
-        await this.bot.reply(m, menuText);
+        await this._reply(m, menuText);
 
         // Simula leitura após enviar menu
         if (this.presenceSimulator) {
@@ -423,11 +423,11 @@ class CommandHandler {
             const imageMsg = m.message?.imageMessage || quoted?.imageMessage;
 
             if (!imageMsg) {
-                await this.bot.reply(m, '❌ Responda a uma imagem para criar o sticker.');
+                await this._reply(m, '❌ Responda a uma imagem para criar o sticker.');
                 return true;
             }
 
-            await this.bot.reply(m, '⏳ Criando sticker...');
+            await this._reply(m, '⏳ Criando sticker...');
             const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
             const res = await this.mediaProcessor.createStickerFromImage(buf, {
                 packName: 'Akira Pack',
@@ -437,24 +437,24 @@ class CommandHandler {
             if (res && res.sucesso && res.buffer) {
                 await this.sock.sendMessage(m.key.remoteJid, { sticker: res.buffer }, { quoted: m });
             } else {
-                await this.bot.reply(m, '❌ Erro ao criar sticker.');
+                await this._reply(m, '❌ Erro ao criar sticker.');
             }
         } catch (e) {
-            await this.bot.reply(m, '❌ Erro no processamento do sticker.');
+            await this._reply(m, '❌ Erro no processamento do sticker.');
         }
         return true;
     }
 
     async _handlePlay(m, query) {
         if (!query) {
-            await this.bot.reply(m, '❌ Uso: #play <nome da música ou link>');
+            await this._reply(m, '❌ Uso: #play <nome da música ou link>');
             return true;
         }
-        await this.bot.reply(m, '⏳ Buscando e processando música...');
+        await this._reply(m, '⏳ Buscando e processando música...');
         try {
             const res = await this.mediaProcessor.downloadYouTubeAudio(query);
             if (res.error) {
-                await this.bot.reply(m, `❌ ${res.error}`);
+                await this._reply(m, `❌ ${res.error}`);
             } else {
                 await this.sock.sendMessage(m.key.remoteJid, {
                     audio: res.buffer,
@@ -464,7 +464,7 @@ class CommandHandler {
                 }, { quoted: m });
             }
         } catch (e) {
-            await this.bot.reply(m, '❌ Erro ao processar o comando play.');
+            await this._reply(m, '❌ Erro ao processar o comando play.');
         }
         return true;
     }
@@ -474,24 +474,24 @@ class CommandHandler {
         const uid = m.key.participant || m.key.remoteJid;
         const record = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
         const txt = `👤 *PERFIL:* ${nome}\n📱 *Número:* ${numeroReal}\n🎮 *Nível:* ${record.level || 0}\n⭐ *XP:* ${record.xp || 0}`;
-        await this.bot.reply(m, txt);
+        await this._reply(m, txt);
         return true;
     }
 
     async _handleRank(m, ehGrupo) {
         if (!ehGrupo) {
-            await this.bot.reply(m, '📵 Ranking disponível apenas em grupos.');
+            await this._reply(m, '📵 Ranking disponível apenas em grupos.');
             return true;
         }
 
         if (!this.bot.levelSystem || !this.bot.levelSystem.getTopUsers) {
-            await this.bot.reply(m, '📉 Sistema de Level não disponível.');
+            await this._reply(m, '📉 Sistema de Level não disponível.');
             return true;
         }
 
         const topUsers = this.bot.levelSystem.getTopUsers(m.key.remoteJid, 10);
         if (!topUsers || topUsers.length === 0) {
-            await this.bot.reply(m, '📉 Sem dados de ranking para este grupo ainda.');
+            await this._reply(m, '📉 Sem dados de ranking para este grupo ainda.');
             return true;
         }
 
@@ -508,14 +508,14 @@ class CommandHandler {
             msg += `${medal} *${name}*\n   ├ 🆙 Nível: ${u.level}\n   └ ⭐ XP: ${u.xp}\n\n`;
         });
 
-        await this.bot.reply(m, msg);
+        await this._reply(m, msg);
         return true;
     }
 
     async _handleDono(m) {
         const donos = this.config.DONO_USERS;
         if (!donos || donos.length === 0) {
-            await this.bot.reply(m, '❌ Nenhum dono configurado.');
+            await this._reply(m, '❌ Nenhum dono configurado.');
             return true;
         }
 
@@ -538,13 +538,13 @@ class CommandHandler {
         }, { quoted: m });
 
         // Mensagem de texto de apoio com link wa.me explícito
-        await this.bot.reply(m, `👑 *DONO DO BOT*\n\nDesenvolvido por: *${principal.nomeExato}*\n📱 *Contato Direto:* https://wa.me/${principal.numero}\n\nPowered by: *Akira V21 Ultimate*`);
+        await this._reply(m, `👑 *DONO DO BOT*\n\nDesenvolvido por: *${principal.nomeExato}*\n📱 *Contato Direto:* https://wa.me/${principal.numero}\n\nPowered by: *Akira V21 Ultimate*`);
         return true;
     }
 
     async _handleReport(m, fullArgs, nome, senderId, ehGrupo) {
         if (!fullArgs) {
-            await this.bot.reply(m, '❌ Uso: #report <mensagem do bug/sugestão>');
+            await this._reply(m, '❌ Uso: #report <mensagem do bug/sugestão>');
             return true;
         }
 
@@ -571,9 +571,9 @@ class CommandHandler {
         }
 
         if (sentCount > 0) {
-            await this.bot.reply(m, `✅ *Report enviado com sucesso!*\nID: #${reportId}\n\nObrigado por colaborar com o desenvolvimento do Akira.`);
+            await this._reply(m, `✅ *Report enviado com sucesso!*\nID: #${reportId}\n\nObrigado por colaborar com o desenvolvimento do Akira.`);
         } else {
-            await this.bot.reply(m, '⚠️ Erro ao enviar report: Nenhum administrador disponível, mas sua mensagem foi registrada no log.');
+            await this._reply(m, '⚠️ Erro ao enviar report: Nenhum administrador disponível, mas sua mensagem foi registrada no log.');
             console.warn(`[REPORT FALHO] ${reportMsg}`);
         }
         return true;
@@ -581,7 +581,7 @@ class CommandHandler {
 
     async _handleRegister(m, fullArgs, senderId) {
         if (!fullArgs.includes('|')) {
-            await this.bot.reply(m, '❌ Uso: #registrar Nome|Idade');
+            await this._reply(m, '❌ Uso: #registrar Nome|Idade');
             return true;
         }
 
@@ -589,7 +589,7 @@ class CommandHandler {
         const idade = parseInt(idadeStr, 10);
 
         if (!nomeUser || isNaN(idade)) {
-            await this.bot.reply(m, '❌ Formato inválido. Use: #registrar Nome|Idade');
+            await this._reply(m, '❌ Formato inválido. Use: #registrar Nome|Idade');
             return true;
         }
 
@@ -597,9 +597,9 @@ class CommandHandler {
         const res = this.bot.registrationSystem.registerUser(uid, nomeUser, idade, senderId.replace(/\D/g, ''));
 
         if (res.success) {
-            await this.bot.reply(m, `✅ *REGISTRO CONCLUÍDO*\n\n👤 Nome: ${res.user.name}\n🎂 Idade: ${res.user.age}\n📅 Data: ${new Date(res.user.date).toLocaleDateString('pt-BR')}\n\nBem-vindo ao sistema Akira Enterprise!`);
+            await this._reply(m, `✅ *REGISTRO CONCLUÍDO*\n\n👤 Nome: ${res.user.name}\n🎂 Idade: ${res.user.age}\n📅 Data: ${new Date(res.user.date).toLocaleDateString('pt-BR')}\n\nBem-vindo ao sistema Akira Enterprise!`);
         } else {
-            await this.bot.reply(m, `❌ ${res.message}`);
+            await this._reply(m, `❌ ${res.message}`);
         }
         return true;
     }
@@ -612,13 +612,13 @@ class CommandHandler {
         msg += `📅 Expira em: ${info.expiraEm || 'N/A'}\n\n`;
         msg += `✨ *Recursos:* \n${info.recursos.join('\n')}`;
 
-        await this.bot.reply(m, msg);
+        await this._reply(m, msg);
         return true;
     }
 
     async _handleAddPremium(m, args) {
         if (args.length < 2) {
-            await this.bot.reply(m, '❌ Uso: #addpremium <numero> <dias>');
+            await this._reply(m, '❌ Uso: #addpremium <numero> <dias>');
             return true;
         }
 
@@ -627,7 +627,7 @@ class CommandHandler {
         let days = parseInt(args[1]);
 
         if (!targetUser || isNaN(days)) {
-            await this.bot.reply(m, '❌ Formato inválido.');
+            await this._reply(m, '❌ Formato inválido.');
             return true;
         }
 
@@ -639,16 +639,16 @@ class CommandHandler {
         const res = this.bot.subscriptionManager.subscribe(targetJid, days);
 
         if (res.sucesso) {
-            await this.bot.reply(m, `✅ Premium adicionado para ${targetUser} por ${days} dias.\nExpira em: ${res.expiraEm}`);
+            await this._reply(m, `✅ Premium adicionado para ${targetUser} por ${days} dias.\nExpira em: ${res.expiraEm}`);
         } else {
-            await this.bot.reply(m, `❌ Erro: ${res.erro}`);
+            await this._reply(m, `❌ Erro: ${res.erro}`);
         }
         return true;
     }
 
     async _handleDelPremium(m, args) {
         if (args.length < 1) {
-            await this.bot.reply(m, '❌ Uso: #delpremium <numero>');
+            await this._reply(m, '❌ Uso: #delpremium <numero>');
             return true;
         }
 
@@ -658,31 +658,31 @@ class CommandHandler {
         const res = this.bot.subscriptionManager.unsubscribe(targetJid);
 
         if (res.sucesso) {
-            await this.bot.reply(m, `✅ Premium removido de ${targetUser}`);
+            await this._reply(m, `✅ Premium removido de ${targetUser}`);
         } else {
-            await this.bot.reply(m, `❌ Erro: ${res.erro}`);
+            await this._reply(m, `❌ Erro: ${res.erro}`);
         }
         return true;
     }
 
     async _handleLevel(m, args, ehGrupo, senderId, isOwner) {
         if (!ehGrupo) {
-            await this.bot.reply(m, '📵 Este comando só funciona em grupos.');
+            await this._reply(m, '📵 Este comando só funciona em grupos.');
             return true;
         }
         const sub = (args[0] || '').toLowerCase();
         if (['on', 'off'].includes(sub)) {
             if (!isOwner) {
-                await this.bot.reply(m, '🚫 Apenas administradores podem alterar o status do level.');
+                await this._reply(m, '🚫 Apenas administradores podem alterar o status do level.');
                 return true;
             }
             // Implementação de toggle depende de como o BotCore gerencia os settings
-            await this.bot.reply(m, `✅ Sistema de level ${sub === 'on' ? 'ativado' : 'desativado'} para este grupo.`);
+            await this._reply(m, `✅ Sistema de level ${sub === 'on' ? 'ativado' : 'desativado'} para este grupo.`);
             return true;
         }
         const uid = m.key.participant || m.key.remoteJid;
         const rec = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
-        await this.bot.reply(m, `📊 *Seu Status:* Nível ${rec.level || 0} | XP ${rec.xp || 0}`);
+        await this._reply(m, `📊 *Seu Status:* Nível ${rec.level || 0} | XP ${rec.xp || 0}`);
         return true;
     }
 
@@ -691,11 +691,11 @@ class CommandHandler {
         const audioMsg = m.message?.audioMessage || quoted?.audioMessage;
 
         if (!audioMsg) {
-            await this.bot.reply(m, '❌ Responda a um áudio para aplicar o efeito.');
+            await this._reply(m, '❌ Responda a um áudio para aplicar o efeito.');
             return true;
         }
 
-        await this.bot.reply(m, `🎵 Aplicando efeito *${effectName}*...`);
+        await this._reply(m, `🎵 Aplicando efeito *${effectName}*...`);
         try {
             const buf = await this.mediaProcessor.downloadMedia(audioMsg, 'audio');
             const res = await this.bot.audioProcessor.applyAudioEffect(buf, effectName);
@@ -707,10 +707,10 @@ class CommandHandler {
                     ptt: true
                 }, { quoted: m });
             } else {
-                await this.bot.reply(m, `❌ Erro: ${res.error}`);
+                await this._reply(m, `❌ Erro: ${res.error}`);
             }
         } catch (e) {
-            await this.bot.reply(m, '❌ Erro ao processar áudio.');
+            await this._reply(m, '❌ Erro ao processar áudio.');
             console.error(e);
         }
         return true;
@@ -719,21 +719,21 @@ class CommandHandler {
     async _handleTakeSticker(m, args, nome) {
         const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
         if (!quoted?.stickerMessage) {
-            await this.bot.reply(m, '❌ Responda a um sticker.');
+            await this._reply(m, '❌ Responda a um sticker.');
             return true;
         }
 
         const newPack = args || 'Akira Pack';
         const newAuthor = nome;
 
-        await this.bot.reply(m, '🎨 Roubando sticker...');
+        await this._reply(m, '🎨 Roubando sticker...');
         try {
             const buf = await this.mediaProcessor.downloadMedia(quoted.stickerMessage, 'sticker');
             const newSticker = await this.mediaProcessor.addStickerMetadata(buf, newPack, newAuthor);
 
             await this.sock.sendMessage(m.key.remoteJid, { sticker: newSticker }, { quoted: m });
         } catch (e) {
-            await this.bot.reply(m, '❌ Erro ao processar sticker.');
+            await this._reply(m, '❌ Erro ao processar sticker.');
             console.error(e);
         }
         return true;
@@ -742,16 +742,16 @@ class CommandHandler {
     async _handleStickerToImage(m) {
         const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
         if (!quoted?.stickerMessage) {
-            await this.bot.reply(m, '❌ Responda a um sticker.');
+            await this._reply(m, '❌ Responda a um sticker.');
             return true;
         }
 
         if (quoted.stickerMessage.isAnimated) {
-            await this.bot.reply(m, '❌ Apenas stickers estáticos por enquanto.');
+            await this._reply(m, '❌ Apenas stickers estáticos por enquanto.');
             return true;
         }
 
-        await this.bot.reply(m, '🔄 Convertendo...');
+        await this._reply(m, '🔄 Convertendo...');
         try {
             const buf = await this.mediaProcessor.downloadMedia(quoted.stickerMessage, 'sticker');
             const res = await this.mediaProcessor.convertStickerToImage(buf);
@@ -759,10 +759,10 @@ class CommandHandler {
             if (res.sucesso && res.buffer) {
                 await this.sock.sendMessage(m.key.remoteJid, { image: res.buffer, caption: '✅ Aqui está sua imagem' }, { quoted: m });
             } else {
-                await this.bot.reply(m, `❌ Erro: ${res.error}`);
+                await this._reply(m, `❌ Erro: ${res.error}`);
             }
         } catch (e) {
-            await this.bot.reply(m, '❌ Erro ao converter.');
+            await this._reply(m, '❌ Erro ao converter.');
             console.error(e);
         }
         return true;
@@ -770,10 +770,10 @@ class CommandHandler {
 
     async _handleVideo(m, query) {
         if (!query) {
-            await this.bot.reply(m, '❌ Uso: #video <nome ou link>');
+            await this._reply(m, '❌ Uso: #video <nome ou link>');
             return true;
         }
-        await this.bot.reply(m, '🎬 Baixando vídeo...');
+        await this._reply(m, '🎬 Baixando vídeo...');
         try {
             const res = await this.mediaProcessor.downloadYouTubeVideo(query);
             if (res.sucesso && res.buffer) {
@@ -783,10 +783,10 @@ class CommandHandler {
                     mimetype: 'video/mp4'
                 }, { quoted: m });
             } else {
-                await this.bot.reply(m, `❌ Erro: ${res.error}`);
+                await this._reply(m, `❌ Erro: ${res.error}`);
             }
         } catch (e) {
-            await this.bot.reply(m, '❌ Erro ao baixar vídeo.');
+            await this._reply(m, '❌ Erro ao baixar vídeo.');
             console.error(e);
         }
         return true;
@@ -797,11 +797,11 @@ class CommandHandler {
         const imageMsg = m.message?.imageMessage || quoted?.imageMessage;
 
         if (!imageMsg) {
-            await this.bot.reply(m, '❌ Responda a uma imagem para aplicar o efeito.');
+            await this._reply(m, '❌ Responda a uma imagem para aplicar o efeito.');
             return true;
         }
 
-        await this.bot.reply(m, `🎨 Aplicando efeito *${command}*...`);
+        await this._reply(m, `🎨 Aplicando efeito *${command}*...`);
         try {
             const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
 
@@ -821,10 +821,10 @@ class CommandHandler {
                 // Envia como imagem (usuário pode converter pra sticker com #sticker se quiser)
                 await this.sock.sendMessage(m.key.remoteJid, { image: res.buffer, caption: `✅ Efeito ${command} aplicado` }, { quoted: m });
             } else {
-                await this.bot.reply(m, `❌ Erro: ${res.error || 'Falha desconhecida'}`);
+                await this._reply(m, `❌ Erro: ${res.error || 'Falha desconhecida'}`);
             }
         } catch (e) {
-            await this.bot.reply(m, '❌ Erro ao processar imagem.');
+            await this._reply(m, '❌ Erro ao processar imagem.');
             console.error(e);
         }
         return true;
@@ -855,7 +855,7 @@ class CommandHandler {
                 msg += `⚠️ *IMPORTANTE:* Ao doar, escreva seu número de WhatsApp na mensagem para ativar o VIP automaticamente!`;
             }
 
-            await this.bot.reply(m, msg);
+            await this._reply(m, msg);
             return true;
         }
 
@@ -866,12 +866,12 @@ class CommandHandler {
         const res = this.bot.paymentManager.generatePaymentLink(userId, planKey);
 
         if (res.success) {
-            await this.bot.reply(m, `⏳ *Gerando Pagamento...*`);
+            await this._reply(m, `⏳ *Gerando Pagamento...*`);
 
             // Envia QR Code se disponível
-            await this.bot.reply(m, `✅ *Pedido Criado!*\n\n${res.message}\n\n_Assim que o pagamento for confirmado, seu plano será ativado automaticamente._`);
+            await this._reply(m, `✅ *Pedido Criado!*\n\n${res.message}\n\n_Assim que o pagamento for confirmado, seu plano será ativado automaticamente._`);
         } else {
-            await this.bot.reply(m, `❌ ${res.message}`);
+            await this._reply(m, `❌ ${res.message}`);
         }
         return true;
     }
