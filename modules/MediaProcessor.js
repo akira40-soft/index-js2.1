@@ -187,13 +187,13 @@ class MediaProcessor {
     */
     async addStickerMetadata(webpBuffer, packName = 'akira-bot', author = 'Akira-Bot') {
         try {
-            if (!Webpmux) {
-                this.logger?.debug('⚠️ Webpmux não disponível, retornando buffer sem EXIF');
-                return webpBuffer;
-            }
+            const tempStickerPath = this.generateRandomFilename('webp');
+            const tempResultPath = this.generateRandomFilename('webp');
+
+            fs.writeFileSync(tempStickerPath, webpBuffer);
 
             const img = new Webpmux.Image();
-            await img.load(webpBuffer);
+            await img.load(tempStickerPath);
 
             const json = {
                 'sticker-pack-id': `akira-${crypto.randomBytes(8).toString('hex')}`,
@@ -213,16 +213,18 @@ class MediaProcessor {
             exif.writeUIntLE(jsonBuff.length, 14, 4);
 
             img.exif = exif;
-            // Webpmux.save(null) retorna o buffer ou falha se version for antiga
-            try {
-                const result = await img.save(null);
-                this.logger?.debug(`✅ Metadados EXIF adicionados: "${packName}" | Autor: "${author}"`);
-                return result;
-            } catch (saveErr) {
-                this.logger?.warn('⚠️ Falha ao salvar com buffer (null), tentando sem argumentos...');
-                const result = await img.save();
-                return result;
-            }
+
+            // Salva em arquivo e lê de volta para garantir compatibilidade com buffers
+            await img.save(tempResultPath);
+            const result = fs.readFileSync(tempResultPath);
+
+            await Promise.all([
+                this.cleanupFile(tempStickerPath),
+                this.cleanupFile(tempResultPath)
+            ]);
+
+            this.logger?.debug(`✅ Metadados EXIF inseridos: "${packName}" | "${author}"`);
+            return result;
         } catch (e) {
             this.logger?.warn('⚠️ Erro ao adicionar EXIF:', e.message);
             return webpBuffer;
@@ -387,9 +389,6 @@ class MediaProcessor {
                         '-preset', 'default',
                         '-an',
                         '-t', String(stickerDuration),
-                        '-metadata', `title=${packName}`,
-                        '-metadata', `artist=${author}`,
-                        '-metadata', 'comment=Criado por Akira Bot',
                         '-y'
                     ])
                     .on('end', () => {
@@ -435,8 +434,6 @@ class MediaProcessor {
                             '-preset', 'picture',
                             '-an',
                             '-t', String(Math.min(maxDuration, 10)),
-                            '-metadata', `title=${packName}`,
-                            '-metadata', `artist=${author}`,
                             '-y'
                         ])
                         .on('end', resolve)
@@ -662,9 +659,11 @@ class MediaProcessor {
         try {
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
 
+            // Bypass de Captcha: Usa extractor-args para simular cliente android/ios
+            const bypassArgs = '--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates';
             const command = process.platform === 'win32'
-                ? `"${tool.cmd}" --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`
-                : `${tool.cmd} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`;
+                ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`
+                : `${tool.cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`;
 
             await new Promise((resolve, reject) => {
                 exec(command, { timeout: 120000, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -716,7 +715,9 @@ class MediaProcessor {
             const info = await ytdl.getInfo(videoId, {
                 requestOptions: {
                     headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
                     }
                 }
             });
@@ -921,11 +922,12 @@ class MediaProcessor {
             }
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
-            // Formato compatível com WhatsApp (mp4 + aac) - LIMITE 720p para economizar RAM no Railway
+            // Bypass de Captcha e Limite 720p
+            const bypassArgs = '--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates';
             const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
             const command = process.platform === 'win32'
-                ? `"${ytdlpTool.cmd}" -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`
-                : `${ytdlpTool.cmd} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`;
+                ? `"${ytdlpTool.cmd}" ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`
+                : `${ytdlpTool.cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`;
 
             this.logger?.debug(`Executando: ${command}`);
 
@@ -1049,9 +1051,10 @@ class MediaProcessor {
             const videoId = this.extractYouTubeVideoId(url);
             const thumbnailUrl = videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : null;
 
+            const bypassArgs = '--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates';
             const command = process.platform === 'win32'
-                ? `"${ytdlp.cmd}" --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`
-                : `${ytdlp.cmd} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;
+                ? `"${ytdlp.cmd}" ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`
+                : `${ytdlp.cmd} ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;
 
             const output = execSync(command, { encoding: 'utf8', timeout: 30000, stdio: 'pipe' }).trim();
             const [title, author, duration, views, likes, date] = output.split('|');

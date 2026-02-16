@@ -7,7 +7,7 @@
  * ═══════════════════════════════════════════════════════════════════════
  */
 
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay } from '@whiskeysockets/baileys';
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay, Browsers } from '@whiskeysockets/baileys';
 import fs from 'fs';
 import path from 'path';
 import pino from 'pino'; // Logger usado pelo Baileys
@@ -206,7 +206,7 @@ class BotCore {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
                 },
-                browser: ['Akira Bot', 'Chrome', '1.0.0'],
+                browser: Browsers.macOS('Akira-Bot'),
                 generateHighQualityLinkPreview: true,
                 getMessage: async (key) => {
                     // Necessário para suportar mensagens antigas/contexto
