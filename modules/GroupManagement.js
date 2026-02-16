@@ -87,8 +87,16 @@ class GroupManagement {
     async toggleGroup(m, action) {
         // action: 'open' | 'close' -> 'not_announcement' | 'announcement'
         const setting = action === 'close' ? 'announcement' : 'not_announcement';
-        await this.sock.groupSettingUpdate(m.key.remoteJid, setting);
-        await this.sock.sendMessage(m.key.remoteJid, { text: `✅ Grupo ${action === 'close' ? 'fechado' : 'aberto'}.` }, { quoted: m });
+        if (this.sock) {
+            try {
+                await this.sock.groupSettingUpdate(m.key.remoteJid, setting);
+                await this.sock.sendMessage(m.key.remoteJid, { text: `✅ Grupo ${action === 'close' ? 'fechado' : 'aberto'}.` }, { quoted: m });
+            } catch (e) {
+                console.error('Erro no toggleGroup:', e);
+                const msg = e.toString().includes('forbidden') ? '❌ Eu preciso ser admin do grupo para fazer isso.' : `❌ Erro: ${e.message}`;
+                await this.sock.sendMessage(m.key.remoteJid, { text: msg }, { quoted: m });
+            }
+        }
         return true;
     }
 
@@ -100,8 +108,14 @@ class GroupManagement {
         }
         const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant;
         if (target && this.sock) {
-            await this.sock.groupParticipantsUpdate(m.key.remoteJid, [target], 'remove');
-            await this.sock.sendMessage(m.key.remoteJid, { text: '🔨 Banido.' }, { quoted: m });
+            try {
+                await this.sock.groupParticipantsUpdate(m.key.remoteJid, [target], 'remove');
+                await this.sock.sendMessage(m.key.remoteJid, { text: '🔨 Banido.' }, { quoted: m });
+            } catch (e) {
+                console.error('Erro no kick:', e);
+                const msg = e.toString().includes('forbidden') ? '❌ Eu preciso ser admin do grupo para fazer isso.' : `❌ Erro: ${e.message}`;
+                await this.sock.sendMessage(m.key.remoteJid, { text: msg }, { quoted: m });
+            }
         }
         return true;
     }
@@ -113,7 +127,15 @@ class GroupManagement {
         }
         let num = args[0].replace(/\D/g, '');
         if (!num.endsWith('@s.whatsapp.net')) num += '@s.whatsapp.net';
-        if (this.sock) await this.sock.groupParticipantsUpdate(m.key.remoteJid, [num], 'add');
+        if (this.sock) {
+            try {
+                await this.sock.groupParticipantsUpdate(m.key.remoteJid, [num], 'add');
+            } catch (e) {
+                console.error('Erro no add:', e);
+                const msg = e.toString().includes('forbidden') ? '❌ Eu preciso ser admin do grupo para fazer isso.' : `❌ Erro: ${e.message}`;
+                await this.sock.sendMessage(m.key.remoteJid, { text: msg }, { quoted: m });
+            }
+        }
         return true;
     }
 
@@ -121,8 +143,14 @@ class GroupManagement {
         const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant;
         if (!target) return true;
         if (this.sock) {
-            await this.sock.groupParticipantsUpdate(m.key.remoteJid, [target], 'promote');
-            await this.sock.sendMessage(m.key.remoteJid, { text: '👑 Promovido a admin.' }, { quoted: m });
+            try {
+                await this.sock.groupParticipantsUpdate(m.key.remoteJid, [target], 'promote');
+                await this.sock.sendMessage(m.key.remoteJid, { text: '👑 Promovido a admin.' }, { quoted: m });
+            } catch (e) {
+                console.error('Erro no promote:', e);
+                const msg = e.toString().includes('forbidden') ? '❌ Eu preciso ser admin do grupo para fazer isso.' : `❌ Erro: ${e.message}`;
+                await this.sock.sendMessage(m.key.remoteJid, { text: msg }, { quoted: m });
+            }
         }
         return true;
     }
@@ -131,8 +159,14 @@ class GroupManagement {
         const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant;
         if (!target) return true;
         if (this.sock) {
-            await this.sock.groupParticipantsUpdate(m.key.remoteJid, [target], 'demote');
-            await this.sock.sendMessage(m.key.remoteJid, { text: '📉 Rebaixado a membro.' }, { quoted: m });
+            try {
+                await this.sock.groupParticipantsUpdate(m.key.remoteJid, [target], 'demote');
+                await this.sock.sendMessage(m.key.remoteJid, { text: '📉 Rebaixado a membro.' }, { quoted: m });
+            } catch (e) {
+                console.error('Erro no demote:', e);
+                const msg = e.toString().includes('forbidden') ? '❌ Eu preciso ser admin do grupo para fazer isso.' : `❌ Erro: ${e.message}`;
+                await this.sock.sendMessage(m.key.remoteJid, { text: msg }, { quoted: m });
+            }
         }
         return true;
     }

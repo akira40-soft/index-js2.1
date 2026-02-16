@@ -258,6 +258,10 @@ class CommandHandler {
                 case 'echo':
                     return await this._handleAudioEffect(m, command);
 
+                case 'tomp3':
+                case 'mp3':
+                    return await this._handleVideoToAudio(m);
+
                 // Pagamentos
                 case 'donate':
                 case 'doar':
@@ -346,15 +350,25 @@ class CommandHandler {
                     // Aqui você pode disparar um comando via exec ou chamar um endpoint específico
                     return true;
 
-                case 'reload':
-                case 'reiniciar':
-                    if (!isOwner) {
-                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
-                        return true;
-                    }
                     await this.bot.reply(m, '🔄 Reiniciando sistemas Akira...');
                     process.exit(0); // O PM2 ou Docker vai reiniciar o processo
                     return true;
+
+                // Comandos de Perfil do Bot (Owner Only)
+                case 'setbotphoto':
+                case 'setbotpic':
+                    if (!isOwner) return false;
+                    return await this._handleSetBotPhoto(m);
+
+                case 'setbotname':
+                case 'setname':
+                    if (!isOwner) return false;
+                    return await this._handleSetBotName(m, fullArgs);
+
+                case 'setbotstatus':
+                case 'setbio':
+                    if (!isOwner) return false;
+                    return await this._handleSetBotStatus(m, fullArgs);
 
                 default:
                     // Verifica se o comando pertence a algum outro toolkit
@@ -459,25 +473,39 @@ class CommandHandler {
         try {
             const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
             const imageMsg = m.message?.imageMessage || quoted?.imageMessage;
+            const videoMsg = m.message?.videoMessage || quoted?.videoMessage;
 
-            if (!imageMsg) {
-                await this._reply(m, '❌ Responda a uma imagem para criar o sticker.');
+            if (!imageMsg && !videoMsg) {
+                await this._reply(m, '❌ Responda a uma imagem ou vídeo curto para criar o sticker.');
                 return true;
             }
 
-            await this._reply(m, '⏳ Criando sticker...');
-            const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
-            const res = await this.mediaProcessor.createStickerFromImage(buf, {
-                packName: 'Akira Pack',
-                author: nome
-            });
+            // Metadados customizados simples (Ex: #s Pacote|Autor)
+            const mp = this.messageProcessor || this.bot?.messageProcessor;
+            const parsed = mp?.parseCommand(this.messageProcessor?.extractText(m));
+            const metaArgs = parsed?.textoCompleto?.split('|') || [];
+
+            const packName = metaArgs[0]?.trim() || 'Akira Pack';
+            const author = metaArgs[1]?.trim() || nome || 'Akira-Bot';
+
+            await this._reply(m, `⏳ Criando sticker ${videoMsg ? 'animado ' : ''}...`);
+
+            let res;
+            if (imageMsg) {
+                const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
+                res = await this.mediaProcessor.createStickerFromImage(buf, { packName, author });
+            } else {
+                const buf = await this.mediaProcessor.downloadMedia(videoMsg, 'video');
+                res = await this.mediaProcessor.createAnimatedStickerFromVideo(buf, 10, { packName, author });
+            }
 
             if (res && res.sucesso && res.buffer) {
                 await this.sock.sendMessage(m.key.remoteJid, { sticker: res.buffer }, { quoted: m });
             } else {
-                await this._reply(m, '❌ Erro ao criar sticker.');
+                await this._reply(m, `❌ Erro ao criar sticker: ${res?.error || 'falha interna'}`);
             }
         } catch (e) {
+            console.error('Erro em _handleSticker:', e);
             await this._reply(m, '❌ Erro no processamento do sticker.');
         }
         return true;
@@ -510,9 +538,36 @@ class CommandHandler {
     async _handleProfile(m, meta) {
         const { nome, numeroReal } = meta;
         const uid = m.key.participant || m.key.remoteJid;
-        const record = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
-        const txt = `👤 *PERFIL:* ${nome}\n📱 *Número:* ${numeroReal}\n🎮 *Nível:* ${record.level || 0}\n⭐ *XP:* ${record.xp || 0}`;
-        await this._reply(m, txt);
+
+        try {
+            // Obtém dados do levelSystem
+            const record = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
+
+            // Obtém dados extras do UserProfile (Bio, Foto, etc)
+            const userInfo = await this.userProfile.getUserInfo(uid);
+
+            let msg = `👤 *PERFIL DE USUÁRIO* 👤\n\n`;
+            msg += `📝 *Nome:* ${nome}\n`;
+            msg += `📱 *Número:* ${numeroReal}\n`;
+            msg += `🎮 *Nível:* ${record.level || 0}\n`;
+            msg += `⭐ *XP:* ${record.xp || 0}\n`;
+            msg += `📜 *Bio:* ${userInfo.status || 'Sem biografia'}\n\n`;
+
+            msg += `🏆 *CONQUISTAS:* ${record.level > 10 ? '🎖️ Veterano' : '🐣 Novato'}\n`;
+            msg += `💎 *Status:* ${this.bot.subscriptionManager.isPremium(uid) ? 'PREMIUM 💎' : 'FREE'}\n`;
+
+            if (userInfo.picture) {
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    image: { url: userInfo.picture },
+                    caption: msg
+                }, { quoted: m });
+            } else {
+                await this._reply(m, msg);
+            }
+        } catch (e) {
+            console.error('Erro no _handleProfile:', e);
+            await this._reply(m, '❌ Erro ao carregar perfil.');
+        }
         return true;
     }
 
@@ -910,6 +965,87 @@ class CommandHandler {
             await this._reply(m, `✅ *Pedido Criado!*\n\n${res.message}\n\n_Assim que o pagamento for confirmado, seu plano será ativado automaticamente._`);
         } else {
             await this._reply(m, `❌ ${res.message}`);
+        }
+        return true;
+    }
+
+    async _handleVideoToAudio(m) {
+        const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        const videoMsg = m.message?.videoMessage || quoted?.videoMessage;
+
+        if (!videoMsg) {
+            await this._reply(m, '❌ Responda a um vídeo para converter para MP3.');
+            return true;
+        }
+
+        await this._reply(m, '🎵 Convertendo vídeo para MP3...');
+        try {
+            const buf = await this.mediaProcessor.downloadMedia(videoMsg, 'video');
+            const res = await this.mediaProcessor.convertVideoToAudio(buf);
+
+            if (res.sucesso && res.buffer) {
+                await this.sock.sendMessage(m.key.remoteJid, { audio: res.buffer, mimetype: 'audio/mp4', ptt: false }, { quoted: m });
+            } else {
+                await this._reply(m, `❌ Erro: ${res.error}`);
+            }
+        } catch (e) {
+            await this._reply(m, '❌ Erro ao converter para MP3.');
+            console.error(e);
+        }
+        return true;
+    }
+
+    async _handleSetBotPhoto(m) {
+        const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        const imageMsg = m.message?.imageMessage || quoted?.imageMessage;
+
+        if (!imageMsg) {
+            await this._reply(m, '❌ Responda a uma imagem para definir como foto do bot.');
+            return true;
+        }
+
+        await this._reply(m, '📸 Atualizando foto do bot...');
+        try {
+            const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
+            const res = await this.botProfile.setBotPhoto(buf);
+            if (res.success) {
+                await this._reply(m, '✅ Foto do bot atualizada com sucesso!');
+            } else {
+                await this._reply(m, `❌ Erro ao atualizar foto: ${res.error}`);
+            }
+        } catch (e) {
+            await this._reply(m, '❌ Erro ao processar foto.');
+            console.error(e);
+        }
+        return true;
+    }
+
+    async _handleSetBotName(m, name) {
+        if (!name) {
+            await this._reply(m, '❌ Uso: #setbotname <nome>');
+            return true;
+        }
+        await this._reply(m, `📛 Alterando nome para: ${name}`);
+        const res = await this.botProfile.setBotName(name);
+        if (res.success) {
+            await this._reply(m, '✅ Nome do bot atualizado!');
+        } else {
+            await this._reply(m, `❌ Erro: ${res.error}`);
+        }
+        return true;
+    }
+
+    async _handleSetBotStatus(m, status) {
+        if (!status) {
+            await this._reply(m, '❌ Uso: #setbotstatus <texto>');
+            return true;
+        }
+        await this._reply(m, `📝 Alterando bio para: ${status}`);
+        const res = await this.botProfile.setBotStatus(status);
+        if (res.success) {
+            await this._reply(m, '✅ Bio do bot atualizada!');
+        } else {
+            await this._reply(m, `❌ Erro: ${res.error}`);
         }
         return true;
     }

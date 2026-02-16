@@ -92,46 +92,7 @@ class ModerationSystem {
         }
     }
 
-    isBlacklisted(jid) {
-        try {
-            const list = this._loadBlacklist();
-            // Normaliza JID para remover sufixos se necessário, mas a comparação exata é preferível
-            // O bot recebe o remoteJid ou participant
-            const found = list.find(entry => entry && (entry.id === jid || entry.id === jid.split('@')[0]));
-            return !!found;
-        } catch (e) {
-            return false;
-        }
-    }
-
-    addToBlacklist(jid, reason = 'spam_auto') {
-        const list = this._loadBlacklist();
-        if (!list.find(x => x && x.id === jid)) {
-            list.push({
-                id: jid,
-                reason,
-                addedAt: Date.now(),
-                date_str: new Date().toLocaleString('pt-BR')
-            });
-            this._saveBlacklist(list);
-            this.logger.warn(`🚫 Usuário adicionado à Blacklist: ${jid} (${reason})`);
-            return true;
-        }
-        return false;
-    }
-
-    removeFromBlacklist(jid) {
-        const list = this._loadBlacklist();
-        const initialLength = list.length;
-        const newList = list.filter(x => x && x.id !== jid);
-
-        if (newList.length < initialLength) {
-            this._saveBlacklist(newList);
-            this.logger.info(`✅ Usuário removido da Blacklist: ${jid}`);
-            return true;
-        }
-        return false;
-    }
+    // Métodos iniciais de blacklist removidos (unificados no final do arquivo)
 
     // ═══════════════════════════════════════════════════════════════════════
     // SISTEMA DE MUTE (EM MEMÓRIA)
@@ -422,22 +383,7 @@ class ModerationSystem {
         };
     }
 
-    /**
-    * Verifica se usuário está mutado
-    */
-    isUserMuted(groupId, userId) {
-        const key = `${groupId}_${userId}`;
-        const muteData = this.mutedUsers?.get(key);
-
-        if (!muteData) return false;
-
-        if (Date.now() > muteData.expires) {
-            this.mutedUsers?.delete(key);
-            return false;
-        }
-
-        return true;
-    }
+    // Aliases removidos para evitar confusão (unificado para isMuted e isBlacklisted)
 
     /**
     * Muta usuário
@@ -659,7 +605,7 @@ class ModerationSystem {
     /**
     * Verifica se usuário está na blacklist
     */
-    isUserBlacklisted(userId) {
+    isBlacklisted(userId) {
         const list = this.loadBlacklistData();
         if (!Array.isArray(list)) return false;
 

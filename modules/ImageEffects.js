@@ -453,6 +453,130 @@ class ImageEffects {
     }
 
     /**
+     * Efeito Sépia
+     */
+    async applySepia(imageBuffer) {
+        try {
+            return {
+                success: true,
+                buffer: await sharp(imageBuffer)
+                    .recolor([
+                        [0.3588, 0.7044, 0.1368],
+                        [0.299, 0.587, 0.114],
+                        [0.2392, 0.4696, 0.0912]
+                    ])
+                    .toBuffer()
+            };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
+     * Efeito Arco-íris (Gay)
+     */
+    async applyGayEffect(imageBuffer) {
+        try {
+            const metadata = await sharp(imageBuffer).metadata();
+            const rainbow = Buffer.from(
+                `<svg width="${metadata.width}" height="${metadata.height}">
+                    <linearGradient id="g" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="red" stop-opacity="0.5"/>
+                        <stop offset="16.6%" stop-color="orange" stop-opacity="0.5"/>
+                        <stop offset="33.3%" stop-color="yellow" stop-opacity="0.5"/>
+                        <stop offset="50%" stop-color="green" stop-opacity="0.5"/>
+                        <stop offset="66.6%" stop-color="blue" stop-opacity="0.5"/>
+                        <stop offset="83.3%" stop-color="indigo" stop-opacity="0.5"/>
+                        <stop offset="100%" stop-color="violet" stop-opacity="0.5"/>
+                    </linearGradient>
+                    <rect x="0" y="0" width="100%" height="100%" fill="url(#g)"/>
+                </svg>`
+            );
+            return {
+                success: true,
+                buffer: await sharp(imageBuffer)
+                    .composite([{ input: rainbow, blend: 'over' }])
+                    .toBuffer()
+            };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
+     * Efeito GTA Wasted
+     */
+    async applyWastedEffect(imageBuffer) {
+        try {
+            const metadata = await sharp(imageBuffer).metadata();
+            const wastedSvg = Buffer.from(
+                `<svg width="${metadata.width}" height="${metadata.height}">
+                    <rect x="0" y="${metadata.height / 2 - 50}" width="100%" height="100" fill="rgba(0,0,0,0.5)"/>
+                    <text x="50%" y="50%" font-family="Arial" font-weight="bold" font-size="${metadata.width / 10}" fill="red" text-anchor="middle" dominant-baseline="middle">WASTED</text>
+                </svg>`
+            );
+            return {
+                success: true,
+                buffer: await sharp(imageBuffer)
+                    .greyscale()
+                    .composite([{ input: wastedSvg, blend: 'over' }])
+                    .toBuffer()
+            };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
+     * Efeito Prisão (Jail)
+     */
+    async applyJailEffect(imageBuffer) {
+        try {
+            const metadata = await sharp(imageBuffer).metadata();
+            let bars = '';
+            const barWidth = metadata.width / 15;
+            for (let i = 0; i < metadata.width; i += barWidth * 2) {
+                bars += `<rect x="${i}" y="0" width="${barWidth}" height="100%" fill="rgba(50,50,50,0.8)"/>`;
+            }
+            const jailSvg = Buffer.from(`<svg width="${metadata.width}" height="${metadata.height}">${bars}</svg>`);
+            return {
+                success: true,
+                buffer: await sharp(imageBuffer)
+                    .greyscale()
+                    .composite([{ input: jailSvg, blend: 'over' }])
+                    .toBuffer()
+            };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
+     * Efeito Triggered
+     */
+    async applyTriggeredEffect(imageBuffer) {
+        try {
+            const metadata = await sharp(imageBuffer).metadata();
+            const triggeredSvg = Buffer.from(
+                `<svg width="${metadata.width}" height="${metadata.height}">
+                    <rect x="0" y="${metadata.height - 60}" width="100%" height="60" fill="red"/>
+                    <text x="50%" y="${metadata.height - 20}" font-family="Impact" font-size="40" fill="white" text-anchor="middle">TRIGGERED</text>
+                </svg>`
+            );
+            // Simula tremor com blur e desvio (limitado no sharp, mas ok)
+            return {
+                success: true,
+                buffer: await sharp(imageBuffer)
+                    .modulate({ brightness: 1.2, saturation: 1.5 })
+                    .composite([{ input: triggeredSvg, blend: 'over' }])
+                    .toBuffer()
+            };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
     * Processa imagem com efeito especificado
     */
     async processImage(imageBuffer, effect, options = {}) {
@@ -461,13 +585,39 @@ class ImageEffects {
         switch (effect.toLowerCase()) {
             case 'hd':
             case 'enhance':
+            case 'upscale':
+            case 'remini':
                 result = await this.applyHDEffect(imageBuffer);
                 break;
 
             case 'comunista':
+            case 'communism':
             case 'commie':
             case 'red':
                 result = await this.applyCommunistEffect(imageBuffer);
+                break;
+
+            case 'sepia':
+                result = await this.applySepia(imageBuffer);
+                break;
+
+            case 'wasted':
+                result = await this.applyWastedEffect(imageBuffer);
+                break;
+
+            case 'jail':
+            case 'prisao':
+                result = await this.applyJailEffect(imageBuffer);
+                break;
+
+            case 'gay':
+            case 'rainbow':
+            case 'arcoiris':
+                result = await this.applyGayEffect(imageBuffer);
+                break;
+
+            case 'triggered':
+                result = await this.applyTriggeredEffect(imageBuffer);
                 break;
 
             case 'bandeiraangola':
@@ -477,8 +627,10 @@ class ImageEffects {
                 break;
 
             case 'removerfundo':
+            case 'removebg':
             case 'rmbg':
             case 'nobg':
+            case 'bg':
                 result = await this.removeBackground(imageBuffer);
                 break;
 

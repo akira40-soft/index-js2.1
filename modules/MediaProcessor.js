@@ -34,6 +34,9 @@ try {
 import yts from 'yt-search';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import ConfigManager from './ConfigManager.js';
+import ffmpeg from 'fluent-ffmpeg';
+import fs from 'fs';
+import path from 'path';
 
 // Webpmux para metadados de stickers
 let Webpmux = null;
@@ -457,6 +460,37 @@ class MediaProcessor {
                 sucesso: false,
                 error: error.message
             };
+        }
+    }
+
+    /**
+     * Converte vídeo para áudio (MP3)
+     */
+    async convertVideoToAudio(videoBuffer) {
+        try {
+            const inputPath = this.generateRandomFilename('mp4');
+            const outputPath = this.generateRandomFilename('mp3');
+
+            fs.writeFileSync(inputPath, videoBuffer);
+
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputPath)
+                    .toFormat('mp3')
+                    .audioCodec('libmp3lame')
+                    .on('end', resolve)
+                    .on('error', reject)
+                    .save(outputPath);
+            });
+
+            const audioBuffer = fs.readFileSync(outputPath);
+
+            // Cleanup
+            this.cleanupFile(inputPath);
+            this.cleanupFile(outputPath);
+
+            return { sucesso: true, buffer: audioBuffer };
+        } catch (e) {
+            return { sucesso: false, error: e.message };
         }
     }
 

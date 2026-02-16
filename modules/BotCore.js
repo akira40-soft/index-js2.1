@@ -25,6 +25,14 @@ import CommandHandler from './CommandHandler.js';
 import HFCorrections from './HFCorrections.js';
 import PresenceSimulator from './PresenceSimulator.js';
 import SubscriptionManager from './SubscriptionManager.js';
+import UserProfile from './UserProfile.js';
+import BotProfile from './BotProfile.js';
+import GroupManagement from './GroupManagement.js';
+import CybersecurityToolkit from './CybersecurityToolkit.js';
+import OSINTFramework from './OSINTFramework.js';
+import ImageEffects from './ImageEffects.js';
+import StickerViewOnceHandler from './StickerViewOnceHandler.js';
+import PermissionManager from './PermissionManager.js';
 
 class BotCore {
     constructor() {
@@ -111,9 +119,15 @@ class BotCore {
             this.levelSystem = new LevelSystem(this.logger);
             this.registrationSystem = new RegistrationSystem(this.logger);
             this.subscriptionManager = new SubscriptionManager(this.config);
+            this.userProfile = new UserProfile(this.logger);
+            this.botProfile = new BotProfile(this.sock, this.logger);
+            this.groupManagement = new GroupManagement(this.sock, this.config);
+            this.cybersecurityToolkit = new CybersecurityToolkit(this.config);
+            this.imageEffects = new ImageEffects(this.logger);
+            this.permissionManager = new PermissionManager(this.logger);
+            this.stickerViewOnceHandler = new StickerViewOnceHandler(this.sock, this.logger);
 
             // Inicializa PaymentManager (passando this para acessar SubscriptionManager depois)
-            // Nota: PaymentManager precisa de this.subscriptionManager que já foi init acima
             this.paymentManager = new PaymentManager(this, this.subscriptionManager);
 
             // Inicializa PresenceSimulator
@@ -158,8 +172,11 @@ class BotCore {
 
             // Modules
             // if (this.stickerViewOnceHandler?.setSocket) this.stickerViewOnceHandler.setSocket(sock); // Não existe no código atual
-            // if (this.groupManagement?.setSocket) this.groupManagement.setSocket(sock); // Não existe no código atual
+            if (this.groupManagement?.setSocket) this.groupManagement.setSocket(sock);
+            if (this.cybersecurityToolkit?.setSocket) this.cybersecurityToolkit.setSocket(sock);
             if (this.osintFramework?.setSocket) this.osintFramework.setSocket(sock);
+            if (this.stickerViewOnceHandler?.setSocket) this.stickerViewOnceHandler.setSocket(sock);
+            if (this.botProfile?.setSocket) this.botProfile.setSocket(sock);
 
             // Não têm setSocket mas podem precisar (verificar implementações futuras)
             // this.advancedPentestingToolkit não usa socket no código atual

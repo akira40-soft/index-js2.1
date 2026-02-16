@@ -32,6 +32,122 @@ class CybersecurityToolkit {
     }
 
     /**
+     * Injeta socket (necessário para responder)
+     */
+    setSocket(sock) {
+        this.sock = sock;
+    }
+
+    /**
+     * Processa comandos de segurança
+     */
+    async handleCommand(m, command, args) {
+        // Mapeamento de comandos
+        const tools = {
+            'whois': this.whois,
+            'dns': this.dnsLookup,
+            'geo': this.geoIp,
+            'nmap': (t) => this.pt.scanPortas(t),
+            'sqlmap': (t) => this.pt.sqlInjectionTest(t),
+            'hydra': (t) => this.pt.bruteForceTest(t),
+            'shodan': this.shodanSearch,
+            'cve': this.cveSearch
+        };
+
+        let handler = tools[command];
+
+        // Bind correto para métodos do toolkit vs locais
+        if (['whois', 'dns', 'geo', 'shodan', 'cve'].includes(command)) {
+            handler = handler.bind(this);
+        }
+
+        if (handler) {
+            try {
+                if (!this.sock) {
+                    console.error('❌ CybersecurityToolkit: Socket não injetado.');
+                    return false;
+                }
+
+                // Envia mensagem de processando
+                await this.sock.sendMessage(m.key.remoteJid, { text: `🛡️ Executando ${command}...` }, { quoted: m });
+
+                const target = args[0];
+                if (!target && command !== 'cve') { // CVE usa ano, mas ok tratar como target
+                    await this.sock.sendMessage(m.key.remoteJid, { text: `❌ Uso: #${command} <alvo>` }, { quoted: m });
+                    return true;
+                }
+
+                // Executa a ferramenta
+                const result = await handler(target || args[0]);
+
+                // Formata resultado
+                const textResult = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+
+                await this.sock.sendMessage(m.key.remoteJid, { text: `🛡️ *RESULTADO ${command.toUpperCase()}*\n\n${textResult.substring(0, 3000)}` }, { quoted: m });
+
+            } catch (e) {
+                console.error(`Erro em ${command}:`, e);
+                if (this.sock) {
+                    await this.sock.sendMessage(m.key.remoteJid, { text: `❌ Erro na execução: ${e.message}` }, { quoted: m });
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    async shodanSearch(ip) {
+        try {
+            // Usa InternetDB (API Gratuita e Sem Chave do Shodan)
+            // Excelente para buscar portas abertas e vulnerabilidades de um IP rapidamente
+            const response = await axios.get(`https://internetdb.shodan.io/${ip}`);
+            const d = response.data;
+
+            if (!d.ip) return `❌ Nenhum dado encontrado para o IP: ${ip}`;
+
+            return `🔍 *OSINT - INTERNET DB*\n` +
+                `🌐 IP: ${d.ip}\n` +
+                `🏢 Hosts: ${d.hostnames?.join(', ') || 'Nenhum'}\n` +
+                `🚪 Portas: ${d.ports?.join(', ') || 'Nenhuma'}\n` +
+                `🛡️ CVEs: ${d.vulns?.slice(0, 5).join(', ') || 'Nenhuma detectada'}${d.vulns?.length > 5 ? '...' : ''}\n` +
+                `🏷️ Tags: ${d.tags?.join(', ') || 'Nenhuma'}`;
+        } catch (e) {
+            return `Erro ao consultar InternetDB: ${e.message}`;
+        }
+    }
+
+    async cveSearch(term) {
+        try {
+            // NIST NVD API v2.0 - Busca vulnerabilidades por ID ou Ano/Termo
+            // Se for apenas um ano, busca por CVE-ANO. Se for um termo, busca por keyword
+            let url = `https://services.nvd.nist.gov/rest/json/cves/2.0`;
+            if (/^CVE-\d{4}-\d{4,7}$/i.test(term)) {
+                url += `?cveId=${term.toUpperCase()}`;
+            } else {
+                url += `?keywordSearch=${term}`;
+            }
+
+            const response = await axios.get(url, { timeout: 10000 });
+            const vulnerabilities = response.data.vulnerabilities;
+
+            if (!vulnerabilities || vulnerabilities.length === 0) return `❌ Nenhuma CVE encontrada para: ${term}`;
+
+            let msg = `🛡️ *CVE DATABASE REPORT*\n\n`;
+            vulnerabilities.slice(0, 3).forEach(v => {
+                const c = v.cve;
+                msg += `🏷️ *${c.id}*\n`;
+                msg += `📊 Status: ${c.vulnStatus}\n`;
+                msg += `📝 Desc: ${c.descriptions.find(d => d.lang === 'en')?.value.substring(0, 200)}...\n\n`;
+            });
+
+            if (vulnerabilities.length > 3) msg += `_...e mais ${vulnerabilities.length - 3} resultados._`;
+            return msg;
+        } catch (e) {
+            return `Erro ao consultar CVE Database: ${e.message}`;
+        }
+    }
+
+    /**
     * WHOIS LOOKUP (Real API)
     */
     async whois(domain) {
