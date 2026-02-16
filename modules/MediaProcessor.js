@@ -218,8 +218,15 @@ class MediaProcessor {
 
             img.exif = exif;
 
-            // Salva em arquivo físico e lê o buffer
-            await img.save(tempOutput);
+            // Diferenciação entre sticker estático e animado para o método de salvamento
+            if (img.anim && img.anim.frames && img.anim.frames.length > 0) {
+                this.logger?.debug(`🎞️ [ANIMADO] Usando muxAnim para preservar frames.`);
+                await img.muxAnim(tempOutput);
+            } else {
+                this.logger?.debug(`🖼️ [ESTÁTICO] Usando save normal.`);
+                await img.save(tempOutput);
+            }
+
             const result = fs.readFileSync(tempOutput);
 
             this.logger?.debug(`✅ Metadados EXIF inseridos via Arquivo: "${packName}" | "${author}"`);
@@ -233,8 +240,8 @@ class MediaProcessor {
             return result;
         } catch (e) {
             this.logger?.warn('⚠️ Erro ao adicionar EXIF:', e.message);
-            if (tempInput) this.cleanupFile(tempInput);
-            if (tempOutput) this.cleanupFile(tempOutput);
+            if (tempInput) await this.cleanupFile(tempInput);
+            if (tempOutput) await this.cleanupFile(tempOutput);
             return webpBuffer;
         }
     }
