@@ -215,7 +215,18 @@ class MediaProcessor {
             img.exif = exif;
 
             // Salva em arquivo e lê de volta para garantir compatibilidade com buffers
-            await img.save(tempResultPath);
+            try {
+                // Tenta salvar normalmente (funciona para estáticos)
+                await img.save(tempResultPath);
+            } catch (err) {
+                // Se falhar (comum em animados), tenta usar muxAnim
+                try {
+                    await img.muxAnim(tempResultPath);
+                } catch (muxErr) {
+                    this.logger?.error('❌ Falha crítica ao salvar WebP (img.save e muxAnim):', muxErr.message);
+                    throw muxErr;
+                }
+            }
             const result = fs.readFileSync(tempResultPath);
 
             await Promise.all([

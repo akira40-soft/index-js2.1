@@ -512,7 +512,7 @@ class ImageEffects {
             const wastedSvg = Buffer.from(
                 `<svg width="${metadata.width}" height="${metadata.height}">
                     <rect x="0" y="${metadata.height / 2 - 50}" width="100%" height="100" fill="rgba(0,0,0,0.5)"/>
-                    <text x="50%" y="50%" font-family="Arial" font-weight="bold" font-size="${metadata.width / 10}" fill="red" text-anchor="middle" dominant-baseline="middle">WASTED</text>
+                    <text x="50%" y="50%" font-family="Arial" font-weight="bold" font-size="${metadata.width / 10}" fill="red" text-anchor="middle" dominant-baseline="middle">wasted</text>
                 </svg>`
             );
             return {

@@ -528,13 +528,11 @@ class CommandHandler {
             const packName = 'akira-bot';
             const author = nome || 'Akira-Bot';
 
-            await this._reply(m, `⏳ Criando sticker ${videoMsg ? 'animado ' : ''}...`);
-
             let res;
             if (imageMsg) {
                 const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
                 res = await this.mediaProcessor.createStickerFromImage(buf, { packName, author });
-            } else {
+            } else if (videoMsg) {
                 const buf = await this.mediaProcessor.downloadMedia(videoMsg, 'video');
                 res = await this.mediaProcessor.createAnimatedStickerFromVideo(buf, 10, { packName, author });
             }
@@ -571,8 +569,6 @@ class CommandHandler {
             const packName = 'akira-bot';
             const author = nome || 'Akira-Bot';
 
-            await this._reply(m, '⏳ Alterando metadados da figurinha...');
-
             let res;
             if (stickerMsg) {
                 const buf = await this.mediaProcessor.downloadMedia(stickerMsg, 'sticker');
@@ -588,7 +584,7 @@ class CommandHandler {
             } else if (imageMsg) {
                 const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
                 res = await this.mediaProcessor.createStickerFromImage(buf, { packName, author });
-            } else {
+            } else if (videoMsg) {
                 const buf = await this.mediaProcessor.downloadMedia(videoMsg, 'video');
                 res = await this.mediaProcessor.createAnimatedStickerFromVideo(buf, 10, { packName, author });
             }
