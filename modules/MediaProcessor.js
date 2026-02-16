@@ -34,9 +34,6 @@ try {
 import yts from 'yt-search';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import ConfigManager from './ConfigManager.js';
-import ffmpeg from 'fluent-ffmpeg';
-import fs from 'fs';
-import path from 'path';
 
 // Webpmux para metadados de stickers
 let Webpmux = null;
