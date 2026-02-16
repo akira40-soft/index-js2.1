@@ -49,6 +49,16 @@ class MediaProcessor {
         this.logger = logger || console;
         this.tempFolder = this.config?.TEMP_FOLDER || './temp';
         this.downloadCache = new Map();
+
+        // Garante que a pasta temporária exista
+        if (!fs.existsSync(this.tempFolder)) {
+            try {
+                fs.mkdirSync(this.tempFolder, { recursive: true });
+                this.logger?.info(`📁 Diretório temporário criado: ${this.tempFolder}`);
+            } catch (dirErr) {
+                this.logger?.error(`❌ Erro ao criar diretório temporário: ${dirErr.message}`);
+            }
+        }
     }
 
     /**
@@ -641,8 +651,8 @@ class MediaProcessor {
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
 
             const command = process.platform === 'win32'
-                ? `"${tool.cmd}" --cookies-from-browser chrome --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`
-                : `${tool.cmd} --cookies-from-browser chrome --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`;
+                ? `"${tool.cmd}" --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`
+                : `${tool.cmd} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`;
 
             await new Promise((resolve, reject) => {
                 exec(command, { timeout: 120000, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -730,9 +740,14 @@ class MediaProcessor {
                 stream.on('error', reject);
             });
 
+            if (!fs.existsSync(outputPath)) {
+                throw new Error(`Arquivo não encontrado após download (ENOENT): ${outputPath}`);
+            }
+
             const stats = fs.statSync(outputPath);
             if (stats.size === 0) {
-                throw new Error('Arquivo vazio');
+                await this.cleanupFile(outputPath);
+                throw new Error('Arquivo baixado está vazio');
             }
 
             if (stats.size > this.config?.YT_MAX_SIZE_MB * 1024 * 1024) {
