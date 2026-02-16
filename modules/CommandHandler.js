@@ -353,6 +353,24 @@ class CommandHandler {
     // MÉTODOS AUXILIARES DE COMANDO
     // ═══════════════════════════════════════════════════════════════════════
 
+    /**
+     * Helper local para responder (Robustez: não depende do BotCore)
+     */
+    async _reply(m, text, options = {}) {
+        try {
+            if (this.sock) {
+                return await this.sock.sendMessage(m.key.remoteJid, { text, ...options }, { quoted: m });
+            }
+            // Fallback para bot.reply se sock falhar (mas sock deveria estar lá)
+            if (this.bot && typeof this.bot.reply === 'function') {
+                return await this.bot.reply(m, text, options);
+            }
+            console.error('❌ CommandHandler: Sem meio de responder (sock/bot ausente)');
+        } catch (e) {
+            console.error('❌ Erro no _reply:', e.message);
+        }
+    }
+
     async _showMenu(m) {
         const menuText = `╔══════════════════════════════════════╗
 ║       🤖 *AKIRA BOT V21* 🤖          ║
