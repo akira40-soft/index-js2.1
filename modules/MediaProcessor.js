@@ -221,7 +221,12 @@ class MediaProcessor {
             // Diferenciação entre sticker estático e animado para o método de salvamento
             if (img.anim && img.anim.frames && img.anim.frames.length > 0) {
                 this.logger?.debug(`🎞️ [ANIMADO] Usando muxAnim para preservar frames.`);
-                await img.muxAnim(tempOutput);
+                // Algumas versões do node-webpmux exigem frames no objeto de opções do muxAnim
+                await img.muxAnim(tempOutput, {
+                    frames: img.anim.frames,
+                    loops: img.anim.loops || 0,
+                    exif: exif
+                });
             } else {
                 this.logger?.debug(`🖼️ [ESTÁTICO] Usando save normal.`);
                 await img.save(tempOutput);
