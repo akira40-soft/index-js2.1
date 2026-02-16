@@ -45,7 +45,7 @@ class ConfigManager {
         // ═══ STT (SPEECH-TO-TEXT) ═══
         this.DEEPGRAM_API_KEY = process.env?.DEEPGRAM_API_KEY || '2700019dc80925c32932ab0aba44d881d20d39f7';
         this.DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
-        this.DEEPGRAM_MODEL = process.env?.DEEPGRAM_MODEL || 'nova-2';
+        this.DEEPGRAM_MODEL = process.env?.DEEPGRAM_MODEL || 'nova-3';
         this.STT_LANGUAGE = process.env?.STT_LANGUAGE || 'pt';
 
         // ═══ TTS (TEXT-TO-SPEECH) ═══
@@ -96,7 +96,7 @@ class ConfigManager {
             { numero: '202391978787009', nomeExato: 'Isaac Quarenta' },
             { numero: '24491978787009', nomeExato: 'Isaac Quarenta' },
             { numero: '24478787009', nomeExato: 'Isaac Quarenta' },
-            { numero: '37839265886398', nomeExato: 'Akira' }
+            { numero: '37839265886398', nomeExato: 'Bot Admin' }
         ];
 
         // ═══ FEATURES ═══
@@ -205,4 +205,3 @@ class ConfigManager {
 }
 
 export default ConfigManager;
-

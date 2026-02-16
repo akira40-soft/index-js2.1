@@ -391,9 +391,13 @@ class MessageProcessor {
     /**
     * Verifica se é comando
     */
+    /**
+    * Verifica se é comando
+    */
     isCommand(text) {
         if (!text) return false;
-        return text.trim().startsWith(this.config.PREFIXO);
+        const prefixes = [this.config.PREFIXO, '#', '*', '!', '/', '.'];
+        return prefixes.some(p => text.trim().startsWith(p));
     }
 
     /**
@@ -402,7 +406,10 @@ class MessageProcessor {
     parseCommand(text) {
         if (!this.isCommand(text)) return null;
 
-        const args = text.slice(this.config.PREFIXO.length).trim().split(/ +/);
+        const prefixes = [this.config.PREFIXO, '#', '*', '!', '/', '.'];
+        const prefix = prefixes.find(p => text.trim().startsWith(p));
+
+        const args = text.slice(prefix.length).trim().split(/ +/);
         const comando = args.shift().toLowerCase();
 
         return {

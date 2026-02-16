@@ -173,6 +173,25 @@ class CommandHandler {
                 case 'comandos':
                     return await this._showMenu(m);
 
+                // Efeitos de imagem
+                case 'hd':
+                case 'upscale':
+                case 'remini':
+                    return await this._handleImageEffect(m, 'hd', args);
+                case 'removebg':
+                case 'bg':
+                    return await this._handleImageEffect(m, 'removebg', args);
+                case 'wasted':
+                case 'jail':
+                case 'triggered':
+                case 'gay':
+                case 'communism':
+                case 'sepia':
+                case 'grey':
+                case 'invert':
+                case 'mission':
+                    return await this._handleImageEffect(m, command, args);
+
                 case 'sticker':
                 case 's':
                 case 'fig':
@@ -377,7 +396,8 @@ class CommandHandler {
 ║      *Enterprise Edition*            ║
 ╚══════════════════════════════════════╝
 
-📱 *PREFIXO:* #
+📱 *PREFIXO:* *
+
 
 🎨 *MÍDIA & CRIAÇÃO*
 • #sticker | #s - Criar figurinha (img/video)
