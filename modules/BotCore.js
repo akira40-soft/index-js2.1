@@ -427,6 +427,32 @@ class BotCore {
         this.logger.info(`🖼️ [IMAGEM] Iniciando processamento para ${nome}`);
 
         try {
+            // ✅ VERIFICAÇÃO DE ATIVAÇÃO RIGOROSA (Mesma regra do texto)
+            let deveResponder = false;
+            const caption = this.messageProcessor.extractText(m) || '';
+            const captionLower = caption.toLowerCase();
+            const botNameLower = (this.config.BOT_NAME || 'belmira').toLowerCase();
+            const hasBotName = captionLower.includes(botNameLower);
+
+            if (!ehGrupo) {
+                // Em PV sempre responde
+                deveResponder = true;
+            } else {
+                // Em Grupo: Menção OU Reply ao Bot OU Nome no Caption
+                if (this.messageProcessor.isBotMentioned(m)) {
+                    deveResponder = true;
+                } else if (replyInfo && replyInfo.ehRespostaAoBot) {
+                    deveResponder = true;
+                } else if (hasBotName) {
+                    deveResponder = true;
+                }
+            }
+
+            if (!deveResponder) {
+                this.logger.debug(`⏭️ Imagem ignorada em grupo (sem ativação): ${caption.substring(0, 30)}..`);
+                return;
+            }
+
             // Marca como entregue/lido
             await this.presenceSimulator.simulateTicks(m, true, false);
 
@@ -478,17 +504,20 @@ class BotCore {
             this.logger.debug('🔄 Convertido para Base64. Preparando payload...');
 
             // Prepara payload para Computer Vision
-            const caption = this.messageProcessor.extractText(m) || '';
-
+            // caption já extraído no início da função
             const payload = this.apiClient.buildPayload({
                 usuario: nome,
                 numero: numeroReal,
-                mensagem: caption || 'O que tem nesta imagem?', // Prompt default se vazio
+                mensagem: caption || 'O que tem nesta imagem?',
                 tipo_conversa: ehGrupo ? 'grupo' : 'pv',
                 grupo_id: ehGrupo ? m.key.remoteJid : null,
                 grupo_nome: ehGrupo ? (m.key.remoteJid.split('@')[0] || 'Grupo') : null,
-                tipo_mensagem: 'imagem', // Importante para API saber que deve usar CV
-                imagem_base64: base64Image, // Campo específico para imagem
+                tipo_mensagem: 'image',
+                imagem_dados: {
+                    dados: base64Image,
+                    mime_type: m.message.imageMessage.mimetype || 'image/jpeg',
+                    descricao: caption || 'Imagem enviada'
+                },
                 mensagem_citada: (replyInfo && replyInfo.textoMensagemCitada) || '',
                 reply_metadata: replyInfo ? {
                     is_reply: replyInfo.isReply || true,

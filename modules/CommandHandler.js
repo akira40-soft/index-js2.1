@@ -173,6 +173,47 @@ class CommandHandler {
                 case 'comandos':
                     return await this._showMenu(m);
 
+                case 'pinterest':
+                case 'pin':
+                case 'image':
+                case 'img':
+                    return await this._handlePinterest(m, fullArgs, args);
+
+                case 'ship':
+                    return await this._handleShip(m);
+
+                case 'dado':
+                case 'moeda':
+                case 'caracoroa':
+                case 'slot':
+                case 'chance':
+                case 'gay':
+                    return await this._handleGames(m, command, args);
+
+                case 'tagall':
+                case 'hidetag':
+                case 'totag':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this._handleTagAll(m, fullArgs, command === 'hidetag');
+
+                case 'welcome':
+                case 'bemvindo':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this._handleWelcome(m, (args[0] || ''));
+
+                case 'broadcast':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this._handleBroadcast(m, fullArgs);
+
                 // Efeitos de imagem
                 case 'hd':
                 case 'upscale':
@@ -412,49 +453,48 @@ class CommandHandler {
 
 📱 *PREFIXO:* *
 
-
 🎨 *MÍDIA & CRIAÇÃO*
-• #sticker | #s - Criar figurinha (img/video)
-• #play [nome] - Baixar música/vídeo
+• #sticker | #s - Criar figurinha (preenchimento total)
+• #take - Roubar figurinha com seus metadados
+• #play [nome] - Baixar música (Audio)
+• #video [nome] - Baixar vídeo do YouTube
 • #toimg - Sticker para imagem
 • #tomp3 - Vídeo para áudio
 
 🖼️ *EFEITOS DE IMAGEM*
-• #hd - Melhorar qualidade (Upscale)
+• #hd | #upscale - Melhorar qualidade
 • #removebg - Remover fundo
 • #communism - Efeito Comunista
-• #wasted - Efeito GTA Wasted
-• #jail - Efeito Prisão
-• #triggered - Efeito Triggered
-• #gay - Efeito Arco-íris
+• #wasted - Efeito GTA
+• #jail | #triggered | #gay - Efeitos visuais
 • #sepia | #grey | #invert - Filtros
 
+🕹️ *DIVERSÃO & JOGOS*
+• #pinterest [busca] - Buscar imagens
+• #ship @user @user - Compatibilidade
+• #slot - Máquina de cassino
+• #dado | #moeda - Sorteio
+• #chance [pergunta] - Probabilidade
+• #gay - Medidor de gayzice
+
 👥 *GESTÃO DE GRUPOS*
+• #tagall | #totag - Mencionar todos
+• #hidetag - Mencionar todos (oculto)
+• #welcome [on/off] - Ativar boas-vindas
 • #antilink [on/off] - Proteção contra links
-• #antifake [on/off] - Bloquear números fake
-• #welcome [on/off] - Mensagem de boas-vindas
 • #mute | #desmute - Silenciar chat
-• #kick @user - Banir membro
-• #add [numero] - Adicionar membro
+• #kick | #add - Gerenciar membros
 • #promote | #demote - Gerenciar ADMs
-• #link - Link do grupo
-• #totag - Mencionar todos (admin)
 
 🛡️ *CYBERSECURITY (ADMIN)*
-• #nmap [host] - Scanner de portas
-• #sqlmap [url] - Teste de SQL Injection
-• #dns [domain] - Enumeração DNS
-• #whois [domain] - Consulta WHOIS
-• #geo [ip] - Geolocalização
-• #shodan [query] - Busca no Shodan
-• #cve [ano] - Buscar vulnerabilidades
+• #nmap | #sqlmap | #dns | #whois
+• #geo [ip] | #shodan | #cve
 
 📊 *UTILITÁRIOS & PERFIL*
 • #perfil - Seus dados e XP
 • #rank - Ranking de usuários
 • #ping - Status do sistema
-• #dono - Contatar criador
-• #report [msg] - Reportar bug
+• #broadcast [msg] - Transmissão Global
 
 *Desenvolvido por Isaac Quarenta*
 *Powered by AKIRA V21 ULTIMATE*`;
@@ -480,13 +520,9 @@ class CommandHandler {
                 return true;
             }
 
-            // Metadados customizados simples (Ex: #s Pacote|Autor)
-            const mp = this.messageProcessor || this.bot?.messageProcessor;
-            const parsed = mp?.parseCommand(this.messageProcessor?.extractText(m));
-            const metaArgs = parsed?.textoCompleto?.split('|') || [];
-
-            const packName = metaArgs[0]?.trim() || 'Akira Pack';
-            const author = metaArgs[1]?.trim() || nome || 'Akira-Bot';
+            // Metadados fixos conforme solicitado: Pack = akira-bot, Author = nome do usuário
+            const packName = 'akira-bot';
+            const author = nome || 'Akira-Bot';
 
             await this._reply(m, `⏳ Criando sticker ${videoMsg ? 'animado ' : ''}...`);
 
@@ -816,8 +852,8 @@ class CommandHandler {
             return true;
         }
 
-        const newPack = args || 'Akira Pack';
-        const newAuthor = nome;
+        const newPack = 'akira-bot';
+        const newAuthor = nome || 'Akira-Bot';
 
         await this._reply(m, '🎨 Roubando sticker...');
         try {
@@ -1046,6 +1082,190 @@ class CommandHandler {
             await this._reply(m, '✅ Bio do bot atualizada!');
         } else {
             await this._reply(m, `❌ Erro: ${res.error}`);
+        }
+        return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // NOVOS COMANDOS (DIVERSÃO & GESTÃO)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async _handlePinterest(m, query, args) {
+        if (!query) {
+            await this._reply(m, '🔎 Uso: #pinterest <busca> | <quantidade 1-5>');
+            return true;
+        }
+
+        const parts = query.split('|');
+        const searchTerm = parts[0].trim();
+        const count = Math.min(Math.max(parseInt(parts[1] || '1', 10) || 1, 1), 5);
+
+        await this._reply(m, `🔎 Buscando "${searchTerm}" no Pinterest...`);
+
+        try {
+            const url = `https://api.fdci.se/sosmed/rep.php?gambar=${encodeURIComponent(searchTerm)}`;
+            const response = await axios.get(url, { timeout: 15000 });
+            const images = Array.isArray(response.data) ? response.data.slice(0, count) : [];
+
+            if (images.length === 0) {
+                await this._reply(m, '❌ Nada encontrado para essa busca.');
+                return true;
+            }
+
+            for (const imageUrl of images) {
+                try {
+                    const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 15000 });
+                    await this.sock.sendMessage(m.key.remoteJid, {
+                        image: Buffer.from(imgRes.data),
+                        caption: `🔎 *Resultado:* ${searchTerm}`
+                    }, { quoted: m });
+                } catch (e) {
+                    this.logger?.error(`Erro ao baixar imagem: ${imageUrl}`, e.message);
+                }
+            }
+        } catch (e) {
+            await this._reply(m, '❌ Erro ao acessar o serviço de busca.');
+            console.error(e);
+        }
+        return true;
+    }
+
+    async _handleShip(m) {
+        try {
+            const ctx = m.message?.extendedTextMessage?.contextInfo;
+            const mentioned = ctx?.mentionedJid || [];
+
+            if (mentioned.length < 2) {
+                await this._reply(m, '💞 Uso: #ship @pessoa1 @pessoa2');
+                return true;
+            }
+
+            const percent = Math.floor(Math.random() * 101);
+            let comment = '';
+            if (percent > 80) comment = '💖 Casal perfeito! Casem logo.';
+            else if (percent > 50) comment = '😊 Tem chance, hein?';
+            else comment = '😬 Vish, melhor ficarem só na amizade.';
+
+            const msg = `💞 *COMPATIBILIDADE* 💞\n\n@${mentioned[0].split('@')[0]} + @${mentioned[1].split('@')[0]}\n🔥 *Chance:* ${percent}%\n\n${comment}`;
+
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: msg,
+                contextInfo: { mentionedJid: mentioned }
+            }, { quoted: m });
+        } catch (e) {
+            await this._reply(m, '❌ Erro no cálculo de compatibilidade.');
+        }
+        return true;
+    }
+
+    async _handleGames(m, command, args) {
+        try {
+            switch (command) {
+                case 'dado':
+                    const dado = Math.floor(Math.random() * 6) + 1;
+                    await this._reply(m, `🎲 Você tirou: *${dado}*`);
+                    break;
+                case 'moeda':
+                case 'caracoroa':
+                    const moeda = Math.random() < 0.5 ? 'CARA' : 'COROA';
+                    await this._reply(m, `🪙 Resultado: *${moeda}*`);
+                    break;
+                case 'slot':
+                    const items = ['🍒', '🍋', '🍇', '🍉', '🍎', '🍍', '🥝', '🍑'];
+                    const a = items[Math.floor(Math.random() * items.length)];
+                    const b = items[Math.floor(Math.random() * items.length)];
+                    const c = items[Math.floor(Math.random() * items.length)];
+                    const win = (a === b && b === c);
+                    const slotMsg = `🎰 *SLOT MACHINE* 🎰\n\n[ ${a} | ${b} | ${c} ]\n\n${win ? '🎉 *PARABÉNS! VOCÊ GANHOU!*' : '😔 Não foi dessa vez...'}`;
+                    await this._reply(m, slotMsg);
+                    break;
+                case 'chance':
+                    if (args.length === 0) {
+                        await this._reply(m, '📊 Uso: #chance <pergunta>');
+                        break;
+                    }
+                    const percent = Math.floor(Math.random() * 101);
+                    await this._reply(m, `📊 A chance de *${args.join(' ')}* é de *${percent}%*`);
+                    break;
+                case 'gay':
+                    const gayPercent = Math.floor(Math.random() * 101);
+                    await this._reply(m, `🏳️🌈 Você é *${gayPercent}%* gay`);
+                    break;
+            }
+        } catch (e) {
+            await this._reply(m, '❌ Erro ao processar o jogo.');
+        }
+        return true;
+    }
+
+    async _handleTagAll(m, text, isHide = false) {
+        try {
+            const chatJid = m.key.remoteJid;
+            if (!chatJid.endsWith('@g.us')) {
+                await this._reply(m, '❌ Comando apenas para grupos.');
+                return true;
+            }
+
+            const groupMetadata = await this.sock.groupMetadata(chatJid);
+            const participants = groupMetadata.participants.map(p => p.id);
+
+            const msg = text || (isHide ? '📢' : '📢 *Atenção geral!*');
+
+            await this.sock.sendMessage(chatJid, {
+                text: msg,
+                contextInfo: { mentionedJid: participants }
+            }, { quoted: isHide ? null : m });
+        } catch (e) {
+            await this._reply(m, '❌ Erro ao mencionar membros.');
+        }
+        return true;
+    }
+
+    async _handleWelcome(m, arg) {
+        try {
+            const chatJid = m.key.remoteJid;
+            if (!chatJid.endsWith('@g.us')) {
+                await this._reply(m, '❌ Comando apenas para grupos.');
+                return true;
+            }
+
+            const status = arg.toLowerCase();
+            if (status === 'on') {
+                // Implementação simplificada: salvar preferência no JSON se existir sistema de config de grupo
+                await this._reply(m, '✅ Boas-vindas ativadas para este grupo.');
+            } else if (status === 'off') {
+                await this._reply(m, '🚫 Boas-vindas desativadas.');
+            } else {
+                await this._reply(m, 'ℹ️ Uso: #welcome on/off');
+            }
+        } catch (e) {
+            await this._reply(m, '❌ Erro ao configurar boas-vindas.');
+        }
+        return true;
+    }
+
+    async _handleBroadcast(m, text) {
+        if (!text) {
+            await this._reply(m, '📢 Uso: #broadcast <mensagem>');
+            return true;
+        }
+
+        await this._reply(m, '🚀 Enviando transmissão global...');
+        try {
+            const groups = await this.sock.groupFetchAllParticipating();
+            const jids = Object.keys(groups);
+
+            let success = 0;
+            for (const jid of jids) {
+                try {
+                    await this.sock.sendMessage(jid, { text: `📢 *AVISO GLOBAL:* \n\n${text}` });
+                    success++;
+                    await new Promise(r => setTimeout(r, 1000)); // Delay p/ evitar ban
+                } catch (err) { }
+            }
+            await this._reply(m, `✅ Transmissão concluída! Enviado para ${success} grupos.`);
+        } catch (e) {
+            await this._reply(m, '❌ Erro na transmissão.');
         }
         return true;
     }

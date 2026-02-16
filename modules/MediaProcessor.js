@@ -173,10 +173,10 @@ class MediaProcessor {
             await img.load(webpBuffer);
 
             const json = {
-                'sticker-pack-id': crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2, 10)),
+                'sticker-pack-id': `akira-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
                 'sticker-pack-name': String(packName || 'akira-bot').slice(0, 30),
                 'sticker-pack-publisher': String(author || 'Akira-Bot').slice(0, 30),
-                'emojis': ['🎨']
+                'emojis': ['🎨', '🤖']
             };
 
             const exifAttr = Buffer.from([
@@ -190,10 +190,16 @@ class MediaProcessor {
             exif.writeUIntLE(jsonBuff.length, 14, 4);
 
             img.exif = exif;
-            const result = await img.save(null);
-
-            this.logger?.debug(`✅ Metadados EXIF adicionados: ${packName} por ${author}`);
-            return result;
+            // Webpmux.save(null) retorna o buffer ou falha se version for antiga
+            try {
+                const result = await img.save(null);
+                this.logger?.debug(`✅ Metadados EXIF adicionados: "${packName}" | Autor: "${author}"`);
+                return result;
+            } catch (saveErr) {
+                this.logger?.warn('⚠️ Falha ao salvar com buffer (null), tentando sem argumentos...');
+                const result = await img.save();
+                return result;
+            }
         } catch (e) {
             this.logger?.warn('⚠️ Erro ao adicionar EXIF:', e.message);
             return webpBuffer;
@@ -219,15 +225,11 @@ class MediaProcessor {
 
             fs.writeFileSync(inputPath, imageBuffer);
 
-            // Pack name = apenas nome do usuário, Author = Akira-Bot
-            const { userName = 'User' } = metadata;
-            const packName = userName.split(' ')[0].toLowerCase();
+            const { packName = 'akira-bot', author = 'Akira-Bot' } = metadata;
 
-            // Filtro otimizado: escala mantendo proporção + padding transparente para 512x512
-            // 0x00000000 = transparente (ARGB)
-            // Filtro otimizado: escala mantendo proporção + padding transparente para 512x512
-            // 0x00000000 = transparente (ARGB)
-            const videoFilter = 'fps=15,scale=512:512:flags=lanczos:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000';
+            // Filtro otimizado: Preenchimento total (Fill) sem barras pretas
+            // Usa force_original_aspect_ratio=increase seguido de crop para preencher 512x512
+            const videoFilter = 'scale=512:512:flags=lanczos:force_original_aspect_ratio=increase,crop=512:512';
 
             // Configuração do FFmpeg path (se necessário, mas fluent-ffmpeg geralmente acha no PATH)
             // Se o usuário tem ffmpeg no sistema, isso deve funcionar direto
@@ -273,8 +275,8 @@ class MediaProcessor {
                 throw new Error('Sticker gerado está vazio');
             }
 
-            // Adiciona metadados EXIF: packName = nome usuário, author = Akira-Bot
-            const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, 'Akira-Bot');
+            // Adiciona metadados EXIF: packName configurado, author configurado
+            const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, author);
 
             await Promise.all([
                 this.cleanupFile(inputPath),
@@ -344,9 +346,11 @@ class MediaProcessor {
             const { userName = 'User' } = metadata;
             const packName = userName.split(' ')[0].toLowerCase();
 
-            // Filtro otimizado: escala mantendo proporção + padding transparente para 512x512
-            // Isso garante formato quadrado sem distorcer o conteúdo
-            const videoFilter = `fps=15,scale=512:512:flags=lanczos:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000`;
+            // Filtro otimizado: escala aumentando para preencher + crop para 512x512
+            // Isso garante formato quadrado preenchido
+            const videoFilter = `fps=15,scale=512:512:flags=lanczos:force_original_aspect_ratio=increase,crop=512:512`;
+
+            const stickerDuration = Math.min(maxDuration, 10); // Máximo 10s para WhatsApp mobile
 
             await new Promise((resolve, reject) => {
                 ffmpeg(inputPath)
@@ -360,7 +364,7 @@ class MediaProcessor {
                         '-q:v', '75',
                         '-preset', 'default',
                         '-an',
-                        '-t', String(maxDuration),
+                        '-t', String(stickerDuration),
                         '-metadata', `title=${packName}`,
                         '-metadata', 'artist=Akira-Bot',
                         '-metadata', 'comment=Criado por Akira Bot',
@@ -433,7 +437,7 @@ class MediaProcessor {
             }
 
             // Adiciona metadados EXIF ao sticker animado
-            const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, 'Akira-Bot');
+            const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, author);
 
             await Promise.all([
                 this.cleanupFile(inputPath),
@@ -785,15 +789,27 @@ class MediaProcessor {
     /**
     * Download de áudio do YouTube - ROBUSTO COM FALLBACK
     */
-    async downloadYouTubeAudio(url) {
+    async downloadYouTubeAudio(input) {
         try {
             this.logger?.info('🎵 Iniciando download de áudio do YouTube...');
+            let url = input;
 
             // Extrair video ID
             let videoId = this.extractYouTubeVideoId(url);
 
             if (!videoId) {
-                return { sucesso: false, error: 'URL do YouTube inválida. Formatos suportados:\n- youtube.com/watch?v=ID\n- youtu.be/ID\n- youtube.com/shorts/ID\n- youtube.com/embed/ID' };
+                this.logger?.info(`🔍 Input não é URL, tentando busca: ${input}`);
+                const searchRes = await this.searchYouTube(input, 1);
+                if (searchRes.sucesso && searchRes.resultados.length > 0) {
+                    url = searchRes.resultados[0].url;
+                    videoId = this.extractYouTubeVideoId(url);
+                    this.logger?.info(`✅ Encontrado via busca: ${searchRes.resultados[0].titulo} (${url})`);
+                } else {
+                    return {
+                        sucesso: false,
+                        error: 'URL inválida e nenhum resultado encontrado para a busca. Formatos suportados:\n- youtube.com/watch?v=ID\n- youtu.be/ID\n- youtube.com/shorts/ID'
+                    };
+                }
             }
 
             this.logger?.info(`📹 Video ID: ${videoId}`);
@@ -850,13 +866,22 @@ class MediaProcessor {
     /**
     * Download de VÍDEO do YouTube
     */
-    async downloadYouTubeVideo(url) {
+    async downloadYouTubeVideo(input) {
         try {
             this.logger?.info('🎬 Iniciando download de VÍDEO do YouTube...');
+            let url = input;
 
-            const videoId = this.extractYouTubeVideoId(url);
+            let videoId = this.extractYouTubeVideoId(url);
             if (!videoId) {
-                return { sucesso: false, error: 'URL do YouTube inválida' };
+                this.logger?.info(`🔍 Input não é URL, tentando busca: ${input}`);
+                const searchRes = await this.searchYouTube(input, 1);
+                if (searchRes.sucesso && searchRes.resultados.length > 0) {
+                    url = searchRes.resultados[0].url;
+                    videoId = this.extractYouTubeVideoId(url);
+                    this.logger?.info(`✅ Encontrado via busca: ${searchRes.resultados[0].titulo} (${url})`);
+                } else {
+                    return { sucesso: false, error: 'URL do YouTube inválida ou nenhum vídeo encontrado.' };
+                }
             }
 
             const ytdlpTool = this.findYtDlp();
@@ -914,20 +939,59 @@ class MediaProcessor {
                 return { sucesso: false, error: `Vídeo muito grande (>${this.config?.YT_MAX_SIZE_MB}MB)` };
             }
 
-            const videoBuffer = fs.readFileSync(actualPath);
-            await this.cleanupFile(actualPath);
+            // 🛠️ ESTÁGIO DE OTIMIZAÇÃO PARA MOBILE (H.264 Baseline)
+            this.logger?.info('🛠️ Otimizando vídeo para compatibilidade mobile...');
+            const optimizedPath = this.generateRandomFilename('mp4');
 
-            // Obter título
-            const titleResult = await this._getYouTubeTitle(url, ytdlpTool);
+            try {
+                await new Promise((resolve, reject) => {
+                    ffmpeg(actualPath)
+                        .outputOptions([
+                            '-c:v', 'libx264',
+                            '-profile:v', 'baseline',
+                            '-level', '3.0',
+                            '-pix_fmt', 'yuv420p',
+                            '-c:a', 'aac',
+                            '-b:a', '128k',
+                            '-ar', '44100',
+                            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', // Garante dimensões pares
+                            '-movflags', '+faststart',
+                            '-preset', 'faster',
+                            '-crf', '28'
+                        ])
+                        .on('end', resolve)
+                        .on('error', reject)
+                        .save(optimizedPath);
+                });
 
-            return {
-                sucesso: true,
-                buffer: videoBuffer,
-                titulo: titleResult.titulo || 'Vídeo do YouTube',
-                tamanho: videoBuffer.length,
-                metodo: 'yt-dlp',
-                mimetype: 'video/mp4' // Assumindo mp4, mas o buffer é o que importa
-            };
+                const videoBuffer = fs.readFileSync(optimizedPath);
+                const titleResult = await this._getYouTubeTitle(url, ytdlpTool);
+
+                await Promise.all([
+                    this.cleanupFile(actualPath),
+                    this.cleanupFile(optimizedPath)
+                ]);
+
+                return {
+                    sucesso: true,
+                    buffer: videoBuffer,
+                    titulo: titleResult.titulo || 'Vídeo do YouTube',
+                    size: videoBuffer.length,
+                    mimetype: 'video/mp4'
+                };
+            } catch (optError) {
+                this.logger?.error('⚠️ Erro na otimização mobile, enviando original:', optError.message);
+                const videoBuffer = fs.readFileSync(actualPath);
+                const titleResult = await this._getYouTubeTitle(url, ytdlpTool);
+                await this.cleanupFile(actualPath);
+                return {
+                    sucesso: true,
+                    buffer: videoBuffer,
+                    titulo: titleResult.titulo || 'Vídeo do YouTube',
+                    size: videoBuffer.length,
+                    mimetype: 'video/mp4'
+                };
+            }
 
         } catch (error) {
             this.logger?.error('❌ Erro download vídeo:', error.message);

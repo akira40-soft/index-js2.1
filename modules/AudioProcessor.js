@@ -231,26 +231,62 @@ class AudioProcessor {
                 };
             }
 
-            const finalBuffer = fs.readFileSync(outputPath);
-            await this.cleanupFile(outputPath);
+            const mp3Buffer = fs.readFileSync(outputPath);
 
-            const result = {
-                sucesso: true,
-                buffer: finalBuffer,
-                fonte: 'Google TTS',
-                size: finalBuffer.length
-            };
+            // 🛠️ CONVERSÃO PARA OGG OPUS (VOICE NOTE STYLE)
+            this.logger?.info('🛠️ Convertendo TTS para Ogg Opus para compatibilidade mobile...');
+            const opusPath = this.generateRandomFilename('opus');
 
-            // Cache
-            this.ttsCache.set(cacheKey, result);
-            if (this.ttsCache.size > 50) {
-                const firstKey = this.ttsCache.keys().next().value;
-                this.ttsCache.delete(firstKey);
+            try {
+                await new Promise((resolve, reject) => {
+                    ffmpeg(outputPath)
+                        .toFormat('opus')
+                        .audioCodec('libopus')
+                        .audioBitrate('32k')
+                        .audioFrequency(48000)
+                        .audioChannels(1)
+                        .on('end', resolve)
+                        .on('error', reject)
+                        .save(opusPath);
+                });
+
+                const finalBuffer = fs.readFileSync(opusPath);
+
+                await Promise.all([
+                    this.cleanupFile(outputPath),
+                    this.cleanupFile(opusPath)
+                ]);
+
+                const result = {
+                    sucesso: true,
+                    buffer: finalBuffer,
+                    fonte: 'Google TTS (Ogg Opus)',
+                    size: finalBuffer.length,
+                    mimetype: 'audio/ogg; codecs=opus'
+                };
+
+                // Cache
+                this.ttsCache.set(cacheKey, result);
+                if (this.ttsCache.size > 50) {
+                    const firstKey = this.ttsCache.keys().next().value;
+                    this.ttsCache.delete(firstKey);
+                }
+
+                this.logger?.info(`🔊 TTS Completo (Opus): ${textTruncated.substring(0, 50)}... (${finalBuffer.length} bytes)`);
+                return result;
+
+            } catch (opusError) {
+                this.logger?.error('⚠️ Erro na conversão para Opus, enviando MP3 original:', opusError.message);
+                const finalBuffer = fs.readFileSync(outputPath);
+                await this.cleanupFile(outputPath);
+                return {
+                    sucesso: true,
+                    buffer: finalBuffer,
+                    fonte: 'Google TTS (MP3)',
+                    size: finalBuffer.length,
+                    mimetype: 'audio/mpeg'
+                };
             }
-
-            this.logger?.info(`🔊 TTS Completo: ${textTruncated.substring(0, 50)}... (${finalBuffer.length} bytes)`);
-
-            return result;
 
         } catch (error) {
             this.logger?.error('❌ Erro TTS:', error.message);
@@ -326,20 +362,56 @@ class AudioProcessor {
                     });
             });
 
-            const resultBuffer = fs.readFileSync(outputPath);
+            const processedBuffer = fs.readFileSync(outputPath);
 
-            // Cleanup
-            await Promise.all([
-                this.cleanupFile(inputPath),
-                this.cleanupFile(outputPath)
-            ]);
+            // 🛠️ CONVERSÃO PARA OGG OPUS (VOICE NOTE STYLE)
+            this.logger?.info(`🛠️ Convertendo áudio com efeito '${effectName}' para Ogg Opus...`);
+            const opusPath = this.generateRandomFilename('opus');
 
-            return {
-                sucesso: true,
-                buffer: resultBuffer,
-                effect: effectName,
-                size: resultBuffer.length
-            };
+            try {
+                await new Promise((resolve, reject) => {
+                    ffmpeg(outputPath)
+                        .toFormat('opus')
+                        .audioCodec('libopus')
+                        .audioBitrate('32k')
+                        .audioFrequency(48000)
+                        .audioChannels(1)
+                        .on('end', resolve)
+                        .on('error', reject)
+                        .save(opusPath);
+                });
+
+                const resultBuffer = fs.readFileSync(opusPath);
+
+                // Cleanup
+                await Promise.all([
+                    this.cleanupFile(inputPath),
+                    this.cleanupFile(outputPath),
+                    this.cleanupFile(opusPath)
+                ]);
+
+                return {
+                    sucesso: true,
+                    buffer: resultBuffer,
+                    effect: effectName,
+                    size: resultBuffer.length,
+                    mimetype: 'audio/ogg; codecs=opus'
+                };
+            } catch (opusError) {
+                this.logger?.error('⚠️ Erro na conversão para Opus, enviando MP3 processado:', opusError.message);
+                const resultBuffer = fs.readFileSync(outputPath);
+                await Promise.all([
+                    this.cleanupFile(inputPath),
+                    this.cleanupFile(outputPath)
+                ]);
+                return {
+                    sucesso: true,
+                    buffer: resultBuffer,
+                    effect: effectName,
+                    size: resultBuffer.length,
+                    mimetype: 'audio/mpeg'
+                };
+            }
 
         } catch (error) {
             this.logger?.error(`❌ Erro ao aplicar efeito ${effectName}:`, error.message);
