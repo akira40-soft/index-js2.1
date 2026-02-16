@@ -186,27 +186,11 @@ class MediaProcessor {
     * Author = Akira-Bot
     */
     async addStickerMetadata(webpBuffer, packName = 'akira-bot', author = 'Akira-Bot') {
-        let tempStickerPath, tempResultPath;
         try {
-            // Garante que o diretório temporário esteja acessível
-            if (!this.tempFolder || this.tempFolder === '.' || this.tempFolder === './') {
-                this.tempFolder = this.config?.TEMP_FOLDER || '/tmp/akira_data/temp';
-            }
-            if (!fs.existsSync(this.tempFolder)) fs.mkdirSync(this.tempFolder, { recursive: true });
-
-            tempStickerPath = this.generateRandomFilename('webp');
-            tempResultPath = this.generateRandomFilename('webp');
-
-            this.logger?.debug(`📂 Caminhos temporários: input=${tempStickerPath}, output=${tempResultPath}`);
-
-            if (!tempStickerPath || !tempResultPath) {
-                throw new Error('Falha ao gerar caminhos temporários (undefined)');
-            }
-
-            fs.writeFileSync(tempStickerPath, webpBuffer);
+            if (!Webpmux) return webpBuffer;
 
             const img = new Webpmux.Image();
-            await img.load(tempStickerPath);
+            await img.load(webpBuffer); // Carrega direto do buffer
 
             const json = {
                 'sticker-pack-id': `akira-${crypto.randomBytes(8).toString('hex')}`,
@@ -227,30 +211,14 @@ class MediaProcessor {
 
             img.exif = exif;
 
-            // Salva em arquivo e lê de volta para garantir compatibilidade com buffers
-            try {
-                // Tenta salvar normalmente (funciona para estáticos)
-                await img.save(tempResultPath);
-            } catch (err) {
-                // Se falhar (comum em animados), tenta usar muxAnim
-                try {
-                    await img.muxAnim(tempResultPath);
-                } catch (muxErr) {
-                    this.logger?.error('❌ Falha crítica ao salvar WebP (img.save e muxAnim):', muxErr.message);
-                    throw muxErr;
-                }
-            }
-            const result = fs.readFileSync(tempResultPath);
+            // Gera o buffer final diretamente em memória (sem arquivo temporário)
+            // Para node-webpmux, save(null) retorna o buffer
+            const result = await img.save(null);
 
-            await Promise.all([
-                this.cleanupFile(tempStickerPath),
-                this.cleanupFile(tempResultPath)
-            ]);
-
-            this.logger?.debug(`✅ Metadados EXIF inseridos: "${packName}" | "${author}"`);
+            this.logger?.debug(`✅ Metadados EXIF inseridos via Buffer: "${packName}" | "${author}"`);
             return result;
         } catch (e) {
-            this.logger?.warn('⚠️ Erro ao adicionar EXIF:', e.message);
+            this.logger?.warn('⚠️ Erro ao adicionar EXIF (método Buffer):', e.message);
             return webpBuffer;
         }
     }

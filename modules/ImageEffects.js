@@ -509,10 +509,15 @@ class ImageEffects {
     async applyWastedEffect(imageBuffer) {
         try {
             const metadata = await sharp(imageBuffer).metadata();
+            const fontSize = Math.floor(metadata.width / 6);
+            const rectHeight = Math.floor(metadata.height * 0.2);
+            const rectY = Math.floor(metadata.height / 2 - rectHeight / 2);
+            const textY = Math.floor(metadata.height / 2 + fontSize * 0.35); // Ajuste fino para centralizar o texto vertiginosamente
+
             const wastedSvg = Buffer.from(
                 `<svg width="${metadata.width}" height="${metadata.height}" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="0" y="${metadata.height / 2 - metadata.height * 0.1}" width="100%" height="${metadata.height * 0.2}" fill="rgba(0,0,0,0.6)"/>
-                    <text x="50%" y="54%" font-family="Impact, sans-serif" font-weight="bold" font-size="${metadata.width / 6}" fill="#ff0000" text-anchor="middle" dominant-baseline="middle" stroke="#ffffff" stroke-width="${metadata.width / 150}">WASTED</text>
+                    <rect x="0" y="${rectY}" width="${metadata.width}" height="${rectHeight}" fill="rgba(0,0,0,0.7)"/>
+                    <text x="${metadata.width / 2}" y="${textY}" font-family="sans-serif" font-weight="900" font-size="${fontSize}px" fill="#ff0000" text-anchor="middle" stroke="#ffffff" stroke-width="${metadata.width / 200}">WASTED</text>
                 </svg>`
             );
             return {
