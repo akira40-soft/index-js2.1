@@ -607,7 +607,7 @@ class CommandHandler {
 
     async _handlePlay(m, query) {
         if (!query) {
-            await this._reply(m, '❌ Uso: *play <nome da música ou link>');
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}play <nome da música ou link>`);
             return true;
         }
         await this._reply(m, '⏳ Buscando e processando música...');
@@ -616,14 +616,34 @@ class CommandHandler {
             if (res.error) {
                 await this._reply(m, `❌ ${res.error}`);
             } else {
+                // Enviar thumbnail e metadados se disponíveis
+                if (res.thumbnail) {
+                    const thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail);
+                    if (thumbBuf) {
+                        const duracaoMin = res.duracao ? `${Math.floor(res.duracao / 60)}:${(res.duracao % 60).toString().padStart(2, '0')}` : '??';
+                        const caption = `🎵 *${res.titulo || 'Música'}*\n\n` +
+                            `👤 *Canal:* ${res.autor}\n` +
+                            `⏱️ *Duração:* ${duracaoMin}\n` +
+                            `👁️ *Views:* ${res.views}\n` +
+                            `👍 *Likes:* ${res.likes}\n\n` +
+                            `🎧 _Enviando áudio..._`;
+
+                        await this.sock.sendMessage(m.key.remoteJid, {
+                            image: thumbBuf,
+                            caption: caption
+                        }, { quoted: m });
+                    }
+                }
+
                 await this.sock.sendMessage(m.key.remoteJid, {
                     audio: res.buffer,
                     mimetype: 'audio/mpeg',
                     ptt: false,
-                    fileName: `${res.title}.mp3`
+                    fileName: `${res.titulo || 'audio'}.mp3`
                 }, { quoted: m });
             }
         } catch (e) {
+            this.logger?.error('Erro no play:', e);
             await this._reply(m, '❌ Erro ao processar o comando play.');
         }
         return true;
@@ -731,7 +751,7 @@ class CommandHandler {
 
     async _handleReport(m, fullArgs, nome, senderId, ehGrupo) {
         if (!fullArgs) {
-            await this._reply(m, '❌ Uso: #report <mensagem do bug/sugestão>');
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}report <mensagem do bug/sugestão>`);
             return true;
         }
 
@@ -768,7 +788,7 @@ class CommandHandler {
 
     async _handleRegister(m, fullArgs, senderId) {
         if (!fullArgs.includes('|')) {
-            await this._reply(m, '❌ Uso: #registrar Nome|Idade');
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}registrar Nome|Idade`);
             return true;
         }
 
@@ -776,7 +796,7 @@ class CommandHandler {
         const idade = parseInt(idadeStr, 10);
 
         if (!nomeUser || isNaN(idade)) {
-            await this._reply(m, '❌ Formato inválido. Use: #registrar Nome|Idade');
+            await this._reply(m, `❌ Formato inválido. Use: ${this.config.PREFIXO}registrar Nome|Idade`);
             return true;
         }
 
@@ -805,7 +825,7 @@ class CommandHandler {
 
     async _handleAddPremium(m, args) {
         if (args.length < 2) {
-            await this._reply(m, '❌ Uso: #addpremium <numero> <dias>');
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}addpremium <numero> <dias>`);
             return true;
         }
 
@@ -835,7 +855,7 @@ class CommandHandler {
 
     async _handleDelPremium(m, args) {
         if (args.length < 1) {
-            await this._reply(m, '❌ Uso: #delpremium <numero>');
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}delpremium <numero>`);
             return true;
         }
 
@@ -957,24 +977,30 @@ class CommandHandler {
 
     async _handleVideo(m, query) {
         if (!query) {
-            await this._reply(m, '❌ Uso: #video <nome ou link>');
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}video <nome ou link>`);
             return true;
         }
         await this._reply(m, '🎬 Baixando vídeo...');
         try {
             const res = await this.mediaProcessor.downloadYouTubeVideo(query);
             if (res.sucesso && res.buffer) {
+                let thumbBuf = null;
+                if (res.thumbnail) {
+                    thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail);
+                }
+
                 await this.sock.sendMessage(m.key.remoteJid, {
                     video: res.buffer,
-                    caption: `🎬 ${res.titulo}`,
-                    mimetype: 'video/mp4'
+                    caption: `🎬 *${res.titulo}*\n👤 *Canal:* ${res.autor || 'Desconhecido'}`,
+                    mimetype: 'video/mp4',
+                    jpegThumbnail: thumbBuf || undefined
                 }, { quoted: m });
             } else {
                 await this._reply(m, `❌ Erro: ${res.error}`);
             }
         } catch (e) {
+            this.logger?.error('Erro no video:', e);
             await this._reply(m, '❌ Erro ao baixar vídeo.');
-            console.error(e);
         }
         return true;
     }
@@ -1005,7 +1031,7 @@ class CommandHandler {
             const res = await this.imageEffects.processImage(buf, command, options);
 
             if (res.success && res.buffer) {
-                // Envia como imagem (usuário pode converter pra sticker com #sticker se quiser)
+                // Envia como imagem (usuário pode converter pra sticker com *sticker se quiser)
                 await this.sock.sendMessage(m.key.remoteJid, { image: res.buffer, caption: `✅ Efeito ${command} aplicado` }, { quoted: m });
             } else {
                 await this._reply(m, `❌ Erro: ${res.error || 'Falha desconhecida'}`);
@@ -1028,7 +1054,7 @@ class CommandHandler {
                 msg += `🏷️ *${plan.name}*\n`;
                 msg += `💰 Valor: R$ ${plan.price.toFixed(2)}\n`;
                 msg += `📅 Duração: ${plan.days} dias\n`;
-                msg += `👉 Use: *#buy ${key}*\n\n`;
+                msg += `👉 Use: *${this.config.PREFIXO}buy ${key}*\n\n`;
             }
 
             msg += `💡 *Vantagens:*\n`;
@@ -1116,7 +1142,7 @@ class CommandHandler {
 
     async _handleSetBotName(m, name) {
         if (!name) {
-            await this._reply(m, '❌ Uso: #setbotname <nome>');
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}setbotname <nome>`);
             return true;
         }
         await this._reply(m, `📛 Alterando nome para: ${name}`);
@@ -1131,7 +1157,7 @@ class CommandHandler {
 
     async _handleSetBotStatus(m, status) {
         if (!status) {
-            await this._reply(m, '❌ Uso: #setbotstatus <texto>');
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}setbotstatus <texto>`);
             return true;
         }
         await this._reply(m, `📝 Alterando bio para: ${status}`);
@@ -1150,7 +1176,7 @@ class CommandHandler {
 
     async _handlePinterest(m, query, args) {
         if (!query) {
-            await this._reply(m, '🔎 Uso: #pinterest <busca> | <quantidade 1-5>');
+            await this._reply(m, `🔎 Uso: ${this.config.PREFIXO}pinterest <busca> | <quantidade 1-5>`);
             return true;
         }
 
@@ -1239,7 +1265,7 @@ class CommandHandler {
                     break;
                 case 'chance':
                     if (args.length === 0) {
-                        await this._reply(m, '📊 Uso: #chance <pergunta>');
+                        await this._reply(m, `📊 Uso: ${this.config.PREFIXO}chance <pergunta>`);
                         break;
                     }
                     const percent = Math.floor(Math.random() * 101);
@@ -1294,7 +1320,7 @@ class CommandHandler {
             } else if (status === 'off') {
                 await this._reply(m, '🚫 Boas-vindas desativadas.');
             } else {
-                await this._reply(m, 'ℹ️ Uso: #welcome on/off');
+                await this._reply(m, `ℹ️ Uso: ${this.config.PREFIXO}welcome on/off`);
             }
         } catch (e) {
             await this._reply(m, '❌ Erro ao configurar boas-vindas.');
@@ -1304,7 +1330,7 @@ class CommandHandler {
 
     async _handleBroadcast(m, text) {
         if (!text) {
-            await this._reply(m, '📢 Uso: #broadcast <mensagem>');
+            await this._reply(m, `📢 Uso: ${this.config.PREFIXO}broadcast <mensagem>`);
             return true;
         }
 

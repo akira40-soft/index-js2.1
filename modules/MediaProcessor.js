@@ -168,6 +168,19 @@ class MediaProcessor {
     }
 
     /**
+     * Busca buffer de uma URL externa (ex: thumbnail)
+     */
+    async fetchBuffer(url) {
+        try {
+            const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 10000 });
+            return Buffer.from(res.data);
+        } catch (e) {
+            this.logger?.debug('Erro ao buscar buffer da URL:', e.message);
+            return null;
+        }
+    }
+
+    /**
     * Adiciona metadados EXIF ao sticker
     * Pack Name = nome do usuário que solicitou
     * Author = Akira-Bot
@@ -375,7 +388,7 @@ class MediaProcessor {
                         '-an',
                         '-t', String(stickerDuration),
                         '-metadata', `title=${packName}`,
-                        '-metadata', `artist=${author}`, ,
+                        '-metadata', `artist=${author}`,
                         '-metadata', 'comment=Criado por Akira Bot',
                         '-y'
                     ])
@@ -800,9 +813,6 @@ class MediaProcessor {
         return null;
     }
 
-    /**
-    * Download de áudio do YouTube - ROBUSTO COM FALLBACK
-    */
     async downloadYouTubeAudio(input) {
         try {
             this.logger?.info('🎵 Iniciando download de áudio do YouTube...');
@@ -830,17 +840,21 @@ class MediaProcessor {
 
             // Tenta yt-dlp primeiro (mais robusto)
             const ytdlpTool = this.findYtDlp();
+            let metadata = { titulo: 'Música do YouTube', autor: 'Desconhecido', duracao: 0, videoId };
+
             if (ytdlpTool) {
                 this.logger?.info('🔧 Tentando yt-dlp (método 1 - mais robusto)');
+
+                // Busca metadados antes ou durante
+                const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                if (metaRes.sucesso) {
+                    metadata = metaRes;
+                }
+
                 try {
                     const result = await this._downloadWithYtDlp(url, videoId, ytdlpTool);
                     if (result.sucesso) {
-                        // Buscar título real
-                        const titleResult = await this._getYouTubeTitle(url, ytdlpTool);
-                        if (titleResult.sucesso) {
-                            result.titulo = titleResult.titulo;
-                        }
-                        return result;
+                        return { ...result, ...metadata };
                     }
                 } catch (ytErr) {
                     this.logger?.warn('⚠️ yt-dlp falhou:', ytErr.message);
@@ -852,7 +866,10 @@ class MediaProcessor {
             if (ytdl) {
                 this.logger?.info('🔧 Tentando ytdl-core (método 2 - fallback)');
                 try {
-                    return await this._downloadWithYtdlCore(url, videoId);
+                    const res = await this._downloadWithYtdlCore(url, videoId);
+                    if (res.sucesso) {
+                        return { ...res, ...metadata };
+                    }
                 } catch (ytErr) {
                     this.logger?.warn('⚠️ ytdl-core falhou:', ytErr.message);
                 }
@@ -868,7 +885,7 @@ class MediaProcessor {
 
             return {
                 sucesso: false,
-                error: 'Nenhum método de download funcionou. Verifique:\n1. yt-dlp está instalado: which yt-dlp\n2. @distube/ytdl-core está no package.json\n3. A URL do vídeo é válida'
+                error: 'Nenhum método de download funcionou. Verifique:\n1. yt-dlp está instalado\n2. A URL do vídeo é válida'
             };
 
         } catch (error) {
@@ -904,10 +921,11 @@ class MediaProcessor {
             }
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
-            // Formato compatível com WhatsApp (mp4 + aac)
+            // Formato compatível com WhatsApp (mp4 + aac) - LIMITE 720p para economizar RAM no Railway
+            const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
             const command = process.platform === 'win32'
-                ? `"${ytdlpTool.cmd}" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`
-                : `${ytdlpTool.cmd} -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`;
+                ? `"${ytdlpTool.cmd}" -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`
+                : `${ytdlpTool.cmd} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --no-warnings "${url}"`;
 
             this.logger?.debug(`Executando: ${command}`);
 
@@ -965,13 +983,14 @@ class MediaProcessor {
                             '-profile:v', 'baseline',
                             '-level', '3.0',
                             '-pix_fmt', 'yuv420p',
+                            '-threads', '1', // CRÍTICO: Reduz drasticamente o uso de RAM no Railway
                             '-c:a', 'aac',
                             '-b:a', '128k',
                             '-ar', '44100',
                             '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', // Garante dimensões pares
                             '-movflags', '+faststart',
-                            '-preset', 'faster',
-                            '-crf', '28'
+                            '-preset', 'ultrafast', // Mais rápido e consome menos recursos instantâneos
+                            '-crf', '23' // Qualidade HD equilibrada
                         ])
                         .on('end', resolve)
                         .on('error', reject)
@@ -979,7 +998,10 @@ class MediaProcessor {
                 });
 
                 const videoBuffer = fs.readFileSync(optimizedPath);
-                const titleResult = await this._getYouTubeTitle(url, ytdlpTool);
+
+                // Metadados
+                const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
 
                 await Promise.all([
                     this.cleanupFile(actualPath),
@@ -989,21 +1011,26 @@ class MediaProcessor {
                 return {
                     sucesso: true,
                     buffer: videoBuffer,
-                    titulo: titleResult.titulo || 'Vídeo do YouTube',
+                    titulo: metadata.titulo,
                     size: videoBuffer.length,
-                    mimetype: 'video/mp4'
+                    mimetype: 'video/mp4',
+                    ...metadata
                 };
             } catch (optError) {
                 this.logger?.error('⚠️ Erro na otimização mobile, enviando original:', optError.message);
                 const videoBuffer = fs.readFileSync(actualPath);
-                const titleResult = await this._getYouTubeTitle(url, ytdlpTool);
+
+                const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
+
                 await this.cleanupFile(actualPath);
                 return {
                     sucesso: true,
                     buffer: videoBuffer,
-                    titulo: titleResult.titulo || 'Vídeo do YouTube',
+                    titulo: metadata.titulo,
                     size: videoBuffer.length,
-                    mimetype: 'video/mp4'
+                    mimetype: 'video/mp4',
+                    ...metadata
                 };
             }
 
@@ -1013,19 +1040,44 @@ class MediaProcessor {
         }
     }
 
-    /**
-    * Obtém título do vídeo usando yt-dlp
-    */
-    async _getYouTubeTitle(url, tool) {
+    async getYouTubeMetadata(url, tool = null) {
         try {
+            const ytdlp = tool || this.findYtDlp();
+            if (!ytdlp) return { sucesso: false, error: 'yt-dlp não encontrado' };
+
+            // Extrair ID para thumbnail
+            const videoId = this.extractYouTubeVideoId(url);
+            const thumbnailUrl = videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : null;
+
             const command = process.platform === 'win32'
-                ? `"${tool.cmd}" --get-title --no-playlist "${url}"`
-                : `${tool.cmd} --get-title --no-playlist "${url}"`;
+                ? `"${ytdlp.cmd}" --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`
+                : `${ytdlp.cmd} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;
 
-            const title = execSync(command, { encoding: 'utf8', timeout: 30000 }).trim();
+            const output = execSync(command, { encoding: 'utf8', timeout: 30000, stdio: 'pipe' }).trim();
+            const [title, author, duration, views, likes, date] = output.split('|');
 
-            return { sucesso: true, titulo: title || 'Música do YouTube' };
+            // Formata views para algo legível (ex: 1.5M)
+            const formatCount = (count) => {
+                const n = parseInt(count);
+                if (isNaN(n)) return '0';
+                if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+                if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+                return n.toString();
+            };
+
+            return {
+                sucesso: true,
+                titulo: title || 'Música do YouTube',
+                autor: author || 'Desconhecido',
+                duracao: parseInt(duration) || 0,
+                views: formatCount(views),
+                likes: formatCount(likes),
+                data: date || '',
+                thumbnail: thumbnailUrl,
+                videoId
+            };
         } catch (e) {
+            this.logger?.debug('Erro ao obter metadados:', e.message);
             return { sucesso: false, error: e.message };
         }
     }
