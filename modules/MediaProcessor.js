@@ -954,7 +954,7 @@ class MediaProcessor {
 
             this.logger?.info(`🚀 Executando download: ${command}`);
 
-            await new Promise((resolve, reject) => {
+            return await new Promise((resolve, reject) => {
                 exec(command, { timeout: 180000, maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
                     if (error) {
                         this.logger?.error(`❌ Erro no yt-dlp: ${error.message}`);
