@@ -34,24 +34,21 @@ class PresenceSimulator {
      * Envia atualização de presença de forma segura, verificando se o socket está ativo
      */
     async safeSendPresenceUpdate(type, jid) {
-        try {
-            // Tenta aguardar conexão ficar estável
-            if (!this.sock || !this.sock.ws || this.sock.ws.readyState !== 1) {
-                const connected = await this.waitForConnection();
-                if (!connected) {
-                    // Silencia erro se for apenas "instável", mas não bloqueia fluxo crítico
-                    // this.logger.warn(`⚠️ [SOCKET] Presença (${type}) ignorada: conexão instável.`);
-                    return false;
-                }
-            }
+        const maxRetries = 3;
 
-            await this.sock.sendPresenceUpdate(type, jid);
-            return true;
-        } catch (error) {
-            // Ignorar erros de envio de presença para não poluir log
-            // this.logger.error(`❌ Erro ao enviar presença (${type}):`, error.message);
-            return false;
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                if (this.sock) {
+                    await this.sock.sendPresenceUpdate(type, jid);
+                    return true;
+                }
+            } catch (error) {
+                // Se falhar, espera um pouco e tenta de novo (pode ser reconexão rápida)
+                if (i < maxRetries - 1) await new Promise(r => setTimeout(r, 1000));
+            }
         }
+        // Falha silenciosa para não quebrar o fluxo chamador
+        return false;
     }
 
     /**
@@ -265,14 +262,8 @@ class PresenceSimulator {
             // Atualizar socket se fornecido novo
             if (sock) this.sock = sock;
 
-            // Verificação de socket com espera inteligente
-            if (!this.sock || !this.sock.ws || this.sock.ws.readyState !== 1) {
-                const connected = await this.waitForConnection(5000); // Espera até 5s
-                if (!connected) {
-                    this.logger.warn('⚠️ [SOCKET] Conexão instável após 5s, pulando simulação visual.');
-                    return false;
-                }
-            }
+            // REMOVIDO: Verificação bloqueante e waitForConnection
+            // Agora confiamos no safeSendPresenceUpdate para lidar com erros silenciosamente
 
             const jid = m.key.remoteJid;
             const isGroup = String(jid || '').endsWith('@g.us');
