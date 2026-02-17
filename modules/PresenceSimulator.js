@@ -265,10 +265,13 @@ class PresenceSimulator {
             // Atualizar socket se fornecido novo
             if (sock) this.sock = sock;
 
-            // Verificação de socket
+            // Verificação de socket com espera inteligente
             if (!this.sock || !this.sock.ws || this.sock.ws.readyState !== 1) {
-                this.logger.warn('⚠️ [SOCKET] Conexão fechada, pulando simulação completa.');
-                return false;
+                const connected = await this.waitForConnection(5000); // Espera até 5s
+                if (!connected) {
+                    this.logger.warn('⚠️ [SOCKET] Conexão instável após 5s, pulando simulação visual.');
+                    return false;
+                }
             }
 
             const jid = m.key.remoteJid;
