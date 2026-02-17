@@ -17,18 +17,39 @@ class PresenceSimulator {
     }
 
     /**
+     * Aguarda a conexão ficar estável (OPEN) por um tempo limitado
+     */
+    async waitForConnection(timeoutMs = 2000) {
+        if (this.sock?.ws?.readyState === 1) return true;
+
+        const startTime = Date.now();
+        while (Date.now() - startTime < timeoutMs) {
+            if (this.sock?.ws?.readyState === 1) return true;
+            await new Promise(r => setTimeout(r, 200));
+        }
+        return false;
+    }
+
+    /**
      * Envia atualização de presença de forma segura, verificando se o socket está ativo
      */
     async safeSendPresenceUpdate(type, jid) {
         try {
-            if (!this.sock || !this.sock.ws || this.sock.ws.readyState !== 1) { // 1 = OPEN
-                this.logger.warn(`⚠️ [SOCKET] Tentativa de enviar presença (${type}) com conexão fechada/instável.`);
-                return false;
+            // Tenta aguardar conexão ficar estável
+            if (!this.sock || !this.sock.ws || this.sock.ws.readyState !== 1) {
+                const connected = await this.waitForConnection();
+                if (!connected) {
+                    // Silencia erro se for apenas "instável", mas não bloqueia fluxo crítico
+                    // this.logger.warn(`⚠️ [SOCKET] Presença (${type}) ignorada: conexão instável.`);
+                    return false;
+                }
             }
+
             await this.sock.sendPresenceUpdate(type, jid);
             return true;
         } catch (error) {
-            this.logger.error(`❌ Erro ao enviar presença (${type}):`, error.message);
+            // Ignorar erros de envio de presença para não poluir log
+            // this.logger.error(`❌ Erro ao enviar presença (${type}):`, error.message);
             return false;
         }
     }

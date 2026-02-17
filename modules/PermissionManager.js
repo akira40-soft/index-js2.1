@@ -3,11 +3,22 @@
  * PERMISSION MANAGER - AKIRA BOT V21
  * ═══════════════════════════════════════════════════════════════════════
  * Sistema centralizado de gerenciamento de permissões
+ * NOVO: Integração com RegistrationSystem para controle por registro
  * ═══════════════════════════════════════════════════════════════════════
  */
 
+import RegistrationSystem from './RegistrationSystem.js';
+import fs from 'fs';
+import path from 'path';
+
 class PermissionManager {
     constructor() {
+        // Integração com sistema de registro
+        this.registrationSystem = new RegistrationSystem();
+
+        // Configurações de registro por grupo
+        this.groupRegistrationConfig = this.loadGroupRegistrationConfig();
+
         // Proprietários - acesso total
         this.owners = [
             {
@@ -26,34 +37,49 @@ class PermissionManager {
 
         // Permissões por comando
         this.commandPermissions = {
-            // Comandos públicos
-            'help': { nivel: 'public', rateLimitMultiplier: 0.5 },
-            'menu': { nivel: 'public', rateLimitMultiplier: 0.5 },
-            'ping': { nivel: 'public', rateLimitMultiplier: 0.5 },
-            'info': { nivel: 'public', rateLimitMultiplier: 0.5 },
-            'donate': { nivel: 'public', rateLimitMultiplier: 0.5 },
-            'perfil': { nivel: 'public', rateLimitMultiplier: 1 },
-            'profile': { nivel: 'public', rateLimitMultiplier: 1 },
-            'registrar': { nivel: 'public', rateLimitMultiplier: 1 },
-            'level': { nivel: 'public', rateLimitMultiplier: 1 },
-            'sticker': { nivel: 'public', rateLimitMultiplier: 2 },
-            'gif': { nivel: 'public', rateLimitMultiplier: 2.5 },
-            'toimg': { nivel: 'public', rateLimitMultiplier: 1.5 },
-            'play': { nivel: 'public', rateLimitMultiplier: 2 },
-            'tts': { nivel: 'public', rateLimitMultiplier: 2 },
+            // Comandos SEMPRE LIVRES (não requerem registro)
+            'help': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+            'menu': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+            'ping': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+            'info': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+            'registrar': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
+            'register': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
 
-            // Comandos de dono
-            'add': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'remove': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'kick': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'ban': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'promote': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'demote': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'mute': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'desmute': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'antilink': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'warn': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
-            'clearwarn': { nivel: 'owner', rateLimitMultiplier: 1, grupo: true },
+            // Comandos PÚBLICOS (requerem registro se grupo configurado)
+            'donate': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 0.5 },
+            'perfil': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'profile': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'level': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'rank': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'sticker': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'gif': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2.5 },
+            'toimg': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1.5 },
+            'play': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'tts': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'daily': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'atm': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'transfer': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1.5 },
+
+            // Comandos de GRUPO (SEMPRE requerem registro + dono)
+            'add': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'remove': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'kick': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'ban': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'promote': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'demote': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'mute': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'desmute': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'unmute': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'fechar': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'abrir': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'antilink': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'warn': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'clearwarn': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'requireregister': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+
+            // Comandos CYBERSEGURANÇA (requerem pagamento - já implementado)
+            'vpn': { nivel: 'premium', requiresPayment: true, requiresRegistration: true, rateLimitMultiplier: 3 },
+            'osint': { nivel: 'premium', requiresPayment: true, requiresRegistration: true, rateLimitMultiplier: 3 },
         };
 
         // Tipos de ações e seus limites
@@ -257,6 +283,143 @@ class PermissionManager {
             isValid: errors.length === 0,
             errors
         };
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // SISTEMA DE PERMISSÕES POR REGISTRO
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Carrega configurações de registro por grupo
+     */
+    loadGroupRegistrationConfig() {
+        try {
+            const configPath = '/tmp/akira_data/group_registration_config.json';
+            if (fs.existsSync(configPath)) {
+                const data = fs.readFileSync(configPath, 'utf8');
+                return JSON.parse(data || '{}');
+            }
+        } catch (e) {
+            console.warn('⚠️ Erro ao carregar config de registro:', e.message);
+        }
+        return {};
+    }
+
+    /**
+     * Salva configurações de registro por grupo
+     */
+    saveGroupRegistrationConfig() {
+        try {
+            const configPath = '/tmp/akira_data/group_registration_config.json';
+            const dir = path.dirname(configPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(configPath, JSON.stringify(this.groupRegistrationConfig, null, 2));
+        } catch (e) {
+            console.error('❌ Erro ao salvar config de registro:', e.message);
+        }
+    }
+
+    /**
+     * Verifica se grupo exige registro para comandos comuns
+     */
+    groupRequiresRegistration(groupJid) {
+        // Padrão: grupos NÃO exigem registro (para não quebrar comportamento atual)
+        return this.groupRegistrationConfig[groupJid]?.requireRegistration === true;
+    }
+
+    /**
+     * Define se grupo exige registro
+     */
+    setGroupRequireRegistration(groupJid, require) {
+        if (!this.groupRegistrationConfig[groupJid]) {
+            this.groupRegistrationConfig[groupJid] = {};
+        }
+        this.groupRegistrationConfig[groupJid].requireRegistration = require;
+        this.saveGroupRegistrationConfig();
+    }
+
+    /**
+     * Verifica se usuário pode executar comando (NOVO SISTEMA)
+     * @param {string} comando - Nome do comando
+     * @param {string} userId - ID do usuário (número@s.whatsapp.net)
+     * @param {string} userName - Nome do usuário
+     * @param {boolean} isGroup - Se está em grupo
+     * @param {string} groupJid - JID do grupo (se aplicável)
+     * @returns {Object} { allowed: boolean, reason: string }
+     */
+    canExecuteCommand(comando, userId, userName, isGroup = false, groupJid = null) {
+        const permConfig = this.commandPermissions[comando];
+
+        if (!permConfig) {
+            return { allowed: false, reason: 'Comando não encontrado.' };
+        }
+
+        // REGRA 1: Dono SEMPRE pode tudo
+        const userNumber = userId.split('@')[0];
+        if (this.isOwner(userNumber, userName)) {
+            return { allowed: true, reason: 'Owner access' };
+        }
+
+        // REGRA 2: Verificar se requer pagamento (cybersegurança)
+        if (permConfig.requiresPayment) {
+            return {
+                allowed: false,
+                reason: '⚠️ Este comando requer assinatura premium.\n\nUse #subscribe para conhecer os planos.'
+            };
+        }
+
+        // REGRA 3: Comandos de grupo só funcionam em grupos
+        if (permConfig.grupo && !isGroup) {
+            return {
+                allowed: false,
+                reason: '📵 Este comando só funciona em grupos.'
+            };
+        }
+
+        // REGRA 4: Comandos de dono (owner level)
+        if (permConfig.nivel === 'owner') {
+            return {
+                allowed: false,
+                reason: '🔒 Este comando é restrito ao proprietário do bot.'
+            };
+        }
+
+        // REGRA 5: Verificar registro (se comando requer E grupo exige)
+        if (permConfig.requiresRegistration) {
+            // Se não está em grupo, sempre requer registro
+            // Se está em grupo, verifica se grupo exige
+            const mustCheckRegistration = !isGroup || (isGroup && this.groupRequiresRegistration(groupJid));
+
+            if (mustCheckRegistration) {
+                const isRegistered = this.registrationSystem.isRegistered(userId);
+                if (!isRegistered) {
+                    return {
+                        allowed: false,
+                        reason: '📝 **Registro Necessário**\n\n' +
+                            'Para usar este comando, você precisa se registrar.\n' +
+                            'Use: `#registrar Nome|Idade`\n' +
+                            'Exemplo: `#registrar João Silva|25`'
+                    };
+                }
+            }
+        }
+
+        // Se passou por todas as verificações
+        return { allowed: true, reason: 'Authorized' };
+    }
+
+    /**
+     * Obtém mensagem de ajuda sobre registro
+     */
+    getRegistrationHelpMessage() {
+        return '📝 **Como se Registrar**\n\n' +
+            'Use o comando: `#registrar Nome|Idade`\n\n' +
+            '**Exemplos:**\n' +
+            '• `#registrar João Silva|25`\n' +
+            '• `#registrar Maria Santos|30`\n\n' +
+            '✅ Após o registro, você terá acesso a todos os comandos comuns do bot!';
     }
 }
 

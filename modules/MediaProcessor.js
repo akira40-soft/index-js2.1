@@ -102,6 +102,34 @@ class MediaProcessor {
                 return null;
             }
 
+            // Extrair o objeto de mídia correto (imageMessage, videoMessage, etc.)
+            let mediaContent = message;
+
+            // Se for um objeto WAMessage completo, tentar extrair o conteúdo
+            if (message.message) {
+                mediaContent = message.message?.imageMessage ||
+                    message.message?.videoMessage ||
+                    message.message?.audioMessage ||
+                    message.message?.stickerMessage ||
+                    message.message?.documentMessage ||
+                    message.message?.viewOnceMessageV2?.message?.imageMessage ||
+                    message.message?.viewOnceMessageV2?.message?.videoMessage ||
+                    message.message;
+            } else if (message.imageMessage || message.videoMessage) {
+                // Já é o objeto message
+                mediaContent = message.imageMessage || message.videoMessage || message.audioMessage || message.stickerMessage;
+            }
+
+            // Se ainda não tiver mediaKey, pode ser que o usuário passou o objeto errado
+            if (!mediaContent.mediaKey && !mediaContent.url && !mediaContent.directPath) {
+                // Tentar usar o objeto original como fallback no downloadContentFromMessage
+                // Mas logar aviso
+                this.logger?.warn('⚠️ Objeto de mídia pode estar incompleto (sem mediaKey). Tentando extração manual...');
+            } else {
+                // Atualizar a referência para usar no download
+                message = mediaContent;
+            }
+
             this.logger?.debug(`⬇️ Baixando mídia (mime: ${mimeType})...`);
             this.logger?.debug(`📋 Tipo de mensagem: ${typeof message}`);
 
@@ -1179,14 +1207,140 @@ class MediaProcessor {
             this.logger?.error('❌ Erro na busca:', error.message);
             return {
                 sucesso: false,
+            };
+        }
+    }
+
+
+    // ═════════════════════════════════════════════════════════════════
+    // DOWNLOADS DE MÍDIA SOCIAL (Pinterest & Facebook)
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Download de vídeo do Pinterest (Scraping HTML)
+     */
+    async downloadPinterestVideo(url) {
+        try {
+            this.logger?.info(`📌 Baixando vídeo do Pinterest: ${url}`);
+
+            // Fazer fetch da página
+            const response = await axios.get(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+
+            const html = response.data;
+
+            // Procurar pelo JSON embutido com dados do vídeo
+            const videoDataMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>(\{[^<]+)<\/script>/);
+
+            let videoUrl = null;
+
+            if (videoDataMatch) {
+                try {
+                    const jsonData = JSON.parse(videoDataMatch[1]);
+                    videoUrl = jsonData.contentUrl || jsonData.video?.contentUrl;
+                } catch (e) {
+                    this.logger?.warn('Erro ao parsear JSON do Pinterest:', e.message);
+                }
+            }
+
+            // Fallback: procurar por URLs de vídeo diretamente no HTML
+            if (!videoUrl) {
+                const urlMatches = html.match(/https:\/\/v\.pinimg\.com\/videos\/[^"]+\.mp4/);
+                if (urlMatches && urlMatches.length > 0) {
+                    videoUrl = urlMatches[0];
+                }
+            }
+
+            if (!videoUrl) {
+                return {
+                    sucesso: false,
+                    error: 'Não foi possível encontrar o vídeo no Pinterest'
+                };
+            }
+
+            // Download do arquivo de vídeo
+            const videoResponse = await axios.get(videoUrl, {
+                responseType: 'arraybuffer',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+
+            const buffer = Buffer.from(videoResponse.data);
+
+            return {
+                sucesso: true,
+                buffer: buffer,
+                ext: 'mp4',
+                mime: 'video/mp4'
+            };
+
+        } catch (error) {
+            this.logger?.error(`❌ Erro no download Pinterest: ${error.message}`);
+            return {
+                sucesso: false,
                 error: error.message
             };
         }
     }
 
     /**
-    * Limpa cache
-    */
+     * Download de vídeo do Facebook (usando yt-dlp)
+     */
+    async downloadFacebookVideo(url) {
+        try {
+            this.logger?.info(`📘 Baixando vídeo do Facebook: ${url}`);
+
+            // Buscar binário yt-dlp
+            const projectRoot = path.resolve(__dirname, '..');
+            const ytdlpPath = path.join(projectRoot, 'node_modules', '@types', 'yt-dlp', 'yt-dlp.exe');
+
+            // Fallback: tentar PATH global
+            const ytdlpCommand = fs.existsSync(ytdlpPath) ? ytdlpPath : 'yt-dlp';
+
+            const outputPath = this.generateRandomFilename('mp4');
+
+            const execPromise = util.promisify(exec);
+
+            // Chamar yt-dlp com opções para Facebook
+            const command = `"${ytdlpCommand}" -f best -o "${outputPath}" "${url}"`;
+
+            await execPromise(command, {
+                maxBuffer: 50 * 1024 * 1024, // 50MB buffer
+                timeout: 120000 // 2 minutos timeout
+            });
+
+            if (!fs.existsSync(outputPath)) {
+                return {
+                    sucesso: false,
+                    error: 'Arquivo não foi criado pelo yt-dlp'
+                };
+            }
+
+            const buffer = fs.readFileSync(outputPath);
+
+            // Limpar arquivo temporário
+            await this.cleanupFile(outputPath);
+
+            return {
+                sucesso: true,
+                buffer: buffer,
+                ext: 'mp4',
+                mime: 'video/mp4'
+            };
+
+        } catch (error) {
+            this.logger?.error(`❌ Erro no download Facebook: ${error.message}`);
+            return {
+                sucesso: false,
+                error: error.message
+            };
+        }
+    }
+
     clearCache() {
         this.downloadCache?.clear();
         this.logger?.info('💾 Cache de mídia limpo');
@@ -1204,6 +1358,149 @@ class MediaProcessor {
             stickerSize: this.config?.STICKER_SIZE,
             stickerAnimatedMax: `${this.config?.STICKER_MAX_ANIMATED_SECONDS}s`
         };
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // EFEITOS DE ÁUDIO
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Aplica efeito de áudio usando ffmpeg
+     * @param {Buffer|string} audioInput - Buffer ou path do áudio
+     * @param {string} effect - Efeito: nightcore, slow, bass, deep, robot, reverse, squirrel, echo, 8d
+     * @returns {Promise<Buffer>} Buffer do áudio processado
+     */
+    async applyAudioEffect(audioInput, effect) {
+        return new Promise((resolve, reject) => {
+            const inputPath = typeof audioInput === 'string'
+                ? audioInput
+                : path.join(this.tempFolder, `audio_input_${Date.now()}.mp3`);
+
+            const outputPath = path.join(this.tempFolder, `audio_effect_${Date.now()}.mp3`);
+
+            try {
+                // Se for buffer, salvar temporariamente
+                if (Buffer.isBuffer(audioInput)) {
+                    fs.writeFileSync(inputPath, audioInput);
+                }
+
+                const command = ffmpeg(inputPath);
+
+                // Configurar efeito
+                switch (effect.toLowerCase()) {
+                    case 'nightcore':
+                        // Aumenta velocidade e pitch
+                        command.audioFilters('atempo=1.25,asetrate=44100*1.25,aresample=44100');
+                        break;
+
+                    case 'slow':
+                    case 'slowed':
+                    case 'slower':
+                        // Slowed + Reverb (Estilo Lo-fi/Aesthetic)
+                        // atempo=0.85 (85% velocidade), aecho (reverb espacial), lowpass (som abafado lo-fi)
+                        command.audioFilters([
+                            'atempo=0.85',
+                            'aecho=0.8:0.9:1000:0.3',
+                            'lowpass=f=3000',
+                            'volume=1.2'
+                        ]);
+                        break;
+
+                    case 'bass':
+                    case 'bassboost':
+                        // Bass Boost Premium (Parametric EQ)
+                        // Foca nos sub-graves (60Hz) sem distorcer os médios + Limiter para evitar clipping
+                        command.audioFilters([
+                            'equalizer=f=60:width_type=h:width=50:g=15',
+                            'equalizer=f=120:width_type=h:width=100:g=5',
+                            'limiter=threshold=-1dB'
+                        ]);
+                        break;
+
+                    case 'deep':
+                    case 'deepvoice':
+                        // Voz profunda (pitch baixo) sem perder qualidade
+                        command.audioFilters([
+                            'asetrate=44100*0.75',
+                            'aresample=44100',
+                            'atempo=1.25'
+                        ]);
+                        break;
+
+                    case 'robot':
+                    case 'robotic':
+                        // Efeito robótico
+                        command.audioFilters('chorus=0.5:0.9:50|60|40:0.4|0.32|0.3:0.25|0.4|0.3:2|2.3|1.3');
+                        break;
+
+                    case 'reverse':
+                    case 'reverso':
+                        // Áudio reverso
+                        command.audioFilters('areverse');
+                        break;
+
+                    case 'squirrel':
+                    case 'chipmunk':
+                        // Voz de esquilo (pitch alto)
+                        command.audioFilters('asetrate=44100*1.5,aresample=44100');
+                        break;
+
+                    case 'echo':
+                        // Eco
+                        command.audioFilters('aecho=0.8:0.9:1000:0.3');
+                        break;
+
+                    case '8d':
+                    case '8daudio':
+                        // Áudio 8D (pan esquerda-direita)
+                        command.audioFilters('apulsator=hz=0.125');
+                        break;
+
+                    default:
+                        throw new Error(`Efeito desconhecido: ${effect}`);
+                }
+
+                command
+                    .audioCodec('libmp3lame')
+                    .audioBitrate('128k')
+                    .format('mp3')
+                    .on('end', () => {
+                        try {
+                            const buffer = fs.readFileSync(outputPath);
+
+                            // Limpar arquivos temporários
+                            if (Buffer.isBuffer(audioInput)) {
+                                fs.unlinkSync(inputPath);
+                            }
+                            fs.unlinkSync(outputPath);
+
+                            resolve(buffer);
+                        } catch (e) {
+                            reject(e);
+                        }
+                    })
+                    .on('error', (err) => {
+                        this.logger.error('Erro ao aplicar efeito de áudio:', err);
+
+                        // Limpar em caso de erro
+                        try {
+                            if (Buffer.isBuffer(audioInput) && fs.existsSync(inputPath)) {
+                                fs.unlinkSync(inputPath);
+                            }
+                            if (fs.existsSync(outputPath)) {
+                                fs.unlinkSync(outputPath);
+                            }
+                        } catch (e) { }
+
+                        reject(err);
+                    })
+                    .save(outputPath);
+
+            } catch (error) {
+                this.logger.error('Erro ao configurar efeito:', error);
+                reject(error);
+            }
+        });
     }
 }
 

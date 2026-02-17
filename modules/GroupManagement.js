@@ -46,10 +46,33 @@ class GroupManagement {
         switch (command) {
             case 'antilink':
                 return await this.toggleSetting(m, 'antilink', args[0]);
+            // COMANDOS DE USUÁRIO (Mute/Unmute)
             case 'mute':
-                return await this.toggleGroup(m, 'close');
+                return await this.muteUser(m, args);
             case 'desmute':
-                return await this.toggleGroup(m, 'open');
+            case 'unmute':
+                return await this.unmuteUser(m, args);
+            // COMANDOS DE GRUPO (Fechar/Abrir)
+            case 'fechar':
+            case 'close':
+                return await this.closeGroupCommand(m);
+            case 'abrir':
+            case 'open':
+                return await this.openGroupCommand(m);
+            // COMANDOS DE AUTONOMIA
+            case 'fixar':
+            case 'pin':
+                return await this.pinMessage(m, args);
+            case 'desafixar':
+            case 'unpin':
+                return await this.unpinMessage(m);
+            case 'lido':
+            case 'read':
+                return await this.markAsRead(m);
+            case 'reagir':
+            case 'react':
+                return await this.reactToMessage(m, args);
+            // COMANDOS DE GERENCIAMENTO
             case 'kick':
                 return await this.kickUser(m, args);
             case 'add':
@@ -62,11 +85,13 @@ class GroupManagement {
                 return await this.getGroupLink(m);
             case 'totag':
                 return await this.tagAll(m, args);
-            // welcome e antifake podem ser settings
+            // CONFIGURAÇÕES
             case 'welcome':
                 return await this.toggleSetting(m, 'welcome', args[0]);
             case 'antifake':
                 return await this.toggleSetting(m, 'antifake', args[0]);
+            case 'requireregister':
+                return await this.toggleRequireRegister(m, args[0]);
             default:
                 return false;
         }
@@ -84,19 +109,253 @@ class GroupManagement {
         return true;
     }
 
-    async toggleGroup(m, action) {
-        // action: 'open' | 'close' -> 'not_announcement' | 'announcement'
-        const setting = action === 'close' ? 'announcement' : 'not_announcement';
-        if (this.sock) {
-            try {
-                await this.sock.groupSettingUpdate(m.key.remoteJid, setting);
-                await this.sock.sendMessage(m.key.remoteJid, { text: `✅ Grupo ${action === 'close' ? 'fechado' : 'aberto'}.` }, { quoted: m });
-            } catch (e) {
-                console.error('Erro no toggleGroup:', e);
-                const msg = e.toString().includes('forbidden') ? '❌ Eu preciso ser admin do grupo para fazer isso.' : `❌ Erro: ${e.message}`;
-                await this.sock.sendMessage(m.key.remoteJid, { text: msg }, { quoted: m });
+    // ═════════════════════════════════════════════════════════════════
+    // COMANDOS DE GRUPO: FECHAR/ABRIR
+    // ═════════════════════════════════════════════════════════════════
+
+    async closeGroupCommand(m) {
+        const result = await this.closeGroup(m.key.remoteJid);
+        if (result.success) {
+            await this.sock.sendMessage(m.key.remoteJid, { text: result.message }, { quoted: m });
+        } else {
+            await this.sock.sendMessage(m.key.remoteJid, { text: `❌ Erro: ${result.error}` }, { quoted: m });
+        }
+        return true;
+    }
+
+    async openGroupCommand(m) {
+        const result = await this.openGroup(m.key.remoteJid);
+        if (result.success) {
+            await this.sock.sendMessage(m.key.remoteJid, { text: result.message }, { quoted: m });
+        } else {
+            await this.sock.sendMessage(m.key.remoteJid, { text: `❌ Erro: ${result.error}` }, { quoted: m });
+        }
+        return true;
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // COMANDOS DE USUÁRIO: MUTE/UNMUTE
+    // ═════════════════════════════════════════════════════════════════
+
+    async muteUser(m, args) {
+        const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] ||
+            m.message?.extendedTextMessage?.contextInfo?.participant;
+
+        if (!target) {
+            if (this.sock) await this.sock.sendMessage(m.key.remoteJid, {
+                text: '❌ Mencione ou responda a alguém para silenciar.'
+            }, { quoted: m });
+            return true;
+        }
+
+        // Tempo padrão: 5 minutos
+        let duration = 5;
+        if (args.length > 0) {
+            const parsed = parseInt(args[0]);
+            if (!isNaN(parsed) && parsed > 0 && parsed <= 1440) {
+                duration = parsed;
             }
         }
+
+        // Armazenar mute em memória e no banco
+        const groupJid = m.key.remoteJid;
+        if (!this.groupSettings[groupJid]) {
+            this.groupSettings[groupJid] = {};
+        }
+        if (!this.groupSettings[groupJid].mutedUsers) {
+            this.groupSettings[groupJid].mutedUsers = {};
+        }
+
+        const muteUntil = Date.now() + (duration * 60 * 1000);
+        this.groupSettings[groupJid].mutedUsers[target] = muteUntil;
+        this.saveGroupSettings();
+
+        if (this.sock) {
+            const userName = target.split('@')[0];
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: `🔇 Usuário @${userName} silenciado por ${duration} minuto(s).`,
+                mentions: [target]
+            }, { quoted: m });
+        }
+
+        return true;
+    }
+
+    async unmuteUser(m, args) {
+        const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] ||
+            m.message?.extendedTextMessage?.contextInfo?.participant;
+
+        if (!target) {
+            if (this.sock) await this.sock.sendMessage(m.key.remoteJid, {
+                text: '❌ Mencione ou responda a alguém para des-silenciar.'
+            }, { quoted: m });
+            return true;
+        }
+
+        const groupJid = m.key.remoteJid;
+        if (this.groupSettings[groupJid]?.mutedUsers?.[target]) {
+            delete this.groupSettings[groupJid].mutedUsers[target];
+            this.saveGroupSettings();
+
+            if (this.sock) {
+                const userName = target.split('@')[0];
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    text: `🔊 Usuário @${userName} pode falar novamente.`,
+                    mentions: [target]
+                }, { quoted: m });
+            }
+        } else {
+            if (this.sock) {
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    text: '❌ Este usuário não está silenciado.'
+                }, { quoted: m });
+            }
+        }
+
+        return true;
+    }
+
+    // Método auxiliar para verificar se usuário está mutado
+    isUserMuted(groupJid, userJid) {
+        const mutedUsers = this.groupSettings[groupJid]?.mutedUsers || {};
+        const muteUntil = mutedUsers[userJid];
+
+        if (!muteUntil) return false;
+
+        // Se o tempo expirou, remover o mute
+        if (Date.now() > muteUntil) {
+            delete mutedUsers[userJid];
+            this.saveGroupSettings();
+            return false;
+        }
+
+        return true;
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // COMANDOS DE AUTONOMIA WHATSAPP
+    // ═════════════════════════════════════════════════════════════════
+
+    async pinMessage(m, args) {
+        if (!this.sock) return false;
+
+        // Fixar mensagem quotada
+        const quotedMsg = m.message?.extendedTextMessage?.contextInfo;
+        if (!quotedMsg) {
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: '❌ Responda a uma mensagem para fixá-la.'
+            }, { quoted: m });
+            return true;
+        }
+
+        try {
+            // Duração padrão: 24 horas (86400 segundos)
+            let duration = 86400;
+            if (args.length > 0) {
+                const time = args[0].toLowerCase();
+                if (time.endsWith('h')) duration = parseInt(time) * 3600;
+                else if (time.endsWith('d')) duration = parseInt(time) * 86400;
+                else if (time.endsWith('m')) duration = parseInt(time) * 60;
+            }
+
+            await this.sock.sendMessage(m.key.remoteJid, {
+                pin: quotedMsg.stanzaId,
+                type: 1,
+                time: duration
+            });
+
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: `📌 Mensagem fixada por ${duration >= 86400 ? Math.floor(duration / 86400) + 'd' : duration >= 3600 ? Math.floor(duration / 3600) + 'h' : Math.floor(duration / 60) + 'm'}`
+            }, { quoted: m });
+        } catch (e) {
+            this.logger?.error('Erro ao fixar mensagem:', e);
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: `❌ Erro ao fixar: ${e.message}`
+            }, { quoted: m });
+        }
+
+        return true;
+    }
+
+    async unpinMessage(m) {
+        if (!this.sock) return false;
+
+        const quotedMsg = m.message?.extendedTextMessage?.contextInfo;
+        if (!quotedMsg) {
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: '❌ Responda a uma mensagem fixada para desafixá-la.'
+            }, { quoted: m });
+            return true;
+        }
+
+        try {
+            await this.sock.sendMessage(m.key.remoteJid, {
+                pin: quotedMsg.stanzaId,
+                type: 0
+            });
+
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: '📌🚫 Mensagem desafixada.'
+            }, { quoted: m });
+        } catch (e) {
+            this.logger?.error('Erro ao desafixar mensagem:', e);
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: `❌ Erro ao desafixar: ${e.message}`
+            }, { quoted: m });
+        }
+
+        return true;
+    }
+
+    async markAsRead(m) {
+        if (!this.sock) return false;
+
+        try {
+            // Marca a mensagem e todas anteriores como lidas
+            await this.sock.readMessages([m.key]);
+
+            // Confirmar silenciosamente (evitar spam)
+            this.logger?.info('✅ Mensagens marcadas como lidas');
+        } catch (e) {
+            this.logger?.error('Erro ao marcar como lido:', e);
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: `❌ Erro: ${e.message}`
+            }, { quoted: m });
+        }
+
+        return true;
+    }
+
+    async reactToMessage(m, args) {
+        if (!this.sock) return false;
+
+        const quotedMsg = m.message?.extendedTextMessage?.contextInfo;
+        if (!quotedMsg) {
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: '❌ Responda a uma mensagem para reagir. Uso: #reagir 👍'
+            }, { quoted: m });
+            return true;
+        }
+
+        const emoji = args[0] || '👍';
+
+        try {
+            await this.sock.sendMessage(m.key.remoteJid, {
+                react: {
+                    text: emoji,
+                    key: quotedMsg
+                }
+            });
+
+            // Confirmação silenciosa
+            this.logger?.info(`✅ Reagiu com ${emoji}`);
+        } catch (e) {
+            this.logger?.error('Erro ao reagir:', e);
+            await this.sock.sendMessage(m.key.remoteJid, {
+                text: `❌ Erro: ${e.message}`
+            }, { quoted: m });
+        }
+
         return true;
     }
 
@@ -711,6 +970,72 @@ class GroupManagement {
             }
 
         }, 60000); // 1 minuto
+    }
+
+    /**
+     * Ativa/des ativa obrigatoriedade de registro no grupo
+     */
+    async toggleRequireRegister(m, value) {
+        const groupJid = m.key.remoteJid;
+
+        if (!value || (value !== 'on' && value !== 'off')) {
+            if (this.sock) {
+                await this.sock.sendMessage(groupJid, {
+                    text: '❌ Uso correto: `#requireregister on` ou `#requireregister off`'
+                }, { quoted: m });
+            }
+            return true;
+        }
+
+        const require = value === 'on';
+
+        // Aqui precisamos do PermissionManager
+        // Como não temos acesso direto, vamos armazenar nas configurações do grupo
+        if (!this.groupSettings[groupJid]) {
+            this.groupSettings[groupJid] = {};
+        }
+
+        this.groupSettings[groupJid].requireRegistration = require;
+        this.saveGroupSettings();
+
+        // Também salvar no arquivo específico de registro (compatibilidade com PermissionManager)
+        try {
+            const fs = await import('fs');
+            const path = await import('path');
+            const configPath = '/tmp/akira_data/group_registration_config.json';
+
+            let config = {};
+            if (fs.default.existsSync(configPath)) {
+                const data = fs.default.readFileSync(configPath, 'utf8');
+                config = JSON.parse(data || '{}');
+            }
+
+            if (!config[groupJid]) {
+                config[groupJid] = {};
+            }
+            config[groupJid].requireRegistration = require;
+
+            const dir = path.default.dirname(configPath);
+            if (!fs.default.existsSync(dir)) {
+                fs.default.mkdirSync(dir, { recursive: true });
+            }
+            fs.default.writeFileSync(configPath, JSON.stringify(config, null, 2));
+        } catch (e) {
+            this.logger?.error('Erro ao salvar config de registro:', e);
+        }
+
+        if (this.sock) {
+            const messageText = require
+                ? '✅ **Registro Obrigatório Ativado**\n\n' +
+                'A partir de agora, usuários NÃO registrados não poderão usar comandos comuns neste grupo.\n\n' +
+                '📝 Para se registrar: `#registrar Nome|Idade`'
+                : '✅ **Registro Opcional**\n\n' +
+                'Usuários podem usar comandos comuns sem se registrar.';
+
+            await this.sock.sendMessage(groupJid, { text: messageText }, { quoted: m });
+        }
+
+        return true;
     }
 }
 

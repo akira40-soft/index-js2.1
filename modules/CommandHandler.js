@@ -31,6 +31,10 @@ import GroupManagement from './GroupManagement.js';
 import UserProfile from './UserProfile.js';
 import BotProfile from './BotProfile.js';
 import ImageEffects from './ImageEffects.js';
+import PermissionManager from './PermissionManager.js';
+import RegistrationSystem from './RegistrationSystem.js';
+import LevelSystem from './LevelSystem.js';
+import EconomySystem from './EconomySystem.js';
 
 // Sistema de rate limiting para features premium (1x a cada 3 meses para users)
 const premiumFeatureUsage = new Map();
@@ -48,6 +52,13 @@ class CommandHandler {
         // Injeção robusta: tenta usar o passado explicitamente, ou pega do bot, ou tenta instanciar (não recomendado)
         this.messageProcessor = messageProcessor || bot?.messageProcessor;
         console.log(`[DEBUG] CommandHandler init. MP injetado: ${!!messageProcessor}, Bot.MP: ${!!bot?.messageProcessor}, Final: ${!!this.messageProcessor}`);
+
+        // Inicializa sistemas de permissões e registro
+        this.permissionManager = new PermissionManager();
+        this.registrationSystem = new RegistrationSystem();
+        this.levelSystem = new LevelSystem();
+        this.economySystem = new EconomySystem();
+        console.log('✅ Sistemas de permissões, registro, level e economia inicializados');
 
         // Inicializa handlers de mídia
         if (sock) {
@@ -159,6 +170,25 @@ class CommandHandler {
             const isOwner = this.config.isDono(senderId, nome);
 
             // ══════════════════════════════════════════
+            // VERIFICAÇÃO DE PERMISSÕES
+            // ══════════════════════════════════════════
+            const userId = m.key.participant || senderId;
+            const groupJid = ehGrupo ? chatJid : null;
+
+            const permissionCheck = this.permissionManager.canExecuteCommand(
+                command,
+                userId,
+                nome,
+                ehGrupo,
+                groupJid
+            );
+
+            if (!permissionCheck.allowed) {
+                await this.bot.reply(m, permissionCheck.reason);
+                return true;
+            }
+
+            // ══════════════════════════════════════════
             // DESPACHO DE COMANDOS
             // ══════════════════════════════════════════
 
@@ -166,6 +196,34 @@ class CommandHandler {
                 case 'ping':
                     await this.bot.reply(m, `🏓 Pong! Uptime: ${Math.floor(process.uptime())}s`);
                     return true;
+
+                case 'registrar':
+                case 'register':
+                    return await this._handleRegister(m, nome, fullArgs, userId);
+
+                case 'level':
+                case 'lvl':
+                    return await this._handleLevel(m, userId, chatJid, ehGrupo);
+
+                case 'rank':
+                case 'ranking':
+                case 'top':
+                    return await this._handleRank(m, chatJid, ehGrupo);
+
+                case 'daily':
+                case 'diario':
+                    return await this._handleDaily(m, userId);
+
+                case 'atm':
+                case 'banco':
+                case 'saldo':
+                case 'balance':
+                    return await this._handleATM(m, userId);
+
+                case 'transfer':
+                case 'transferir':
+                case 'pagar':
+                    return await this._handleTransfer(m, userId, args, fullArgs);
 
                 case 'menu':
                 case 'help':
@@ -245,6 +303,19 @@ class CommandHandler {
                 case 'play':
                 case 'p':
                     return await this._handlePlay(m, fullArgs);
+
+                // Efeitos de Áudio
+                case 'nightcore':
+                case 'slow':
+                case 'bass':
+                case 'bassboost':
+                case 'deep':
+                case 'robot':
+                case 'reverse':
+                case 'squirrel':
+                case 'echo':
+                case '8d':
+                    return await this._handleAudioEffect(m, command);
 
                 case 'perfil':
                 case 'profile':
@@ -455,53 +526,110 @@ class CommandHandler {
 ║      *Enterprise Edition*            ║
 ╚══════════════════════════════════════╝
 
-📱 *PREFIXO:* *
+📱 *PREFIXO:* #
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👤 *REGISTRO & PERFIL*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #registrar Nome|Idade - Cadastre-se no sistema
+• #perfil - Ver seus dados e XP
+• #level - Ver seu nível e progresso
+• #rank - Top 10 do grupo
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💰 *ECONOMIA*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #daily - Recompensa diária (500 moedas)
+• #atm - Ver seu saldo
+• #transfer @user valor - Transferir moedas
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎨 *MÍDIA & CRIAÇÃO*
-• *sticker | *s - Criar figurinha (preenchimento total)
-• *take - Roubar figurinha com seus metadados
-• *play [nome] - Baixar música (Audio)
-• *video [nome] - Baixar vídeo do YouTube
-• *toimg - Sticker para imagem
-• *tomp3 - Vídeo para áudio
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #sticker | #s - Criar figurinha
+• #take - Roubar figurinha
+• #play [nome] - Baixar música
+• #video [nome] - Baixar vídeo
+• #toimg - Sticker para imagem
+• #tomp3 - Vídeo para áudio
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎵 *EFEITOS DE ÁUDIO*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #nightcore - Rápido + agudo
+• #slow - Lento + grave
+• #bass - Graves intensos
+• #deep - Voz profunda
+• #robot - Efeito robótico
+• #reverse - Áudio reverso
+• #squirrel - Voz de esquilo
+• #echo - Eco
+• #8d - Áudio 8D
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🖼️ *EFEITOS DE IMAGEM*
-• *hd | *upscale - Melhorar qualidade
-• *removebg - Remover fundo
-• *communism - Efeito Comunista
-• *wasted - Efeito GTA
-• *jail | *triggered | *gay - Efeitos visuais
-• *sepia | *grey | *invert - Filtros
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #hd | #upscale - Melhorar qualidade
+• #removebg - Remover fundo
+• #wasted - Efeito GTA
+• #communism - Efeito Comunista
+• #jail | #triggered | #gay - Efeitos
+• #sepia | #grey | #invert - Filtros
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🕹️ *DIVERSÃO & JOGOS*
-• *pinterest [busca] - Buscar imagens
-• *ship @user @user - Compatibilidade
-• *slot - Máquina de cassino
-• *dado | *moeda - Sorteio
-• *chance [pergunta] - Probabilidade
-• *gay - Medidor de gayzice
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #pinterest [busca] - Buscar imagens
+• #ship @user @user - Compatibilidade
+• #slot - Máquina de cassino
+• #dado | #moeda - Sorteio
+• #chance [pergunta] - Probabilidade
+• #gay - Medidor de gayzice
 
-👥 *GESTÃO DE GRUPOS*
-• *tagall | *totag - Mencionar todos
-• *hidetag - Mencionar todos (oculto)
-• *welcome [on/off] - Ativar boas-vindas
-• *antilink [on/off] - Proteção contra links
-• *mute | *desmute - Silenciar chat
-• *kick | *add - Gerenciar membros
-• *promote | *demote - Gerenciar ADMs
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👥 *GRUPOS (ADMIN)*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #mute @user [tempo] - Silenciar usuário
+• #desmute @user - Desilenciar
+• #fechar | #abrir - Fechar/abrir grupo
+• #kick | #add - Gerenciar membros
+• #promote | #demote - Gerenciar ADMs
+• #tagall | #totag - Mencionar todos
+• #antilink [on/off] - Proteção links
+• #welcome [on/off] - Boas-vindas
 
-🛡️ *CYBERSECURITY (ADMIN)*
-• *nmap | *sqlmap | *dns | *whois
-• *geo [ip] | *shodan | *cve
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 *AUTONOMIA WHATSAPP (ADMIN)*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #fixar [tempo] - Fixar mensagem
+• #desafixar - Desafixar mensagem
+• #lido - Marcar como lido
+• #reagir [emoji] - Reagir a mensagem
 
-📊 *UTILITÁRIOS & PERFIL*
-• *perfil - Seus dados e XP
-• *rank - Ranking de usuários
-• *ping - Status do sistema
-• *broadcast [msg] - Transmissão Global
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 *CONFIGURAÇÕES (DONO)*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #requireregister on/off - Exigir registro
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛡️ *CYBERSECURITY (PREMIUM)*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #nmap | #sqlmap | #dns | #whois
+• #geo [ip] | #shodan | #cve
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 *UTILITÁRIOS*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #ping - Status do sistema
+• #broadcast [msg] - Transmissão
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 *DICA:* Use #registrar para desbloquear
+todos os comandos!
 
 *Desenvolvido por Isaac Quarenta*
-*Powered by AKIRA V21 ULTIMATE*`;
+*AKIRA V21 ULTIMATE - Enterprise Edition*`;
 
         await this._reply(m, menuText);
 
@@ -1356,6 +1484,360 @@ class CommandHandler {
             await this._reply(m, '❌ Erro na transmissão.');
         }
         return true;
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // SISTEMA DE REGISTRO
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Processa comando #registrar Nome|Idade
+     */
+    async _handleRegister(m, nome, fullArgs, userId) {
+        try {
+            // Verifica se já está registrado
+            if (this.registrationSystem.isRegistered(userId)) {
+                const profile = this.registrationSystem.getProfile(userId);
+
+                await this.bot.reply(m,
+                    `✅ **Você já está registrado!**\n\n` +
+                    `📝 **Nome:** ${profile.nome}\n` +
+                    `🎂 **Idade:** ${profile.idade} anos\n` +
+                    `🔑 **Serial:** \`${profile.serial}\`\n` +
+                    `🔗 **Link:** ${profile.link}\n` +
+                    `📅 **Registrado em:** ${new Date(profile.registeredAt).toLocaleDateString('pt-BR')}`
+                );
+                return true;
+            }
+
+            // Valida formato
+            if (!fullArgs || !fullArgs.includes('|')) {
+                await this.bot.reply(m,
+                    `❌ **Formato Incorreto**\n\n` +
+                    `Use: \`#registrar Nome|Idade\`\n\n` +
+                    `**Exemplos:**\n` +
+                    `• \`#registrar João Silva|25\`\n` +
+                    `• \`#registrar Maria Santos|30\`\n\n` +
+                    `⚠️ A idade deve estar entre 13 e 99 anos.`
+                );
+                return true;
+            }
+
+            // Extrai nome e idade
+            const parts = fullArgs.split('|');
+            const nomeRegistro = parts[0].trim();
+            const idadeStr = parts[1].trim();
+            const idade = parseInt(idadeStr);
+
+            // Valida nome
+            if (!nomeRegistro || nomeRegistro.length < 3) {
+                await this.bot.reply(m, '❌ O nome deve ter pelo menos 3 caracteres.');
+                return true;
+            }
+
+            if (nomeRegistro.length > 50) {
+                await this.bot.reply(m, '❌ O nome não pode ter mais de 50 caracteres.');
+                return true;
+            }
+
+            // Valida idade
+            if (isNaN(idade) || idade < 13 || idade > 99) {
+                await this.bot.reply(m, '❌ A idade deve ser um número entre 13 e 99.');
+                return true;
+            }
+
+            // Registra usuário
+            const result = this.registrationSystem.register(userId, nomeRegistro, idade);
+
+            if (result.success) {
+                await this.bot.reply(m,
+                    `🎉 **Registro Concluído com Sucesso!**\n\n` +
+                    `📝 **Nome:** ${result.user.nome}\n` +
+                    `🎂 **Idade:** ${result.user.idade} anos\n` +
+                    `🔑 **Serial Único:** \`${result.user.serial}\`\n` +
+                    `🔗 **Seu Link:** ${result.user.link}\n\n` +
+                    `✅ Agora você tem acesso a todos os comandos do bot!\n` +
+                    `Use \`#menu\` para ver os comandos disponíveis.`
+                );
+            } else {
+                await this.bot.reply(m, `❌ Erro ao registrar: ${result.error}`);
+            }
+
+            return true;
+
+        } catch (error) {
+            console.error('Erro no registro:', error);
+            await this.bot.reply(m, `❌ Erro ao processar registro: ${error.message}`);
+            return true;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // SISTEMA DE LEVEL (V21)
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Comando #level - Ver nível do usuário
+     */
+    async _handleLevel(m, userId, chatJid, ehGrupo) {
+        try {
+            const groupId = ehGrupo ? chatJid : 'global';
+            const levelData = this.levelSystem.getLevel(userId, groupId);
+
+            await this.bot.reply(m,
+                `📊 **Seu Nível**\n\n` +
+                `🏆 **Level:** ${levelData.level}\n` +
+                `⭐ **XP:** ${levelData.xp}/${levelData.requiredXP}\n` +
+                `📈 **Progresso:** ${levelData.progress.toFixed(1)}%\n` +
+                `💬 **Mensagens:** ${levelData.messageCount}\n\n` +
+                `🎯 Faltam ${levelData.xpToNextLevel} XP para o próximo nível!`
+            );
+
+            return true;
+        } catch (error) {
+            console.error('Erro no comando level:', error);
+            await this.bot.reply(m, '❌ Erro ao obter informações de level.');
+            return true;
+        }
+    }
+
+    /**
+     * Comando #rank - Top 10 do grupo
+     */
+    async _handleRank(m, chatJid, ehGrupo) {
+        try {
+            if (!ehGrupo) {
+                await this.bot.reply(m, '📵 Este comando só funciona em grupos.');
+                return true;
+            }
+
+            const ranking = this.levelSystem.getRanking(chatJid, 10);
+
+            if (!ranking || ranking.length === 0) {
+                await this.bot.reply(m, '📊 Nenhum usuário com XP registrado ainda.');
+                return true;
+            }
+
+            let texto = '🏆 **TOP 10 - RANKING DE NÍVEIS**\n\n';
+
+            ranking.forEach((user, index) => {
+                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}º`;
+                const numero = user.userId.split('@')[0];
+                texto += `${medal} @${numero}\n`;
+                texto += `   Level ${user.level} • ${user.xp} XP\n\n`;
+            });
+
+            const mentions = ranking.map(u => u.userId);
+            await this.sock.sendMessage(chatJid, { text: texto, mentions });
+
+            return true;
+        } catch (error) {
+            console.error('Erro no comando rank:', error);
+            await this.bot.reply(m, '❌ Erro ao gerar ranking.');
+            return true;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // SISTEMA DE ECONOMIA (V21)
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Comando #daily - Recompensa diária
+     */
+    async _handleDaily(m, userId) {
+        try {
+            const result = this.economySystem.daily(userId);
+
+            if (result.success) {
+                await this.bot.reply(m,
+                    `🎁 **Recompensa Diária Coletada!**\n\n` +
+                    `💰 **Recebido:** ${result.amount} moedas\n` +
+                    `💼 **Saldo Total:** ${result.newBalance} moedas\n\n` +
+                    `⏰ Volte amanhã para coletar novamente!`
+                );
+            } else {
+                const timeLeft = this.economySystem.getDailyTimeLeft(userId);
+                const hours = Math.floor(timeLeft / 3600000);
+                const minutes = Math.floor((timeLeft % 3600000) / 60000);
+
+                await this.bot.reply(m,
+                    `⏰ **Daily Já Coletado**\n\n` +
+                    `Você já coletou sua recompensa diária.\n` +
+                    `Volte em: **${hours}h ${minutes}m**`
+                );
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Erro no comando daily:', error);
+            await this.bot.reply(m, '❌ Erro ao processar daily.');
+            return true;
+        }
+    }
+
+    /**
+     * Comando #atm - Ver saldo
+     */
+    async _handleATM(m, userId) {
+        try {
+            const balance = this.economySystem.getBalance(userId);
+
+            await this.bot.reply(m,
+                `🏦 **Seu Saldo Bancário**\n\n` +
+                `💵 **Carteira:** ${balance.wallet} moedas\n` +
+                `🏛️ **Banco:** ${balance.bank} moedas\n` +
+                `💰 **Total:** ${balance.total} moedas\n\n` +
+                `Use \`#daily\` para ganhar moedas diárias!`
+            );
+
+            return true;
+        } catch (error) {
+            console.error('Erro no comando atm:', error);
+            await this.bot.reply(m, '❌ Erro ao obter saldo.');
+            return true;
+        }
+    }
+
+    /**
+     * Comando #transfer - Transferir dinheiro
+     */
+    async _handleTransfer(m, userId, args, fullArgs) {
+        try {
+            // Valida menção
+            const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+            if (!target) {
+                await this.bot.reply(m,
+                    `❌ **Formato Incorreto**\n\n` +
+                    `Use: \`#transfer @usuario valor\`\n` +
+                    `Exemplo: \`#transfer @amigo 100\``
+                );
+                return true;
+            }
+
+            // Valida valor
+            const amount = parseInt(args[args.length - 1]);
+            if (isNaN(amount) || amount <= 0) {
+                await this.bot.reply(m, '❌ Valor inválido. Use apenas números positivos.');
+                return true;
+            }
+
+            // Não pode transferir para si mesmo
+            if (target === userId) {
+                await this.bot.reply(m, '❌ Você não pode transferir para si mesmo.');
+                return true;
+            }
+
+            // Realiza transferência
+            const result = this.economySystem.transfer(userId, target, amount);
+
+            if (result.success) {
+                const targetNum = target.split('@')[0];
+                await this.bot.reply(m,
+                    `✅ **Transferência Realizada!**\n\n` +
+                    `💸 **Enviado:** ${amount} moedas\n` +
+                    `👤 **Para:** @${targetNum}\n` +
+                    `💰 **Seu Saldo:** ${result.senderBalance} moedas`,
+                    { mentions: [target] }
+                );
+            } else {
+                await this.bot.reply(m, `❌ ${result.error}`);
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Erro no comando transfer:', error);
+            await this.bot.reply(m, '❌ Erro ao transferir.');
+            return true;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // EFEITOS DE ÁUDIO
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Processa comandos de efeitos de áudio
+     */
+    async _handleAudioEffect(m, effect) {
+        try {
+            // Verificar se é uma resposta a um áudio ou vídeo
+            const quotedMsg = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const currentMsg = m.message;
+
+            let audioMsg = null;
+
+            // Prioridade: mensagem citada > mensagem atual
+            if (quotedMsg?.audioMessage) {
+                audioMsg = quotedMsg.audioMessage;
+            } else if (quotedMsg?.videoMessage) {
+                audioMsg = quotedMsg.videoMessage;
+            } else if (currentMsg?.audioMessage) {
+                audioMsg = currentMsg.audioMessage;
+            } else if (currentMsg?.videoMessage) {
+                audioMsg = currentMsg.videoMessage;
+            }
+
+            if (!audioMsg) {
+                await this.bot.reply(m,
+                    `🎵 **Como Usar Efeitos de Áudio**\n\n` +
+                    `1️⃣ Envie um áudio com a legenda \`#${effect}\`\n` +
+                    `2️⃣ Ou responda a um áudio com \`#${effect}\`\n\n` +
+                    `**Efeitos disponíveis:**\n` +
+                    `🎶 #nightcore - Rápido + agudo\n` +
+                    `🐌 #slow - Lento + grave\n` +
+                    `🔊 #bass - Graves intensos\n` +
+                    `🗣️ #deep - Voz profunda\n` +
+                    `🤖 #robot - Efeito robótico\n` +
+                    `⏮️ #reverse - Áudio reverso\n` +
+                    `🐿️ #squirrel - Voz de esquilo\n` +
+                    `📢 #echo - Eco\n` +
+                    `🎧 #8d - Áudio 8D`
+                );
+                return true;
+            }
+
+            // Informar usuário que está processando
+            await this.bot.reply(m, `⏳ Processando efeito **${effect}**...\n\nPor favor, aguarde.`);
+
+            // Baixar áudio
+            const mp = this.messageProcessor || this.bot?.messageProcessor;
+            if (!mp) {
+                await this.bot.reply(m, '❌ Erro: MediaProcessor não disponível.');
+                return true;
+            }
+
+            // Criar mensagem fake para download
+            const fakeMsg = quotedMsg ? { message: quotedMsg } : m;
+            const audioBuffer = await mp.downloadMediaMessage(fakeMsg, 'buffer');
+
+            if (!audioBuffer) {
+                await this.bot.reply(m, '❌ Erro ao baixar o áudio.');
+                return true;
+            }
+
+            // Aplicar efeito
+            const processedAudio = await mp.applyAudioEffect(audioBuffer, effect);
+
+            // Enviar áudio processado
+            await this.sock.sendMessage(m.key.remoteJid, {
+                audio: processedAudio,
+                mimetype: 'audio/mpeg',
+                fileName: `${effect}_${Date.now()}.mp3`,
+                ptt: false // false = áudio normal, true = nota de voz
+            }, { quoted: m });
+
+            return true;
+
+        } catch (error) {
+            console.error(`Erro no efeito ${effect}:`, error);
+            await this.bot.reply(m,
+                `❌ **Erro ao aplicar efeito**\n\n` +
+                `Detalhes: ${error.message}\n\n` +
+                `Verifique se o áudio não está corrompido e tente novamente.`
+            );
+            return true;
+        }
     }
 
     /**

@@ -62,10 +62,10 @@ class ConfigManager {
         this.AUTO_BAN_AFTER_MUTES = parseInt(process.env?.AUTO_BAN_AFTER_MUTES || 3);
 
         // ═══ YOUTUBE DOWNLOAD ═══
-        this.YT_MAX_SIZE_MB = parseInt(process.env?.YT_MAX_SIZE_MB || 25);
+        this.YT_MAX_SIZE_MB = parseInt(process.env?.YT_MAX_SIZE_MB || 500);
         this.YT_TIMEOUT_MS = parseInt(process.env?.YT_TIMEOUT_MS || 60000);
         this.YT_QUALITY = process.env?.YT_QUALITY || 'highestaudio';
-        this.YT_MAX_DURATION_SECONDS = parseInt(process.env?.YT_MAX_DURATION_SECONDS || 3600);
+        this.YT_MAX_DURATION_SECONDS = parseInt(process.env?.YT_MAX_DURATION_SECONDS || 10800);
 
         // ═══ MÍDIA ═══
         this.STICKER_SIZE = parseInt(process.env?.STICKER_SIZE || 512);

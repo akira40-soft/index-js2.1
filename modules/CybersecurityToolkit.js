@@ -47,9 +47,12 @@ class CybersecurityToolkit {
             'whois': this.whois,
             'dns': this.dnsLookup,
             'geo': this.geoIp,
-            'nmap': (t) => this.pt.scanPortas(t),
-            'sqlmap': (t) => this.pt.sqlInjectionTest(t),
-            'hydra': (t) => this.pt.bruteForceTest(t),
+            'nmap': (t) => this.pt.nmapScan(t),
+            'sqlmap': (t) => this.pt.sqlmapTest(t, 'id'),
+            'hydra': (t) => this.pt.hydraBrute(t, 'ssh', 'root'), // Exemplo de uso simplificado
+            'nuclei': (t) => this.pt.nucleiScan(t),
+            'nikto': (t) => this.pt.niktoScan(t),
+            'masscan': (t) => this.pt.masscanScan(t),
             'shodan': this.shodanSearch,
             'cve': this.cveSearch
         };
