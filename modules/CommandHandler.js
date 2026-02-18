@@ -575,10 +575,9 @@ todos os comandos!
     async _handleSticker(m, nome) {
         try {
             const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-            const imageMsg = m.message?.imageMessage || quoted?.imageMessage;
-            const videoMsg = m.message?.videoMessage || quoted?.videoMessage;
+            const targetMessage = quoted || m.message;
 
-            if (!imageMsg && !videoMsg) {
+            if (!targetMessage) {
                 await this._reply(m, '❌ Responda a uma imagem ou vídeo curto para criar o sticker.');
                 return true;
             }
@@ -586,12 +585,32 @@ todos os comandos!
             const packName = 'akira-bot';
             const author = nome || 'Akira-Bot';
 
+            // O downloadMedia agora detecta automaticamente se é imagem ou vídeo internamente
+            // Mas para decidir se chama createStickerFromImage ou createAnimatedStickerFromVideo, 
+            // precisamos checar o tipo.
+            const isVideo = !!(targetMessage.videoMessage || targetMessage.viewOnceMessageV2?.message?.videoMessage);
+            const isImage = !!(targetMessage.imageMessage || targetMessage.viewOnceMessageV2?.message?.imageMessage);
+
+            if (!isImage && !isVideo) {
+                // Fallback para busca recursiva se os caminhos comuns falharem
+                const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'image');
+                if (buf) {
+                    const res = await this.mediaProcessor.createStickerFromImage(buf, { packName, author });
+                    if (res && res.sucesso && res.buffer) {
+                        await this.sock.sendMessage(m.key.remoteJid, { sticker: res.buffer }, { quoted: m });
+                        return true;
+                    }
+                }
+                await this._reply(m, '❌ Conteúdo de mídia não encontrado ou formato não suportado.');
+                return true;
+            }
+
             let res;
-            if (imageMsg) {
-                const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
+            if (isImage) {
+                const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'image');
                 res = await this.mediaProcessor.createStickerFromImage(buf, { packName, author });
-            } else if (videoMsg) {
-                const buf = await this.mediaProcessor.downloadMedia(videoMsg, 'video');
+            } else if (isVideo) {
+                const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'video');
                 res = await this.mediaProcessor.createAnimatedStickerFromVideo(buf, 10, { packName, author });
             }
 
@@ -607,6 +626,73 @@ todos os comandos!
         return true;
     }
 
+    async _handleTakeSticker(m, args, nome) {
+        try {
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const targetMessage = quoted || m.message;
+
+            if (!targetMessage) {
+                await this._reply(m, '❌ Responda a uma figurinha para usar o *take.');
+                return true;
+            }
+
+            // O downloadMedia robusto cuidará de encontrar o stickerMessage (mesmo em ViewOnce)
+            const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'sticker');
+            if (!buf) {
+                await this._reply(m, '❌ Não foi possível baixar a figurinha.');
+                return true;
+            }
+
+            // Converte para imagem
+            const res = await this.mediaProcessor.convertStickerToImage(buf);
+
+            if (res.sucesso && res.buffer) {
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    image: res.buffer,
+                    caption: `✅ Figurinha "roubada" com sucesso por ${nome}!`
+                }, { quoted: m });
+            } else {
+                await this._reply(m, `❌ Erro ao converter figurinha: ${res.error || 'falha interna'}`);
+            }
+        } catch (e) {
+            console.error('Erro em _handleTakeSticker:', e);
+            await this._reply(m, '❌ Erro ao processar o take.');
+        }
+        return true;
+    }
+
+    async _handleStickerToImage(m) {
+        try {
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const targetMessage = quoted || m.message;
+
+            if (!targetMessage) {
+                await this._reply(m, '❌ Responda a uma figurinha para converter em imagem.');
+                return true;
+            }
+
+            const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'sticker');
+            if (!buf) {
+                await this._reply(m, '❌ Não foi possível baixar a figurinha.');
+                return true;
+            }
+
+            const res = await this.mediaProcessor.convertStickerToImage(buf);
+
+            if (res.sucesso && res.buffer) {
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    image: res.buffer,
+                    caption: '✅ Figurinha convertida em imagem!'
+                }, { quoted: m });
+            } else {
+                await this._reply(m, `❌ Erro na conversão: ${res.error || 'falha interna'}`);
+            }
+        } catch (e) {
+            console.error('Erro em _handleStickerToImage:', e);
+            await this._reply(m, '❌ Erro ao converter sticker para imagem.');
+        }
+        return true;
+    }
 
 
     async _handlePlay(m, query) {
@@ -640,11 +726,15 @@ todos os comandos!
                 }
 
                 await this.sock.sendMessage(m.key.remoteJid, {
-                    audio: res.buffer,
+                    audio: res.buffer || { url: res.audioPath },
                     mimetype: 'audio/mpeg',
                     ptt: false,
                     fileName: `${res.titulo || 'audio'}.mp3`
                 }, { quoted: m });
+
+                if (res.audioPath) {
+                    await this.mediaProcessor.cleanupFile(res.audioPath);
+                }
             }
         } catch (e) {
             this.logger?.error('Erro no play:', e);
@@ -860,18 +950,22 @@ todos os comandos!
         await this._reply(m, '🎬 Baixando vídeo...');
         try {
             const res = await this.mediaProcessor.downloadYouTubeVideo(query);
-            if (res.sucesso && res.buffer) {
+            if (res.sucesso && (res.buffer || res.videoPath)) {
                 let thumbBuf = null;
                 if (res.thumbnail) {
                     thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail);
                 }
 
                 await this.sock.sendMessage(m.key.remoteJid, {
-                    video: res.buffer,
+                    video: res.buffer || { url: res.videoPath },
                     caption: `🎬 *${res.titulo}*\n👤 *Canal:* ${res.autor || 'Desconhecido'}`,
                     mimetype: 'video/mp4',
                     jpegThumbnail: thumbBuf || undefined
                 }, { quoted: m });
+
+                if (res.videoPath) {
+                    await this.mediaProcessor.cleanupFile(res.videoPath);
+                }
             } else {
                 await this._reply(m, `❌ Erro: ${res.error}`);
             }
@@ -884,16 +978,17 @@ todos os comandos!
 
     async _handleImageEffect(m, command, args) {
         const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        const imageMsg = m.message?.imageMessage || quoted?.imageMessage;
+        const targetMessage = quoted || m.message;
 
-        if (!imageMsg) {
+        if (!targetMessage) {
             await this._reply(m, '❌ Responda a uma imagem para aplicar o efeito.');
             return true;
         }
 
         await this._reply(m, `🎨 Aplicando efeito *${command}*...`);
         try {
-            const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
+            const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'image');
+            if (!buf) throw new Error('Falha ao baixar imagem.');
 
             // Tratamento de argumentos para addbg/gradient
             let options = {};
@@ -968,16 +1063,18 @@ todos os comandos!
 
     async _handleVideoToAudio(m) {
         const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        const videoMsg = m.message?.videoMessage || quoted?.videoMessage;
+        const targetMessage = quoted || m.message;
 
-        if (!videoMsg) {
+        if (!targetMessage) {
             await this._reply(m, '❌ Responda a um vídeo para converter para MP3.');
             return true;
         }
 
-        await this._reply(m, '🎵 Convertendo vídeo para MP3...');
+        await this._reply(m, '🎵 Convertendo para MP3...');
         try {
-            const buf = await this.mediaProcessor.downloadMedia(videoMsg, 'video');
+            const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'video');
+            if (!buf) throw new Error('Falha ao baixar vídeo.');
+
             const res = await this.mediaProcessor.convertVideoToAudio(buf);
 
             if (res.sucesso && res.buffer) {
@@ -994,16 +1091,18 @@ todos os comandos!
 
     async _handleSetBotPhoto(m) {
         const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        const imageMsg = m.message?.imageMessage || quoted?.imageMessage;
+        const targetMessage = quoted || m.message;
 
-        if (!imageMsg) {
+        if (!targetMessage) {
             await this._reply(m, '❌ Responda a uma imagem para definir como foto do bot.');
             return true;
         }
 
         await this._reply(m, '📸 Atualizando foto do bot...');
         try {
-            const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
+            const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'image');
+            if (!buf) throw new Error('Falha ao baixar imagem.');
+
             const res = await this.botProfile.setBotPhoto(buf);
             if (res.success) {
                 await this._reply(m, '✅ Foto do bot atualizada com sucesso!');
@@ -1516,58 +1615,22 @@ todos os comandos!
      */
     async _handleAudioEffect(m, effect) {
         try {
-            // Verificar se é uma resposta a um áudio ou vídeo
-            const quotedMsg = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-            const currentMsg = m.message;
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const targetMessage = quoted || m.message;
 
-            let audioMsg = null;
-
-            // Prioridade: mensagem citada > mensagem atual
-            if (quotedMsg?.audioMessage) {
-                audioMsg = quotedMsg.audioMessage;
-            } else if (quotedMsg?.videoMessage) {
-                audioMsg = quotedMsg.videoMessage;
-            } else if (currentMsg?.audioMessage) {
-                audioMsg = currentMsg.audioMessage;
-            } else if (currentMsg?.videoMessage) {
-                audioMsg = currentMsg.videoMessage;
-            }
-
-            if (!audioMsg) {
-                await this.bot.reply(m,
-                    `🎵 **Como Usar Efeitos de Áudio**\n\n` +
-                    `1️⃣ Envie um áudio com a legenda \`#${effect}\`\n` +
-                    `2️⃣ Ou responda a um áudio com \`#${effect}\`\n\n` +
-                    `**Efeitos disponíveis:**\n` +
-                    `🎶 #nightcore - Rápido + agudo\n` +
-                    `🐌 #slow - Lento + grave\n` +
-                    `🔊 #bass - Graves intensos\n` +
-                    `🗣️ #deep - Voz profunda\n` +
-                    `🤖 #robot - Efeito robótico\n` +
-                    `⏮️ #reverse - Áudio reverso\n` +
-                    `🐿️ #squirrel - Voz de esquilo\n` +
-                    `📢 #echo - Eco\n` +
-                    `🎧 #8d - Áudio 8D`
-                );
+            if (!targetMessage) {
+                await this._showAudioEffectUsage(m, effect);
                 return true;
             }
 
             // Informar usuário que está processando
             await this.bot.reply(m, `⏳ Processando efeito **${effect}**...\n\nPor favor, aguarde.`);
 
-            // Baixar áudio
-            const mp = this.messageProcessor || this.bot?.messageProcessor;
-            if (!mp) {
-                await this.bot.reply(m, '❌ Erro: MediaProcessor não disponível.');
-                return true;
-            }
-
-            // Criar mensagem fake para download
-            const fakeMsg = quotedMsg ? { message: quotedMsg } : m;
-            const audioBuffer = await mp.downloadMediaMessage(fakeMsg, 'buffer');
+            // Baixar áudio de forma robusta
+            const audioBuffer = await this.mediaProcessor.downloadMedia(targetMessage, 'audio');
 
             if (!audioBuffer) {
-                await this.bot.reply(m, '❌ Erro ao baixar o áudio.');
+                await this.bot.reply(m, '❌ Erro ao baixar o áudio ou vídeo. Certifique-se de que a mensagem contém mídia.');
                 return true;
             }
 
@@ -1593,6 +1656,24 @@ todos os comandos!
             );
             return true;
         }
+    }
+
+    async _showAudioEffectUsage(m, effect) {
+        await this.bot.reply(m,
+            `🎵 **Como Usar Efeitos de Áudio**\n\n` +
+            `1️⃣ Envie um áudio com a legenda \`#${effect}\`\n` +
+            `2️⃣ Ou responda a um áudio com \`#${effect}\`\n\n` +
+            `**Efeitos disponíveis:**\n` +
+            `🎶 #nightcore - Rápido + agudo\n` +
+            `🐌 #slow - Lento + grave\n` +
+            `🔊 #bass - Graves intensos\n` +
+            `🗣️ #deep - Voz profunda\n` +
+            `🤖 #robot - Efeito robótico\n` +
+            `⏮️ #reverse - Áudio reverso\n` +
+            `🐿️ #squirrel - Voz de esquilo\n` +
+            `📢 #echo - Eco\n` +
+            `🎧 #8d - Áudio 8D`
+        );
     }
 
     async _reply(m, text, options = {}) {
