@@ -778,21 +778,35 @@ class BotCore {
 
             let resposta = resultado.resposta || 'Sem resposta';
 
-            // TTS se foi áudio
+            // TTS se foi áudio (ou se quiser forçar áudio para certas respostas)
             if (foiAudio) {
+                // Simula "gravando áudio..." antes de enviar nota de voz
+                if (this.presenceSimulator) {
+                    await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta, true);
+                } else {
+                    // Fallback se simulador não estiver pronto
+                    await this.sock.sendPresenceUpdate('recording', m.key.remoteJid);
+                    await delay(Math.min(resposta.length * 50, 5000));
+                }
+
                 const ttsResult = await this.audioProcessor.textToSpeech(resposta);
                 if (!ttsResult.sucesso) {
                     await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, { quoted: m });
                 } else {
+                    // Envia como NOTA DE VOZ (ptt: true) para parecer áudio gravado na hora
                     await this.sock.sendMessage(m.key.remoteJid, {
                         audio: ttsResult.buffer,
-                        mimetype: 'audio/mp4',
+                        mimetype: ttsResult.mimetype || 'audio/ogg; codecs=opus',
                         ptt: true
                     }, { quoted: m });
                 }
+
+                // Marca como lido final se ter simulador
+                if (this.presenceSimulator) {
+                    await this.presenceSimulator.markAsRead(m);
+                }
             } else {
-                // Simula comportamento completo (digitação + resposta + ticks)
-                // Usa o novo PresenceSimulator
+                // Simula comportamento completo para TEXTO (digitação + resposta + ticks)
                 if (this.presenceSimulator) {
                     await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta, false);
                 } else {
@@ -801,9 +815,6 @@ class BotCore {
                 }
 
                 // Lógica de Reply Otimizada (PV)
-                // Se ehGrupo: SEMPRE reply (padrão)
-                // Se PV: Reply SE E SOMENTE SE usuário mandou reply (independentemente de para quem)
-                // Isso atende ao pedido: "se mandar msg normal ela só manda msg nomla, se reply ela responde em reply"
                 const opcoes = ehGrupo ? { quoted: m } : (replyInfo) ? { quoted: m } : {};
 
                 await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);

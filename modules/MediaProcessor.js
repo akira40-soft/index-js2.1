@@ -751,15 +751,12 @@ class MediaProcessor {
                 return { sucesso: false, error: 'Arquivo vazio' };
             }
 
-            const audioBuffer = fs.readFileSync(actualPath);
-            await this.cleanupFile(actualPath);
-
-            this.logger?.info(`✅ Download yt-dlp completo: ${(stats.size / 1024 / 1024).toFixed(2)}MB`);
+            // Retornamos o caminho para o handler enviar via stream (melhor p/ memória)
             return {
                 sucesso: true,
-                buffer: audioBuffer,
-                titulo: 'Música do YouTube',
-                tamanho: audioBuffer.length,
+                audioPath: actualPath,
+                titulo: 'Áudio do YouTube',
+                tamanho: stats.size,
                 metodo: 'yt-dlp'
             };
         } catch (e) {
@@ -833,15 +830,12 @@ class MediaProcessor {
                 return { sucesso: false, error: `Arquivo muito grande (>${this.config?.YT_MAX_SIZE_MB}MB)` };
             }
 
-            const audioBuffer = fs.readFileSync(outputPath);
-            await this.cleanupFile(outputPath);
-
             this.logger?.info(`✅ Download ytdl-core completo: ${(stats.size / 1024 / 1024).toFixed(2)}MB`);
             return {
                 sucesso: true,
-                buffer: audioBuffer,
+                audioPath: outputPath,
                 titulo: info?.videoDetails?.title || 'Música do YouTube',
-                tamanho: audioBuffer.length,
+                tamanho: stats.size,
                 metodo: 'ytdl-core'
             };
 
@@ -1049,17 +1043,15 @@ class MediaProcessor {
 
                 if (shouldSkipOptimization) {
                     this.logger?.info(`⏩ Ignorando otimização lenta para arquivo grande (${fileSizeMB.toFixed(1)}MB) para evitar timeout.`);
-                    const videoBuffer = fs.readFileSync(actualPath);
                     const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
                     const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
 
-                    await this.cleanupFile(actualPath);
-
+                    // Não limpamos aqui, o CommandHandler deve limpar após enviar
                     return {
                         sucesso: true,
-                        buffer: videoBuffer,
+                        videoPath: actualPath,
                         titulo: metadata.titulo,
-                        size: videoBuffer.length,
+                        size: stats.size,
                         mimetype: 'video/mp4',
                         ...metadata
                     };
@@ -1094,35 +1086,31 @@ class MediaProcessor {
                             .save(optimizedPath);
                     });
 
-                    const videoBuffer = fs.readFileSync(optimizedPath);
                     const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
                     const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
 
-                    await Promise.all([
-                        this.cleanupFile(actualPath),
-                        this.cleanupFile(optimizedPath)
-                    ]);
+                    // Limpa o original, mas mantém o otimizado para o CommandHandler enviar
+                    await this.cleanupFile(actualPath);
 
                     return {
                         sucesso: true,
-                        buffer: videoBuffer,
+                        videoPath: optimizedPath,
                         titulo: metadata.titulo,
-                        size: videoBuffer.length,
+                        size: fs.statSync(optimizedPath).size,
                         mimetype: 'video/mp4',
                         ...metadata
                     };
                 } catch (optError) {
                     this.logger?.warn('⚠️ Otimização falhou, enviando original...');
                     try {
-                        const videoBuffer = fs.readFileSync(actualPath);
                         const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
                         const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
-                        await this.cleanupFile(actualPath);
+                        // Não limpa o original aqui se for enviar ele
                         return {
                             sucesso: true,
-                            buffer: videoBuffer,
+                            videoPath: actualPath,
                             titulo: metadata.titulo,
-                            size: videoBuffer.length,
+                            size: fs.statSync(actualPath).size,
                             mimetype: 'video/mp4',
                             ...metadata
                         };

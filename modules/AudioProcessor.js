@@ -171,7 +171,6 @@ class AudioProcessor {
             };
         }
     }
-
     /**
     * TTS usando Google TTS
     * Converte texto para áudio
@@ -231,8 +230,6 @@ class AudioProcessor {
                 };
             }
 
-            const mp3Buffer = fs.readFileSync(outputPath);
-
             // 🛠️ CONVERSÃO PARA OGG OPUS (VOICE NOTE STYLE)
             this.logger?.info('🛠️ Convertendo TTS para Ogg Opus para compatibilidade mobile...');
             const opusPath = this.generateRandomFilename('opus');
@@ -289,7 +286,11 @@ class AudioProcessor {
             }
 
         } catch (error) {
-            this.logger?.error('❌ Erro TTS:', error.message);
+            this.logger?.error('❌ Erro TTS (Google):', error.message);
+            if (error.response) {
+                this.logger?.error(`Status: ${error.response.status}`);
+                this.logger?.error(`Headers: ${JSON.stringify(error.response.headers)}`);
+            }
 
             return {
                 sucesso: false,
