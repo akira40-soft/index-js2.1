@@ -71,7 +71,7 @@ class ConfigManager {
         this.STICKER_SIZE = parseInt(process.env?.STICKER_SIZE || 512);
         this.STICKER_MAX_ANIMATED_SECONDS = parseInt(process.env?.STICKER_MAX_ANIMATED_SECONDS || 30);
         this.IMAGE_QUALITY = parseInt(process.env?.IMAGE_QUALITY || 85);
-        this.MAX_AUDIO_SIZE_MB = parseInt(process.env?.MAX_AUDIO_SIZE_MB || 100); // Aumentado para 100MB
+        this.MAX_AUDIO_SIZE_MB = parseInt(process.env?.MAX_AUDIO_SIZE_MB || 500); // Aumentado para 100MB
 
         // ═══ CONVERSAÇÃO ═══
         this.MAX_RESPONSE_CHARS = parseInt(process.env?.MAX_RESPONSE_CHARS || 280);

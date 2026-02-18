@@ -724,9 +724,9 @@ class MediaProcessor {
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
 
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
-            // Bypass de Captcha: Usa extractor-args para simular cliente android/ios/tv + po-token via js-runtime node
+            // Bypass de Captcha: Usa extractor-args para simular cliente android/ios + po-token via js-runtimes node
             const nodePath = process.execPath;
-            const bypassArgs = `--extractor-args "youtube:player_client=tv,android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime "${nodePath}"`;
+            const bypassArgs = `--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb,tv" --no-check-certificates --js-runtimes "node:${nodePath}"`;
             const command = process.platform === 'win32'
                 ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`
                 : `${tool.cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
@@ -1004,9 +1004,9 @@ class MediaProcessor {
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 2048;
-            // Bypass de Captcha: Usa extractor-args para simular cliente android/ios/tv + po-token via js-runtime node
+            // Bypass de Captcha: Usa extractor-args para simular cliente android/ios + po-token via js-runtimes node
             const nodePath = process.execPath;
-            const bypassArgs = `--extractor-args "youtube:player_client=tv,android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime "${nodePath}"`;
+            const bypassArgs = `--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb,tv" --no-check-certificates --js-runtimes "node:${nodePath}"`;
             const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
 
             // Força o yt-dlp a ser mais verboso e explícito no output
@@ -1176,7 +1176,7 @@ class MediaProcessor {
             const thumbnailUrl = videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : null;
 
             const nodePath = process.execPath;
-            const bypassArgs = `--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime "${nodePath}"`;
+            const bypassArgs = `--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb,tv" --no-check-certificates --js-runtimes "node:${nodePath}" --no-warnings`;
             const command = process.platform === 'win32'
                 ? `"${ytdlp.cmd}" ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`
                 : `${ytdlp.cmd} ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;

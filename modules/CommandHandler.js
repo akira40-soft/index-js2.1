@@ -712,7 +712,7 @@ todos os comandos!
 
             // Enviar thumbnail e metadados se disponíveis
             if (res.thumbnail) {
-                const thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail);
+                const thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail).catch(() => null);
                 if (thumbBuf) {
                     const duracaoMin = res.duracao ? `${Math.floor(res.duracao / 60)}:${(res.duracao % 60).toString().padStart(2, '0')}` : '??';
                     const caption = `🎵 *${res.titulo || 'Música'}*\n\n` +
@@ -735,18 +735,32 @@ todos os comandos!
                 return true;
             }
 
-            await this.sock.sendMessage(m.key.remoteJid, {
-                audio: { url: res.audioPath },
-                mimetype: 'audio/mpeg',
-                ptt: false,
-                fileName: `${res.titulo || 'audio'}.mp3`
-            }, { quoted: m });
+            const fileSizeMB = res.tamanho ? (res.tamanho / (1024 * 1024)).toFixed(1) : '??';
+            const isLargeFile = res.tamanho > 64 * 1024 * 1024;
+
+            if (isLargeFile) {
+                this.logger?.info(`📄 Áudio grande (${fileSizeMB}MB), enviando como documento para evitar erro de limite.`);
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    document: { url: res.audioPath },
+                    fileName: `${res.titulo || 'audio'}.mp3`,
+                    mimetype: 'audio/mpeg',
+                    caption: `🎵 *${res.titulo}*\n📦 *Tamanho:* ${fileSizeMB}MB\n\n💡 _Enviado como documento devido ao tamanho._`
+                }, { quoted: m });
+            } else {
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    audio: { url: res.audioPath },
+                    mimetype: 'audio/mpeg',
+                    ptt: false,
+                    fileName: `${res.titulo || 'audio'}.mp3`
+                }, { quoted: m });
+            }
 
             if (res.audioPath) {
-                // Pequeno delay para garantir que o envio começou antes de deletar
+                // Delay cleanup para dar tempo do Baileys ler/streamar o arquivo
+                const cleanupDelay = isLargeFile ? 60000 : 20000;
                 setTimeout(() => {
                     this.mediaProcessor.cleanupFile(res.audioPath).catch(console.error);
-                }, 10000);
+                }, cleanupDelay);
             }
 
         } catch (e) {
@@ -960,31 +974,55 @@ todos os comandos!
             await this._reply(m, `❌ Uso: ${this.config.PREFIXO}video <nome ou link>`);
             return true;
         }
-        await this._reply(m, '🎬 Baixando vídeo...');
+        await this._reply(m, '🎬 Baixando vídeo... (Arquivos grandes podem demorar)');
         try {
             const res = await this.mediaProcessor.downloadYouTubeVideo(query);
-            if (res.sucesso && (res.buffer || res.videoPath)) {
-                let thumbBuf = null;
-                if (res.thumbnail) {
-                    thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail);
-                }
 
+            if (!res.sucesso || (!res.buffer && !res.videoPath)) {
+                await this._reply(m, `❌ ${res.error || 'Erro ao baixar vídeo.'}`);
+                return true;
+            }
+
+            let thumbBuf = null;
+            if (res.thumbnail) {
+                thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail).catch(() => null);
+            }
+
+            const fileSizeMB = res.size ? (res.size / (1024 * 1024)).toFixed(1) : '??';
+            const caption = `🎬 *${res.titulo}*\n👤 *Canal:* ${res.autor || 'Desconhecido'}\n📦 *Tamanho:* ${fileSizeMB}MB`;
+
+            // WhatsApp vídeo limit: 64MB or 100MB depending on client. 
+            // Files > 64MB are safer sent as documents to avoid "Media too large" errors.
+            const isLargeFile = res.size > 64 * 1024 * 1024;
+
+            if (isLargeFile) {
+                this.logger?.info(`📄 Arquivo grande (${fileSizeMB}MB), enviando como documento para evitar erro de limite.`);
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    document: { url: res.videoPath },
+                    fileName: `${res.titulo}.mp4`,
+                    mimetype: 'video/mp4',
+                    caption: caption + '\n\n💡 _Enviado como documento para manter a qualidade e evitar limites do WhatsApp._'
+                }, { quoted: m });
+            } else {
                 await this.sock.sendMessage(m.key.remoteJid, {
                     video: res.buffer || { url: res.videoPath },
-                    caption: `🎬 *${res.titulo}*\n👤 *Canal:* ${res.autor || 'Desconhecido'}`,
+                    caption: caption,
                     mimetype: 'video/mp4',
                     jpegThumbnail: thumbBuf || undefined
                 }, { quoted: m });
-
-                if (res.videoPath) {
-                    await this.mediaProcessor.cleanupFile(res.videoPath);
-                }
-            } else {
-                await this._reply(m, `❌ Erro: ${res.error}`);
             }
+
+            if (res.videoPath) {
+                // Delay cleanup para dar tempo do Baileys ler/streamar o arquivo (especialmente p/ arquivos grandes)
+                const cleanupDelay = isLargeFile ? 60000 : 15000; // 60s p/ grandes, 15s p/ normais
+                setTimeout(() => {
+                    this.mediaProcessor.cleanupFile(res.videoPath).catch(e => console.error('Erro no cleanup tardio:', e.message));
+                }, cleanupDelay);
+            }
+
         } catch (e) {
-            this.logger?.error('Erro no video:', e);
-            await this._reply(m, '❌ Erro ao baixar vídeo.');
+            console.error('Erro no video:', e);
+            await this._reply(m, `❌ Erro ao processar vídeo: ${e.message}`);
         }
         return true;
     }
