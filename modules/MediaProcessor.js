@@ -725,7 +725,8 @@ class MediaProcessor {
 
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
             // Bypass de Captcha: Usa extractor-args para simular cliente android/ios/tv + po-token via js-runtime node
-            const bypassArgs = '--extractor-args "youtube:player_client=tv,android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime node';
+            const nodePath = process.execPath;
+            const bypassArgs = `--extractor-args "youtube:player_client=tv,android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime "${nodePath}"`;
             const command = process.platform === 'win32'
                 ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`
                 : `${tool.cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
@@ -866,7 +867,8 @@ class MediaProcessor {
         if (match) return match[1];
 
         // Se a URL já é apenas o ID (11 caracteres)
-        if (url.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(url)) {
+        // Fix: Evita colisão com palavras comuns de 11 letras (ex: "darkacademy") exigindo pelo menos um número ou símbolo
+        if (url.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(url) && /[\d_-]/.test(url)) {
             return url;
         }
 
@@ -983,7 +985,8 @@ class MediaProcessor {
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
             // Bypass de Captcha: Usa extractor-args para simular cliente android/ios/tv + po-token via js-runtime node
-            const bypassArgs = '--extractor-args "youtube:player_client=tv,android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime node';
+            const nodePath = process.execPath;
+            const bypassArgs = `--extractor-args "youtube:player_client=tv,android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime "${nodePath}"`;
             const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
 
             // Força o yt-dlp a ser mais verboso e explícito no output
@@ -994,8 +997,9 @@ class MediaProcessor {
             this.logger?.info(`🚀 Executando download: ${command}`);
 
             return await new Promise((resolve, reject) => {
-                // Timeout de 5 minutos para vídeos grandes
-                exec(command, { timeout: 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
+                // Timeout configurável (padrão 5 minutos)
+                const execTimeout = this.config?.YT_TIMEOUT_MS || 300000;
+                exec(command, { timeout: execTimeout, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
                     if (error) {
                         this.logger?.error(`❌ Erro no yt-dlp: ${error.message}`);
                         // Se for timeout, dar mensagem personalizada
@@ -1135,7 +1139,8 @@ class MediaProcessor {
             const videoId = this.extractYouTubeVideoId(url);
             const thumbnailUrl = videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : null;
 
-            const bypassArgs = '--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates';
+            const nodePath = process.execPath;
+            const bypassArgs = `--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime "${nodePath}"`;
             const command = process.platform === 'win32'
                 ? `"${ytdlp.cmd}" ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`
                 : `${ytdlp.cmd} ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;

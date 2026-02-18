@@ -780,25 +780,41 @@ class BotCore {
 
             // TTS se foi áudio (ou se quiser forçar áudio para certas respostas)
             if (foiAudio) {
-                // Simula "gravando áudio..." antes de enviar nota de voz
+                this.logger.info('🎤 [AUDIO RESPONSE] Iniciando fluxo de resposta por áudio...');
+
+                // 1. Inicia presença "gravando" IMEDIATAMENTE
                 if (this.presenceSimulator) {
-                    await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta, true);
-                } else {
-                    // Fallback se simulador não estiver pronto
-                    await this.sock.sendPresenceUpdate('recording', m.key.remoteJid);
-                    await delay(Math.min(resposta.length * 50, 5000));
+                    await this.presenceSimulator.safeSendPresenceUpdate('recording', m.key.remoteJid);
                 }
 
-                const ttsResult = await this.audioProcessor.textToSpeech(resposta);
-                if (!ttsResult.sucesso) {
+                try {
+                    // 2. Gera o áudio (TTS) ENQUANTO aparece "gravando"
+                    const ttsResult = await this.audioProcessor.textToSpeech(resposta);
+
+                    if (!ttsResult.sucesso) {
+                        this.logger.warn('⚠️ Falha no TTS, enviando texto como fallback');
+                        if (this.presenceSimulator) await this.presenceSimulator.safeSendPresenceUpdate('paused', m.key.remoteJid);
+                        await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, { quoted: m });
+                    } else {
+                        // 3. Envia o áudio como PTT (Voice Note)
+                        this.logger.info('📤 Enviando Voice Note...');
+                        await this.sock.sendMessage(m.key.remoteJid, {
+                            audio: ttsResult.buffer,
+                            mimetype: ttsResult.mimetype || 'audio/ogg; codecs=opus',
+                            ptt: true // Is Voice Note
+                        }, { quoted: m });
+
+                        this.logger.info('✅ Voice Note enviada com sucesso');
+                    }
+                } catch (ttsErr) {
+                    this.logger.error('❌ Erro crítico no fluxo de TTS:', ttsErr);
+                    // Fallback
                     await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, { quoted: m });
-                } else {
-                    // Envia como NOTA DE VOZ (ptt: true) para parecer áudio gravado na hora
-                    await this.sock.sendMessage(m.key.remoteJid, {
-                        audio: ttsResult.buffer,
-                        mimetype: ttsResult.mimetype || 'audio/ogg; codecs=opus',
-                        ptt: true
-                    }, { quoted: m });
+                } finally {
+                    // 4. Garante que para de gravar
+                    if (this.presenceSimulator) {
+                        await this.presenceSimulator.safeSendPresenceUpdate('paused', m.key.remoteJid);
+                    }
                 }
 
                 // Marca como lido final se ter simulador

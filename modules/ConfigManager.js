@@ -62,22 +62,22 @@ class ConfigManager {
         this.AUTO_BAN_AFTER_MUTES = parseInt(process.env?.AUTO_BAN_AFTER_MUTES || 3);
 
         // ═══ YOUTUBE DOWNLOAD ═══
-        this.YT_MAX_SIZE_MB = parseInt(process.env?.YT_MAX_SIZE_MB || 500);
-        this.YT_TIMEOUT_MS = parseInt(process.env?.YT_TIMEOUT_MS || 60000);
+        this.YT_MAX_SIZE_MB = parseInt(process.env?.YT_MAX_SIZE_MB || 2048); // Aumentado para 2GB
+        this.YT_TIMEOUT_MS = parseInt(process.env?.YT_TIMEOUT_MS || 900000); // Aumentado para 15 minutos
         this.YT_QUALITY = process.env?.YT_QUALITY || 'highestaudio';
-        this.YT_MAX_DURATION_SECONDS = parseInt(process.env?.YT_MAX_DURATION_SECONDS || 10800);
+        this.YT_MAX_DURATION_SECONDS = parseInt(process.env?.YT_MAX_DURATION_SECONDS || 21600); // Aumentado para 6 horas
 
         // ═══ MÍDIA ═══
         this.STICKER_SIZE = parseInt(process.env?.STICKER_SIZE || 512);
         this.STICKER_MAX_ANIMATED_SECONDS = parseInt(process.env?.STICKER_MAX_ANIMATED_SECONDS || 30);
         this.IMAGE_QUALITY = parseInt(process.env?.IMAGE_QUALITY || 85);
-        this.MAX_AUDIO_SIZE_MB = parseInt(process.env?.MAX_AUDIO_SIZE_MB || 25);
+        this.MAX_AUDIO_SIZE_MB = parseInt(process.env?.MAX_AUDIO_SIZE_MB || 100); // Aumentado para 100MB
 
         // ═══ CONVERSAÇÃO ═══
         this.MAX_RESPONSE_CHARS = parseInt(process.env?.MAX_RESPONSE_CHARS || 280);
         this.TYPING_SPEED_MS = parseInt(process.env?.TYPING_SPEED_MS || 50);
         this.MIN_TYPING_TIME_MS = parseInt(process.env?.MIN_TYPING_TIME_MS || 1500);
-        this.MAX_TYPING_TIME_MS = parseInt(process.env?.MAX_TYPING_TIME_MS || 10000);
+        this.MAX_TYPING_TIME_MS = parseInt(process.env?.MAX_TYPING_TIME_MS || 30000); // Aumentado para 30s
 
         // ═══ CACHE E PERFORMANCE ═══
         this.CACHE_TTL_SECONDS = parseInt(process.env?.CACHE_TTL_SECONDS || 3600);
