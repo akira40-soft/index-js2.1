@@ -128,8 +128,8 @@ class PresenceSimulator {
      */
     async simulateTicks(m, wasActivated = true, isAudio = false) {
         try {
-            // Verificação de socket
-            if (!this.sock || !this.sock.ws || this.sock.ws.readyState !== 1) return false;
+            // REMOVIDO: Verificação de socket bloqueante
+            if (!this.sock) return false;
 
             const isGroup = String(m.key.remoteJid || '').endsWith('@g.us');
             const jid = m.key.remoteJid;
@@ -142,102 +142,76 @@ class PresenceSimulator {
                     // Não foi ativada: Apenas um tick (entregue)
                     try {
                         await this.sock.sendReadReceipt(jid, participant, [messageId]);
-                        this.logger.log('✓ [ENTREGUE] Grupo - Um tick (mensagem entregue)');
+                        this.logger.log('✓ [ENTREGUE] Grupo');
                         return true;
-                    } catch (err1) {
-                        try {
-                            await this.sock.sendReceipt(jid, participant, [messageId]);
-                            this.logger.log('✓ [ENTREGUE] Grupo - Método alternativo');
-                            return true;
-                        } catch (err2) {
-                            this.logger.warn('⚠️  Não conseguiu enviar tick em grupo');
-                            return false;
-                        }
+                    } catch (err) {
+                        return false;
                     }
                 } else {
                     // Foi ativada: Dois ticks azuis (lido)
                     try {
                         await this.sock.readMessages([m.key]);
-                        this.logger.log('✓✓ [LIDO] Grupo - Dois ticks azuis (mensagem lida)');
+                        this.logger.log('✓✓ [LIDO] Grupo');
                         return true;
                     } catch (err) {
-                        this.logger.warn('⚠️  Não conseguiu marcar como lido em grupo');
                         return false;
                     }
                 }
             } else {
                 // ═══ PV (PRIVADO) ═══
                 if (wasActivated || isAudio) {
-                    // Marcar como lido (dois ticks azuis)
                     try {
                         await this.sock.readMessages([m.key]);
-                        if (isAudio) {
-                            this.logger.log('▶️  [REPRODUZIDO] PV - Áudio marcado como reproduzido (✓✓)');
-                        } else {
-                            this.logger.log('✓✓ [LIDO] PV - Marcado como lido (dois ticks azuis)');
-                        }
+                        this.logger.log(isAudio ? '▶️ [REPRODUZIDO] PV' : '✓✓ [LIDO] PV');
                         return true;
                     } catch (err) {
-                        this.logger.warn('⚠️  Não conseguiu marcar como lido em PV');
                         return false;
                     }
                 } else {
-                    // Não foi ativada: Um tick (entregue)
                     try {
-                        await this.sock.sendReadReceipt(m.key.remoteJid, m.key.participant, [messageId]);
-                        this.logger.log('✓ [ENTREGUE] PV - Um tick (mensagem entregue)');
+                        await this.sock.sendReadReceipt(jid, participant, [messageId]);
+                        this.logger.log('✓ [ENTREGUE] PV');
                         return true;
                     } catch (err) {
-                        this.logger.warn('⚠️  Não conseguiu enviar tick em PV');
                         return false;
                     }
                 }
             }
         } catch (error) {
-            this.logger.error('❌ Erro inesperado ao simular ticks:', error.message);
             return false;
         }
     }
 
     /**
      * Simula leitura de mensagem
-     * Marca mensagem como lida (dois ticks azuis)
      */
     async markAsRead(m) {
         try {
-            if (!this.sock || !this.sock.ws || this.sock.ws.readyState !== 1) return false;
+            if (!this.sock) return false;
             await this.sock.readMessages([m.key]);
-            this.logger.log('✓✓ [LIDO] Mensagem marcada como lida');
+            this.logger.log('✓✓ [LIDO] Mensagem marcada');
             return true;
         } catch (error) {
-            this.logger.warn('⚠️  Não conseguiu marcar como lido:', error.message);
             return false;
         }
     }
 
     /**
      * Simula status completo de mensagem
-     * Combina: Entrega → Leitura com delays realistas
      */
     async simulateMessageStatus(m, wasActivated = true) {
         try {
-            // Verificação de socket
-            if (!this.sock || !this.sock.ws || this.sock.ws.readyState !== 1) return false;
+            if (!this.sock) return false;
 
             const isGroup = String(m.key.remoteJid || '').endsWith('@g.us');
 
-            // Em grupos, sempre enviar entrega primeiro
             if (isGroup) {
                 try {
                     await this.sock.sendReadReceipt(m.key.remoteJid, m.key.participant, [m.key.id]);
-                    this.logger.log('✓ [ENTREGUE] Grupo');
                     await delay(300);
-                } catch (e) {
-                    // Ignorar erro
-                }
+                } catch (e) { }
             }
 
-            // Se foi ativada, marcar como lido
             if (wasActivated) {
                 await delay(500);
                 await this.markAsRead(m);
@@ -245,7 +219,6 @@ class PresenceSimulator {
 
             return true;
         } catch (error) {
-            this.logger.error('❌ Erro inesperado ao simular status completo:', error.message);
             return false;
         }
     }

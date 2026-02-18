@@ -199,10 +199,12 @@ class CommandHandler {
 
                 case 'registrar':
                 case 'register':
-                    return await this._handleRegister(m, nome, fullArgs, userId);
+                case 'reg':
+                    return await this._handleRegister(m, fullArgs, userId);
 
                 case 'level':
                 case 'lvl':
+                case 'nivel':
                     return await this._handleLevel(m, userId, chatJid, ehGrupo);
 
                 case 'rank':
@@ -272,23 +274,27 @@ class CommandHandler {
                     }
                     return await this._handleBroadcast(m, fullArgs);
 
-                // Efeitos de imagem
                 case 'hd':
                 case 'upscale':
                 case 'remini':
+                case 'enhance':
                     return await this._handleImageEffect(m, 'hd', args);
+
                 case 'removebg':
                 case 'bg':
+                case 'rmbg':
                     return await this._handleImageEffect(m, 'removebg', args);
+
                 case 'wasted':
                 case 'jail':
                 case 'triggered':
-                case 'gay':
                 case 'communism':
                 case 'sepia':
                 case 'grey':
                 case 'invert':
                 case 'mission':
+                case 'angola':
+                case 'addbg':
                     return await this._handleImageEffect(m, command, args);
 
                 case 'sticker':
@@ -298,13 +304,24 @@ class CommandHandler {
 
                 case 'take':
                 case 'roubar':
-                    return await this._handleTake(m, nome);
+                    return await this._handleTakeSticker(m, fullArgs, nome);
+
+                case 'toimg':
+                    return await this._handleStickerToImage(m);
 
                 case 'play':
                 case 'p':
                     return await this._handlePlay(m, fullArgs);
 
-                // Efeitos de Áudio
+                case 'video':
+                case 'playvid':
+                case 'ytmp4':
+                    return await this._handleVideo(m, fullArgs);
+
+                case 'tomp3':
+                case 'mp3':
+                    return await this._handleVideoToAudio(m);
+
                 case 'nightcore':
                 case 'slow':
                 case 'bass':
@@ -322,11 +339,6 @@ class CommandHandler {
                 case 'info':
                     return await this._handleProfile(m, meta);
 
-                case 'rank':
-                case 'ranking':
-                case 'top':
-                    return await this._handleRank(m, ehGrupo);
-
                 case 'dono':
                 case 'owner':
                 case 'criador':
@@ -337,10 +349,6 @@ class CommandHandler {
                 case 'bug':
                 case 'reportar':
                     return await this._handleReport(m, fullArgs, nome, senderId, ehGrupo);
-
-                case 'registrar':
-                case 'reg':
-                    return await this._handleRegister(m, fullArgs, senderId);
 
                 case 'premium':
                 case 'vip':
@@ -356,75 +364,12 @@ class CommandHandler {
                     if (!isOwner) return false;
                     return await this._handleDelPremium(m, args);
 
-
-                // Efeitos de Áudio
-                case 'nightcore':
-                case 'bass':
-                case 'esquilo':
-                case 'gemuk':
-                case 'earrape':
-                case 'fast':
-                case 'fat':
-                case 'reverse':
-                case 'robot':
-                case 'slow':
-                case 'smooth':
-                case 'tupai':
-                case 'treble':
-                case 'echo':
-                    return await this._handleAudioEffect(m, command);
-
-                case 'tomp3':
-                case 'mp3':
-                    return await this._handleVideoToAudio(m);
-
-                // Pagamentos
                 case 'donate':
                 case 'doar':
                 case 'buy':
                 case 'comprar':
-                case 'vip':
-                case 'premium':
                     return await this._handlePaymentCommand(m, args);
 
-
-                // Efeitos de Imagem
-                case 'hd':
-                case 'enhance':
-                case 'removebg':
-                case 'rmbg':
-                case 'communism':
-                case 'commie':
-                case 'wasted':
-                case 'jail':
-                case 'triggered':
-                case 'gay':
-                case 'sepia':
-                case 'grey':
-                case 'gray':
-                case 'invert':
-                case 'negativo':
-                case 'angola':
-                case 'addbg':
-                case 'adicionarfundo':
-                    return await this._handleImageEffect(m, command, args);
-
-                // Sticker Utils
-                case 'take':
-                case 'roubar':
-                    return await this._handleTakeSticker(m, fullArgs, nome);
-
-                case 'toimg':
-                case 'img':
-                    return await this._handleStickerToImage(m);
-
-                // Video
-                case 'video':
-                case 'playvid':
-                case 'ytmp4':
-                    return await this._handleVideo(m, fullArgs);
-
-                // Comandos Administrativos (Enterprise / Cybersecurity)
                 case 'nmap':
                 case 'sqlmap':
                 case 'hydra':
@@ -438,7 +383,6 @@ class CommandHandler {
                     }
                     return await this.cybersecurityToolkit.handleCommand(m, command, args);
 
-                // Comandos de Grupo
                 case 'antilink':
                 case 'mute':
                 case 'desmute':
@@ -452,25 +396,6 @@ class CommandHandler {
                     }
                     return await this.groupManagement.handleCommand(m, command, args);
 
-                case 'level':
-                case 'nivel':
-                    return await this._handleLevel(m, args, ehGrupo, senderId, isOwner);
-
-                case 'train':
-                case 'treinar':
-                    if (!isOwner) {
-                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
-                        return true;
-                    }
-                    await this.bot.reply(m, '⏳ Iniciando treinamento/indexação de dados...');
-                    // Aqui você pode disparar um comando via exec ou chamar um endpoint específico
-                    return true;
-
-                    await this.bot.reply(m, '🔄 Reiniciando sistemas Akira...');
-                    process.exit(0); // O PM2 ou Docker vai reiniciar o processo
-                    return true;
-
-                // Comandos de Perfil do Bot (Owner Only)
                 case 'setbotphoto':
                 case 'setbotpic':
                     if (!isOwner) return false;
@@ -486,8 +411,14 @@ class CommandHandler {
                     if (!isOwner) return false;
                     return await this._handleSetBotStatus(m, fullArgs);
 
+                case 'restart':
+                case 'reiniciar':
+                    if (!isOwner) return false;
+                    await this.bot.reply(m, '🔄 Reiniciando sistemas Akira...');
+                    process.exit(0);
+                    return true;
+
                 default:
-                    // Verifica se o comando pertence a algum outro toolkit
                     if (isOwner && await this.osintFramework.handleCommand(m, command, args)) return true;
                     return false;
             }
@@ -652,7 +583,6 @@ todos os comandos!
                 return true;
             }
 
-            // Metadados fixos conforme solicitado: Pack = akira-bot, Author = nome do usuário
             const packName = 'akira-bot';
             const author = nome || 'Akira-Bot';
 
@@ -677,57 +607,7 @@ todos os comandos!
         return true;
     }
 
-    async _handleTake(m, nome) {
-        try {
-            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-            if (!quoted) {
-                await this._reply(m, '❌ Responda a uma figurinha, imagem ou vídeo para usar o *take.');
-                return true;
-            }
 
-            const stickerMsg = quoted.stickerMessage;
-            const imageMsg = quoted.imageMessage;
-            const videoMsg = quoted.videoMessage;
-
-            if (!stickerMsg && !imageMsg && !videoMsg) {
-                await this._reply(m, '❌ A mensagem citada não é uma mídia suportada.');
-                return true;
-            }
-
-            const packName = 'akira-bot';
-            const author = nome || 'Akira-Bot';
-
-            let res;
-            if (stickerMsg) {
-                const buf = await this.mediaProcessor.downloadMedia(stickerMsg, 'sticker');
-                if (stickerMsg.isAnimated) {
-                    // Para animados, tentamos reconstruir ou apenas reaplicar EXIF se possível
-                    // Mas MediaProcessor.addStickerMetadata já faz isso se passar o buffer
-                    const bufferComNovosMetadados = await this.mediaProcessor.addStickerMetadata(buf, packName, author);
-                    res = { sucesso: true, buffer: bufferComNovosMetadados };
-                } else {
-                    const bufferComNovosMetadados = await this.mediaProcessor.addStickerMetadata(buf, packName, author);
-                    res = { sucesso: true, buffer: bufferComNovosMetadados };
-                }
-            } else if (imageMsg) {
-                const buf = await this.mediaProcessor.downloadMedia(imageMsg, 'image');
-                res = await this.mediaProcessor.createStickerFromImage(buf, { packName, author });
-            } else if (videoMsg) {
-                const buf = await this.mediaProcessor.downloadMedia(videoMsg, 'video');
-                res = await this.mediaProcessor.createAnimatedStickerFromVideo(buf, 10, { packName, author });
-            }
-
-            if (res && res.sucesso && res.buffer) {
-                await this.sock.sendMessage(m.key.remoteJid, { sticker: res.buffer }, { quoted: m });
-            } else {
-                await this._reply(m, `❌ Erro no *take: ${res?.error || 'falha interna'}`);
-            }
-        } catch (e) {
-            console.error('Erro em _handleTake:', e);
-            await this._reply(m, '❌ Erro no processamento do comando *take.');
-        }
-        return true;
-    }
 
     async _handlePlay(m, query) {
         if (!query) {
@@ -812,39 +692,7 @@ todos os comandos!
         return true;
     }
 
-    async _handleRank(m, ehGrupo) {
-        if (!ehGrupo) {
-            await this._reply(m, '📵 Ranking disponível apenas em grupos.');
-            return true;
-        }
 
-        if (!this.bot.levelSystem || !this.bot.levelSystem.getTopUsers) {
-            await this._reply(m, '📉 Sistema de Level não disponível.');
-            return true;
-        }
-
-        const topUsers = this.bot.levelSystem.getTopUsers(m.key.remoteJid, 10);
-        if (!topUsers || topUsers.length === 0) {
-            await this._reply(m, '📉 Sem dados de ranking para este grupo ainda.');
-            return true;
-        }
-
-        let msg = `🏆 *TOP 10 RANKING* 🏆\n\n`;
-        topUsers.forEach((u, i) => {
-            let medal = '';
-            if (i === 0) medal = '🥇';
-            else if (i === 1) medal = '🥈';
-            else if (i === 2) medal = '🥉';
-            else medal = `${i + 1}º`;
-
-            // Tenta obter nome do contato se possível, ou usa formatação do ID
-            const name = u.name || u.userId.split('@')[0];
-            msg += `${medal} *${name}*\n   ├ 🆙 Nível: ${u.level}\n   └ ⭐ XP: ${u.xp}\n\n`;
-        });
-
-        await this._reply(m, msg);
-        return true;
-    }
 
     async _handleDono(m) {
         const donos = this.config.DONO_USERS;
@@ -913,30 +761,7 @@ todos os comandos!
         return true;
     }
 
-    async _handleRegister(m, fullArgs, senderId) {
-        if (!fullArgs.includes('|')) {
-            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}registrar Nome|Idade`);
-            return true;
-        }
 
-        const [nomeUser, idadeStr] = fullArgs.split('|').map(s => s.trim());
-        const idade = parseInt(idadeStr, 10);
-
-        if (!nomeUser || isNaN(idade)) {
-            await this._reply(m, `❌ Formato inválido. Use: ${this.config.PREFIXO}registrar Nome|Idade`);
-            return true;
-        }
-
-        const uid = m.key.participant || m.key.remoteJid;
-        const res = this.bot.registrationSystem.registerUser(uid, nomeUser, idade, senderId.replace(/\D/g, ''));
-
-        if (res.success) {
-            await this._reply(m, `✅ *REGISTRO CONCLUÍDO*\n\n👤 Nome: ${res.user.name}\n🎂 Idade: ${res.user.age}\n📅 Data: ${new Date(res.user.date).toLocaleDateString('pt-BR')}\n\nBem-vindo ao sistema Akira Enterprise!`);
-        } else {
-            await this._reply(m, `❌ ${res.message}`);
-        }
-        return true;
-    }
 
     async _handlePremiumInfo(m, senderId) {
         const info = this.bot.subscriptionManager.getSubscriptionInfo(senderId);
@@ -999,102 +824,23 @@ todos os comandos!
         return true;
     }
 
-    async _handleLevel(m, args, ehGrupo, senderId, isOwner) {
-        if (!ehGrupo) {
-            await this._reply(m, '📵 Este comando só funciona em grupos.');
-            return true;
-        }
-        const sub = (args[0] || '').toLowerCase();
-        if (['on', 'off'].includes(sub)) {
-            if (!isOwner) {
-                await this._reply(m, '🚫 Apenas administradores podem alterar o status do level.');
-                return true;
-            }
-            // Implementação de toggle depende de como o BotCore gerencia os settings
-            await this._reply(m, `✅ Sistema de level ${sub === 'on' ? 'ativado' : 'desativado'} para este grupo.`);
-            return true;
-        }
-        const uid = m.key.participant || m.key.remoteJid;
-        if (!this.bot?.levelSystem) {
-            await this._reply(m, '📉 Sistema de Level não disponível no momento.');
-            return true;
-        }
-        const rec = this.bot.levelSystem.getGroupRecord(m.key.remoteJid, uid, true);
-        const patente = this.bot.levelSystem.getPatente ? this.bot.levelSystem.getPatente(rec.level || 0) : 'Usuário';
-        await this._reply(m, `📊 *Seu Status:* \n🎮 Nível: ${rec.level || 0}\n⭐ XP: ${rec.xp || 0}\n🎖️ Patente: ${patente}`);
-        return true;
-    }
 
-    async _handleAudioEffect(m, effectName) {
-        const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        const audioMsg = m.message?.audioMessage || quoted?.audioMessage;
 
-        if (!audioMsg) {
-            await this._reply(m, '❌ Responda a um áudio para aplicar o efeito.');
-            return true;
-        }
-
-        await this._reply(m, `🎵 Aplicando efeito *${effectName}*...`);
-        try {
-            const buf = await this.mediaProcessor.downloadMedia(audioMsg, 'audio');
-            const res = await this.bot.audioProcessor.applyAudioEffect(buf, effectName);
-
-            if (res.sucesso && res.buffer) {
-                await this.sock.sendMessage(m.key.remoteJid, {
-                    audio: res.buffer,
-                    mimetype: 'audio/mpeg',
-                    ptt: true
-                }, { quoted: m });
-            } else {
-                await this._reply(m, `❌ Erro: ${res.error}`);
-            }
-        } catch (e) {
-            await this._reply(m, '❌ Erro ao processar áudio.');
-            console.error(e);
-        }
-        return true;
-    }
-
-    async _handleTakeSticker(m, args, nome) {
-        const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        if (!quoted?.stickerMessage) {
-            await this._reply(m, '❌ Responda a um sticker.');
-            return true;
-        }
-
-        const newPack = 'akira-bot';
-        const newAuthor = nome || 'Akira-Bot';
-
-        await this._reply(m, '🎨 Roubando sticker...');
-        try {
-            const buf = await this.mediaProcessor.downloadMedia(quoted.stickerMessage, 'sticker');
-            const newSticker = await this.mediaProcessor.addStickerMetadata(buf, newPack, newAuthor);
-
-            await this.sock.sendMessage(m.key.remoteJid, { sticker: newSticker }, { quoted: m });
-        } catch (e) {
-            await this._reply(m, '❌ Erro ao processar sticker.');
-            console.error(e);
-        }
-        return true;
-    }
 
     async _handleStickerToImage(m) {
-        const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        if (!quoted?.stickerMessage) {
-            await this._reply(m, '❌ Responda a um sticker.');
-            return true;
-        }
-
-        if (quoted.stickerMessage.isAnimated) {
-            await this._reply(m, '❌ Apenas stickers estáticos por enquanto.');
-            return true;
-        }
-
-        await this._reply(m, '🔄 Convertendo...');
         try {
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            if (!quoted?.stickerMessage) {
+                await this._reply(m, '❌ Responda a um sticker.');
+                return true;
+            }
+            if (quoted.stickerMessage.isAnimated) {
+                await this._reply(m, '❌ Apenas stickers estáticos por enquanto.');
+                return true;
+            }
+            await this._reply(m, '🔄 Convertendo...');
             const buf = await this.mediaProcessor.downloadMedia(quoted.stickerMessage, 'sticker');
             const res = await this.mediaProcessor.convertStickerToImage(buf);
-
             if (res.sucesso && res.buffer) {
                 await this.sock.sendMessage(m.key.remoteJid, { image: res.buffer, caption: '✅ Aqui está sua imagem' }, { quoted: m });
             } else {
@@ -1102,7 +848,6 @@ todos os comandos!
             }
         } catch (e) {
             await this._reply(m, '❌ Erro ao converter.');
-            console.error(e);
         }
         return true;
     }
@@ -1493,7 +1238,7 @@ todos os comandos!
     /**
      * Processa comando #registrar Nome|Idade
      */
-    async _handleRegister(m, nome, fullArgs, userId) {
+    async _handleRegister(m, fullArgs, userId) {
         try {
             // Verifica se já está registrado
             if (this.registrationSystem.isRegistered(userId)) {
@@ -1571,6 +1316,16 @@ todos os comandos!
             return true;
         }
     }
+
+    // ═════════════════════════════════════════════════════════════════
+    // SISTEMA DE LEVEL (V21)
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Comando #level - Ver nível do usuário
+     */
+
+
 
     // ═════════════════════════════════════════════════════════════════
     // SISTEMA DE LEVEL (V21)
@@ -1840,17 +1595,8 @@ todos os comandos!
         }
     }
 
-    /**
-    * Processa comandos recebidos (LEGACY - Mantido para compatibilidade se necessário)
-    */
-    async handleCommand(m, command, args) {
-        return this.handle(m, {
-            nome: m.pushName || 'Usuário',
-            numeroReal: m.key.participant || m.key.remoteJid,
-            texto: `${this.config.PREFIXO}${command} ${args.join(' ')}`,
-            replyInfo: null,
-            ehGrupo: m.key.remoteJid.endsWith('@g.us')
-        });
+    async _reply(m, text, options = {}) {
+        return await this.bot.reply(m, text, options);
     }
 }
 
