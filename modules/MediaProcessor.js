@@ -708,14 +708,14 @@ class MediaProcessor {
         try {
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
 
-            // Bypass de Captcha: Usa extractor-args para simular cliente android/ios
+            const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
             const bypassArgs = '--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates';
             const command = process.platform === 'win32'
-                ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`
-                : `${tool.cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 25M --no-warnings "${url}"`;
+                ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`
+                : `${tool.cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
 
             await new Promise((resolve, reject) => {
-                exec(command, { timeout: 120000, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+                exec(command, { timeout: 120000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
                     const actualPath = outputTemplate + '.mp3';
                     if (fs.existsSync(actualPath)) {
                         resolve();
@@ -971,19 +971,19 @@ class MediaProcessor {
             }
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
-            // Bypass de Captcha e Limite 720p
+            const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
             const bypassArgs = '--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates';
             const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
 
             // Força o yt-dlp a ser mais verboso e explícito no output
             const command = process.platform === 'win32'
-                ? `"${ytdlpTool.cmd}" ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --verbose "${url}"`
-                : `${ytdlpTool.cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize 50M --verbose "${url}"`;
+                ? `"${ytdlpTool.cmd}" ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --verbose "${url}"`
+                : `${ytdlpTool.cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --verbose "${url}"`;
 
             this.logger?.info(`🚀 Executando download: ${command}`);
 
             return await new Promise((resolve, reject) => {
-                exec(command, { timeout: 180000, maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
+                exec(command, { timeout: 180000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
                     if (error) {
                         this.logger?.error(`❌ Erro no yt-dlp: ${error.message}`);
                         this.logger?.debug(`STDOUT: ${stdout}`);
