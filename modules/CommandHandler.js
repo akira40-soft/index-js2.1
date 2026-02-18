@@ -730,7 +730,7 @@ todos os comandos!
             }
 
             // Verifica se o arquivo existe antes de enviar
-            if (res.audioPath && !require('fs').existsSync(res.audioPath)) {
+            if (res.audioPath && !fs.existsSync(res.audioPath)) {
                 await this._reply(m, '❌ Erro interno: Arquivo de áudio não encontrado após download.');
                 return true;
             }
