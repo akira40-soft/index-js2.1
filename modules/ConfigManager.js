@@ -63,7 +63,7 @@ class ConfigManager {
 
         // ═══ YOUTUBE DOWNLOAD ═══
         this.YT_MAX_SIZE_MB = parseInt(process.env?.YT_MAX_SIZE_MB || 2048); // Aumentado para 2GB
-        this.YT_TIMEOUT_MS = parseInt(process.env?.YT_TIMEOUT_MS || 900000); // Aumentado para 15 minutos
+        this.YT_TIMEOUT_MS = parseInt(process.env?.YT_TIMEOUT_MS || 3600000); // Aumentado para 1 hora (era 15 min)
         this.YT_QUALITY = process.env?.YT_QUALITY || 'highestaudio';
         this.YT_MAX_DURATION_SECONDS = parseInt(process.env?.YT_MAX_DURATION_SECONDS || 21600); // Aumentado para 6 horas
 

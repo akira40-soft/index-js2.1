@@ -731,15 +731,22 @@ class MediaProcessor {
                 ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`
                 : `${tool.cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
 
-            await new Promise((resolve, reject) => {
-                exec(command, { timeout: 120000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
+            return await new Promise((resolve, reject) => {
+                const execTimeout = this.config?.YT_TIMEOUT_MS || 900000;
+                exec(command, { timeout: execTimeout, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
                     const actualPath = outputTemplate + '.mp3';
+
                     if (fs.existsSync(actualPath)) {
-                        resolve();
+                        resolve({ sucesso: true, audioPath: actualPath, tamanho: fs.statSync(actualPath).size });
                     } else if (error) {
+                        // SMART FALLBACK: Se falhar como "Video unavailable"
+                        if (stderr.includes('Video unavailable') || stdout.includes('Video unavailable')) {
+                            this.logger?.info('⚠️ ID inválido detectado pelo yt-dlp (Audio). Tentando buscar como termo...');
+                            return resolve({ fallbackToSearch: true });
+                        }
                         reject(error);
                     } else {
-                        reject(new Error('Arquivo não foi criado'));
+                        reject(new Error('Arquivo não foi criado e nenhum erro foi reportado'));
                     }
                 });
             });
@@ -915,8 +922,19 @@ class MediaProcessor {
 
                 try {
                     const result = await this._downloadWithYtDlp(url, videoId, ytdlpTool);
+
+                    if (result.fallbackToSearch) {
+                        this.logger?.info(`🔍 Executando fallback de busca (Audio) para: ${input}`);
+                        const searchRes = await this.searchYouTube(input, 1);
+                        if (searchRes.sucesso && searchRes.resultados.length > 0) {
+                            const correctUrl = searchRes.resultados[0].url;
+                            this.logger?.info(`✅ Fallback encontrou: ${searchRes.resultados[0].titulo}`);
+                            return this.downloadYouTubeAudio(correctUrl); // Recursive call
+                        }
+                    }
+
                     if (result.sucesso) {
-                        return { ...result, ...metadata };
+                        return { ...result, ...metadata, titulo: 'Áudio do YouTube', metodo: 'yt-dlp' };
                     }
                 } catch (ytErr) {
                     this.logger?.warn('⚠️ yt-dlp falhou:', ytErr.message);
@@ -963,6 +981,7 @@ class MediaProcessor {
         try {
             this.logger?.info('🎬 Iniciando download de VÍDEO do YouTube...');
             let url = input;
+            let isSearch = false; // Track if we performed a search
 
             let videoId = this.extractYouTubeVideoId(url);
             if (!videoId) {
@@ -971,6 +990,7 @@ class MediaProcessor {
                 if (searchRes.sucesso && searchRes.resultados.length > 0) {
                     url = searchRes.resultados[0].url;
                     videoId = this.extractYouTubeVideoId(url);
+                    isSearch = true; // Mark as search result
                     this.logger?.info(`✅ Encontrado via busca: ${searchRes.resultados[0].titulo} (${url})`);
                 } else {
                     return { sucesso: false, error: 'URL do YouTube inválida ou nenhum vídeo encontrado.' };
@@ -983,7 +1003,7 @@ class MediaProcessor {
             }
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
-            const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
+            const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 2048;
             // Bypass de Captcha: Usa extractor-args para simular cliente android/ios/tv + po-token via js-runtime node
             const nodePath = process.execPath;
             const bypassArgs = `--extractor-args "youtube:player_client=tv,android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime "${nodePath}"`;
@@ -997,14 +1017,21 @@ class MediaProcessor {
             this.logger?.info(`🚀 Executando download: ${command}`);
 
             return await new Promise((resolve, reject) => {
-                // Timeout configurável (padrão 5 minutos)
-                const execTimeout = this.config?.YT_TIMEOUT_MS || 300000;
+                // Timeout configurável (padrão 15 minutos)
+                const execTimeout = this.config?.YT_TIMEOUT_MS || 900000;
                 exec(command, { timeout: execTimeout, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
                     if (error) {
                         this.logger?.error(`❌ Erro no yt-dlp: ${error.message}`);
+
+                        // SMART FALLBACK: Se falhar como "Video unavailable" e NÃO foi busca, tenta buscar!
+                        if (!isSearch && (stderr.includes('Video unavailable') || stdout.includes('Video unavailable'))) {
+                            this.logger?.info('⚠️ ID inválido detectado pelo yt-dlp. Tentando buscar como termo...');
+                            return resolve({ fallbackToSearch: true });
+                        }
+
                         // Se for timeout, dar mensagem personalizada
                         if (error.killed) {
-                            return reject(new Error('O download excedeu o tempo limite de 5 minutos. Tente um vídeo mais curto.'));
+                            return reject(new Error('O download excedeu o tempo limite de 15 minutos.'));
                         }
                         this.logger?.debug(`STDOUT: ${stdout}`);
                         this.logger?.debug(`STDERR: ${stderr}`);
@@ -1030,7 +1057,25 @@ class MediaProcessor {
                         reject(new Error('Arquivo de vídeo não encontrado no sistema após o download.'));
                     }
                 });
-            }).then(async (foundFile) => {
+            }).then(async (result) => {
+                // Se o resolve retornou pedido de fallback
+                if (result && result.fallbackToSearch) {
+                    this.logger?.info(`🔍 Executando fallback de busca para: ${input}`);
+                    // Recursive call with forced search logic (input is not URL) is tricky if input IS "sleepwalker" 
+                    // because extractYouTubeVideoId("sleepwalker") returns true.
+                    // effectively we need to bypass extractYouTubeVideoId or force search.
+
+                    const searchRes = await this.searchYouTube(input, 1);
+                    if (searchRes.sucesso && searchRes.resultados.length > 0) {
+                        const correctUrl = searchRes.resultados[0].url;
+                        this.logger?.info(`✅ Fallback encontrou: ${searchRes.resultados[0].titulo}`);
+                        return this.downloadYouTubeVideo(correctUrl); // Recursive with valid URL
+                    } else {
+                        throw new Error('Vídeo não encontrado mesmo após busca de fallback.');
+                    }
+                }
+
+                const foundFile = result;
                 const actualPath = foundFile;
                 const stats = fs.statSync(actualPath);
                 const fileSizeMB = stats.size / (1024 * 1024);
@@ -1041,16 +1086,14 @@ class MediaProcessor {
                 }
 
                 // 🛠️ ESTÁGIO DE OTIMIZAÇÃO / BYPASS
-                // Se o vídeo for > 20MB e já for MP4, tentamos enviar direto para evitar timeout no Railway
-                // Re-encodar vídeos grandes no Railway (CPU limitada) é muito lento.
-                const shouldSkipOptimization = fileSizeMB > 20 && actualPath.endsWith('.mp4');
+                // Se o vídeo for > 50MB e já for MP4, tentamos enviar direto
+                const shouldSkipOptimization = fileSizeMB > 50 && actualPath.endsWith('.mp4');
 
                 if (shouldSkipOptimization) {
-                    this.logger?.info(`⏩ Ignorando otimização lenta para arquivo grande (${fileSizeMB.toFixed(1)}MB) para evitar timeout.`);
+                    this.logger?.info(`⏩ Ignorando otimização lenta para arquivo grande (${fileSizeMB.toFixed(1)}MB)`);
                     const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
                     const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
 
-                    // Não limpamos aqui, o CommandHandler deve limpar após enviar
                     return {
                         sucesso: true,
                         videoPath: actualPath,
@@ -1061,7 +1104,7 @@ class MediaProcessor {
                     };
                 }
 
-                this.logger?.info(`🛠️ Otimizando vídeo (${fileSizeMB.toFixed(1)}MB) para compatibilidade mobile...`);
+                this.logger?.info(`🛠️ Otimizando vídeo (${fileSizeMB.toFixed(1)}MB)...`);
                 const optimizedPath = this.generateRandomFilename('mp4');
 
                 try {
@@ -1093,7 +1136,6 @@ class MediaProcessor {
                     const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
                     const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
 
-                    // Limpa o original, mas mantém o otimizado para o CommandHandler enviar
                     await this.cleanupFile(actualPath);
 
                     return {
@@ -1106,22 +1148,16 @@ class MediaProcessor {
                     };
                 } catch (optError) {
                     this.logger?.warn('⚠️ Otimização falhou, enviando original...');
-                    try {
-                        const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
-                        const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
-                        // Não limpa o original aqui se for enviar ele
-                        return {
-                            sucesso: true,
-                            videoPath: actualPath,
-                            titulo: metadata.titulo,
-                            size: fs.statSync(actualPath).size,
-                            mimetype: 'video/mp4',
-                            ...metadata
-                        };
-                    } catch (readError) {
-                        await this.cleanupFile(actualPath);
-                        throw new Error(`Falha na conversão e erro ao ler arquivo original: ${readError.message}`);
-                    }
+                    const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                    const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
+                    return {
+                        sucesso: true,
+                        videoPath: actualPath,
+                        titulo: metadata.titulo,
+                        size: fs.statSync(actualPath).size,
+                        mimetype: 'video/mp4',
+                        ...metadata
+                    };
                 }
             });
         } catch (error) {

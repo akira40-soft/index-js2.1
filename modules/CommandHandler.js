@@ -700,45 +700,58 @@ todos os comandos!
             await this._reply(m, `❌ Uso: ${this.config.PREFIXO}play <nome da música ou link>`);
             return true;
         }
-        await this._reply(m, '⏳ Buscando e processando música...');
+        await this._reply(m, '⏳ Buscando e processando música... (Pode demorar para arquivos longos)');
+
         try {
             const res = await this.mediaProcessor.downloadYouTubeAudio(query);
-            if (res.error) {
-                await this._reply(m, `❌ ${res.error}`);
-            } else {
-                // Enviar thumbnail e metadados se disponíveis
-                if (res.thumbnail) {
-                    const thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail);
-                    if (thumbBuf) {
-                        const duracaoMin = res.duracao ? `${Math.floor(res.duracao / 60)}:${(res.duracao % 60).toString().padStart(2, '0')}` : '??';
-                        const caption = `🎵 *${res.titulo || 'Música'}*\n\n` +
-                            `👤 *Canal:* ${res.autor}\n` +
-                            `⏱️ *Duração:* ${duracaoMin}\n` +
-                            `👁️ *Views:* ${res.views}\n` +
-                            `👍 *Likes:* ${res.likes}\n\n` +
-                            `🎧 _Enviando áudio..._`;
 
-                        await this.sock.sendMessage(m.key.remoteJid, {
-                            image: thumbBuf,
-                            caption: caption
-                        }, { quoted: m });
-                    }
-                }
+            if (!res.sucesso || res.error) {
+                await this._reply(m, `❌ ${res.error || 'Erro desconhecido ao baixar áudio.'}`);
+                return true;
+            }
 
-                await this.sock.sendMessage(m.key.remoteJid, {
-                    audio: res.buffer || { url: res.audioPath },
-                    mimetype: 'audio/mpeg',
-                    ptt: false,
-                    fileName: `${res.titulo || 'audio'}.mp3`
-                }, { quoted: m });
+            // Enviar thumbnail e metadados se disponíveis
+            if (res.thumbnail) {
+                const thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail);
+                if (thumbBuf) {
+                    const duracaoMin = res.duracao ? `${Math.floor(res.duracao / 60)}:${(res.duracao % 60).toString().padStart(2, '0')}` : '??';
+                    const caption = `🎵 *${res.titulo || 'Música'}*\n\n` +
+                        `👤 *Canal:* ${res.autor}\n` +
+                        `⏱️ *Duração:* ${duracaoMin}\n` +
+                        `👁️ *Views:* ${res.views}\n` +
+                        `👍 *Likes:* ${res.likes}\n\n` +
+                        `🎧 _Enviando áudio..._`;
 
-                if (res.audioPath) {
-                    await this.mediaProcessor.cleanupFile(res.audioPath);
+                    await this.sock.sendMessage(m.key.remoteJid, {
+                        image: thumbBuf,
+                        caption: caption
+                    }, { quoted: m });
                 }
             }
+
+            // Verifica se o arquivo existe antes de enviar
+            if (res.audioPath && !require('fs').existsSync(res.audioPath)) {
+                await this._reply(m, '❌ Erro interno: Arquivo de áudio não encontrado após download.');
+                return true;
+            }
+
+            await this.sock.sendMessage(m.key.remoteJid, {
+                audio: { url: res.audioPath },
+                mimetype: 'audio/mpeg',
+                ptt: false,
+                fileName: `${res.titulo || 'audio'}.mp3`
+            }, { quoted: m });
+
+            if (res.audioPath) {
+                // Pequeno delay para garantir que o envio começou antes de deletar
+                setTimeout(() => {
+                    this.mediaProcessor.cleanupFile(res.audioPath).catch(console.error);
+                }, 10000);
+            }
+
         } catch (e) {
-            this.logger?.error('Erro no play:', e);
-            await this._reply(m, '❌ Erro ao processar o comando play.');
+            console.error('Erro no play:', e);
+            await this._reply(m, `❌ Erro crítico ao processar o comando play: ${e.message}`);
         }
         return true;
     }
