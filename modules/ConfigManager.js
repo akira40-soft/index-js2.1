@@ -121,12 +121,11 @@ class ConfigManager {
     /**
     * Valida se um usuário é dono do bot
     */
-    isDono(numero, nome) {
+    isDono(numero, nome = '') {
         try {
-            const numeroLimpo = String(numero)?.trim();
-            const nomeLimpo = String(nome)?.trim();
+            const numeroLimpo = String(numero).replace(/\D/g, '').trim();
             return this.DONO_USERS?.some(
-                dono => numeroLimpo === dono.numero && nomeLimpo === dono.nomeExato
+                dono => String(dono.numero).replace(/\D/g, '') === numeroLimpo
             );
         } catch (e) {
             return false;

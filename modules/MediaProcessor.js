@@ -102,33 +102,48 @@ class MediaProcessor {
                 return null;
             }
 
-            // Extrair o objeto de mídia correto (imageMessage, videoMessage, etc.)
-            let mediaContent = message;
+            // Função auxiliar recursiva para encontrar o objeto de mídia (que contém url, mediaKey, etc)
+            const findMediaContent = (obj) => {
+                if (!obj || typeof obj !== 'object') return null;
 
-            // Se for um objeto WAMessage completo, tentar extrair o conteúdo
-            if (message.message) {
-                mediaContent = message.message?.imageMessage ||
-                    message.message?.videoMessage ||
-                    message.message?.audioMessage ||
-                    message.message?.stickerMessage ||
-                    message.message?.documentMessage ||
-                    message.message?.viewOnceMessageV2?.message?.imageMessage ||
-                    message.message?.viewOnceMessageV2?.message?.videoMessage ||
-                    message.message;
-            } else if (message.imageMessage || message.videoMessage) {
-                // Já é o objeto message
-                mediaContent = message.imageMessage || message.videoMessage || message.audioMessage || message.stickerMessage;
+                // Se houver mediaKey, encontramos o objeto final
+                if (obj.mediaKey || obj.url || obj.directPath) return obj;
+
+                // Tipos conhecidos de wrappers de mensagem
+                const wrappers = [
+                    'imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage',
+                    'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension',
+                    'ephemeralMessage', 'protocolMessage', 'templateMessage', 'interactiveMessage',
+                    'message'
+                ];
+
+                for (const key of wrappers) {
+                    if (obj[key]) {
+                        const result = findMediaContent(obj[key]);
+                        if (result) return result;
+                    }
+                }
+
+                // Busca genérica em propriedades que terminam com 'Message' se não encontrou nos conhecidos
+                for (const key in obj) {
+                    if (key.endsWith('Message') && obj[key] && typeof obj[key] === 'object') {
+                        const result = findMediaContent(obj[key]);
+                        if (result) return result;
+                    }
+                }
+
+                return null;
+            };
+
+            let mediaContent = findMediaContent(message);
+
+            if (!mediaContent) {
+                this.logger?.error('❌ Não foi possível encontrar conteúdo de mídia na mensagem');
+                return null;
             }
 
-            // Se ainda não tiver mediaKey, pode ser que o usuário passou o objeto errado
-            if (!mediaContent.mediaKey && !mediaContent.url && !mediaContent.directPath) {
-                // Tentar usar o objeto original como fallback no downloadContentFromMessage
-                // Mas logar aviso
-                this.logger?.warn('⚠️ Objeto de mídia pode estar incompleto (sem mediaKey). Tentando extração manual...');
-            } else {
-                // Atualizar a referência para usar no download
-                message = mediaContent;
-            }
+            // Atualiza referência
+            message = mediaContent;
 
             this.logger?.debug(`⬇️ Baixando mídia (mime: ${mimeType})...`);
             this.logger?.debug(`📋 Tipo de mensagem: ${typeof message}`);
@@ -709,7 +724,8 @@ class MediaProcessor {
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
 
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
-            const bypassArgs = '--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates';
+            // Bypass de Captcha: Usa extractor-args para simular cliente android/ios/tv + po-token via js-runtime node
+            const bypassArgs = '--extractor-args "youtube:player_client=tv,android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime node';
             const command = process.platform === 'win32'
                 ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`
                 : `${tool.cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
@@ -972,7 +988,8 @@ class MediaProcessor {
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
-            const bypassArgs = '--extractor-args "youtube:player_client=android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates';
+            // Bypass de Captcha: Usa extractor-args para simular cliente android/ios/tv + po-token via js-runtime node
+            const bypassArgs = '--extractor-args "youtube:player_client=tv,android,ios" --extractor-args "youtube:player_skip=web,web_music,mweb" --no-check-certificates --js-runtime node';
             const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
 
             // Força o yt-dlp a ser mais verboso e explícito no output
