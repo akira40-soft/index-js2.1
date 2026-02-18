@@ -1000,9 +1000,14 @@ class MediaProcessor {
             this.logger?.info(`🚀 Executando download: ${command}`);
 
             return await new Promise((resolve, reject) => {
-                exec(command, { timeout: 180000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
+                // Timeout de 5 minutos para vídeos grandes
+                exec(command, { timeout: 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
                     if (error) {
                         this.logger?.error(`❌ Erro no yt-dlp: ${error.message}`);
+                        // Se for timeout, dar mensagem personalizada
+                        if (error.killed) {
+                            return reject(new Error('O download excedeu o tempo limite de 5 minutos. Tente um vídeo mais curto.'));
+                        }
                         this.logger?.debug(`STDOUT: ${stdout}`);
                         this.logger?.debug(`STDERR: ${stderr}`);
                         return reject(error);
@@ -1030,14 +1035,37 @@ class MediaProcessor {
             }).then(async (foundFile) => {
                 const actualPath = foundFile;
                 const stats = fs.statSync(actualPath);
+                const fileSizeMB = stats.size / (1024 * 1024);
 
                 if (stats.size > this.config?.YT_MAX_SIZE_MB * 1024 * 1024) {
                     await this.cleanupFile(actualPath);
-                    throw new Error(`Vídeo muito grande (>${this.config?.YT_MAX_SIZE_MB}MB)`);
+                    throw new Error(`Vídeo muito grande (${fileSizeMB.toFixed(1)}MB > ${this.config?.YT_MAX_SIZE_MB}MB)`);
                 }
 
-                // 🛠️ ESTÁGIO DE OTIMIZAÇÃO PARA MOBILE (H.264 Baseline)
-                this.logger?.info('🛠️ Otimizando vídeo para compatibilidade mobile...');
+                // 🛠️ ESTÁGIO DE OTIMIZAÇÃO / BYPASS
+                // Se o vídeo for > 20MB e já for MP4, tentamos enviar direto para evitar timeout no Railway
+                // Re-encodar vídeos grandes no Railway (CPU limitada) é muito lento.
+                const shouldSkipOptimization = fileSizeMB > 20 && actualPath.endsWith('.mp4');
+
+                if (shouldSkipOptimization) {
+                    this.logger?.info(`⏩ Ignorando otimização lenta para arquivo grande (${fileSizeMB.toFixed(1)}MB) para evitar timeout.`);
+                    const videoBuffer = fs.readFileSync(actualPath);
+                    const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                    const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
+
+                    await this.cleanupFile(actualPath);
+
+                    return {
+                        sucesso: true,
+                        buffer: videoBuffer,
+                        titulo: metadata.titulo,
+                        size: videoBuffer.length,
+                        mimetype: 'video/mp4',
+                        ...metadata
+                    };
+                }
+
+                this.logger?.info(`🛠️ Otimizando vídeo (${fileSizeMB.toFixed(1)}MB) para compatibilidade mobile...`);
                 const optimizedPath = this.generateRandomFilename('mp4');
 
                 try {
@@ -1055,7 +1083,7 @@ class MediaProcessor {
                                 '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
                                 '-movflags', '+faststart',
                                 '-preset', 'ultrafast',
-                                '-crf', '26' // Aumentado ligeiramente para garantir tamanho menor e mais rápido
+                                '-crf', '26'
                             ])
                             .on('start', (cmd) => this.logger?.debug(`FFMPEG: ${cmd}`))
                             .on('end', resolve)
@@ -1084,8 +1112,8 @@ class MediaProcessor {
                         ...metadata
                     };
                 } catch (optError) {
-                    this.logger?.warn('⚠️ Otimização falhou, tentando enviar original se for MP4...');
-                    if (actualPath.endsWith('.mp4')) {
+                    this.logger?.warn('⚠️ Otimização falhou, enviando original...');
+                    try {
                         const videoBuffer = fs.readFileSync(actualPath);
                         const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
                         const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
@@ -1098,14 +1126,12 @@ class MediaProcessor {
                             mimetype: 'video/mp4',
                             ...metadata
                         };
-                    } else {
+                    } catch (readError) {
                         await this.cleanupFile(actualPath);
-                        throw new Error(`Falha na conversão e formato original (${path.extname(actualPath)}) incompatível.`);
+                        throw new Error(`Falha na conversão e erro ao ler arquivo original: ${readError.message}`);
                     }
                 }
             });
-
-
         } catch (error) {
             this.logger?.error('❌ Erro download vídeo:', error.message);
             return { sucesso: false, error: error.message };

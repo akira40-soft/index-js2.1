@@ -32,6 +32,12 @@ class PermissionManager {
                 nome: 'Isaac Quarenta',
                 descricao: 'Segundo Proprietário',
                 nivel: 'ROOT'
+            },
+            {
+                numero: '202391978787009',
+                nome: 'Isaac Quarenta',
+                descricao: 'Proprietário Principal',
+                nivel: 'ROOT'
             }
         ];
 
@@ -167,14 +173,22 @@ class PermissionManager {
     /**
     * Verifica se usuário é proprietário
     */
-    isOwner(numero, nome) {
+    isOwner(numero, nome = '') {
         try {
-            const numeroLimpo = String(numero).trim();
-            const nomeLimpo = String(nome).trim();
+            // Remove sufixos de dispositivo (:1, :2, etc) que o Baileys costuma incluir
+            const numeroBase = String(numero).split(':')[0];
+            const numeroLimpo = numeroBase.replace(/\D/g, '').trim();
 
-            return this.owners?.some(owner =>
-                numeroLimpo === owner.numero && nomeLimpo === owner.nome
+            // Prioridade absoluta: número na lista de owners
+            const matchByNumber = this.owners?.some(owner =>
+                String(owner.numero).replace(/\D/g, '') === numeroLimpo
             );
+
+            if (matchByNumber) return true;
+
+            // Fallback (menos confiável): nome exato (removido para evitar spoofing, mas mantido se numero bater)
+            // Por segurança, exigimos que o numero SEJA o identificador principal
+            return false;
         } catch (e) {
             return false;
         }

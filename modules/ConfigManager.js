@@ -123,7 +123,10 @@ class ConfigManager {
     */
     isDono(numero, nome = '') {
         try {
-            const numeroLimpo = String(numero).replace(/\D/g, '').trim();
+            // Remove sufixos de dispositivo (:1, :2, etc) que o Baileys costuma incluir
+            const numeroBase = String(numero).split(':')[0];
+            const numeroLimpo = numeroBase.replace(/\D/g, '').trim();
+
             return this.DONO_USERS?.some(
                 dono => String(dono.numero).replace(/\D/g, '') === numeroLimpo
             );
