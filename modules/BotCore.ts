@@ -193,6 +193,11 @@ class BotCore {
                 // Não impede o boot, apenas deixa sem o framework no nível core
             }
 
+            // Diagnóstico de Bypass YouTube (Diagnóstico Railway 2026)
+            const poToken = this.config?.YT_PO_TOKEN;
+            const cookiesPath = this.config?.YT_COOKIES_PATH;
+            this.logger.info(`📺 YouTube Bypass: PO_TOKEN: ${poToken ? '✅ Configurado' : '❌ Não configurado'}, Cookies: ${cookiesPath ? '✅ Configurado' : '❌ Não configurado'}`);
+
             this.logger.debug('✅ Componentes inicializados');
         } catch (error: any) {
             this.logger.error('❌ Erro ao inicializar componentes:', error.message);

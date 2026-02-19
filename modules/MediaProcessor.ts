@@ -67,6 +67,31 @@ class MediaProcessor {
     }
 
     /**
+     * Gera os argumentos de bypass do yt-dlp centralizados
+     */
+    private _getYtDlpBypassArgs(nodePath: string): string {
+        const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+        const poToken = this.config?.YT_PO_TOKEN || "";
+        const cookiesPath = this.config?.YT_COOKIES_PATH || "";
+
+        // Usamos múltiplos clientes (ios, android) para aumentar as chances
+        // O android costuma ser mais permissivo, mas o ios simula melhor um dispositivo móvel
+        let args = `--extractor-args "youtube:player_client=android,ios" --user-agent "${userAgent}" --no-check-certificates --js-runtimes "node:${nodePath}"`;
+
+        if (poToken) {
+            // Suporte para Proof of Origin Token
+            // Formato aceito pelo yt-dlp moderno
+            args += ` --extractor-args "youtube:po_token=android+${poToken},ios+${poToken}"`;
+        }
+
+        if (cookiesPath && fs.existsSync(cookiesPath)) {
+            args += ` --cookies "${cookiesPath}"`;
+        }
+
+        return args;
+    }
+
+    /**
     * Gera nome de arquivo aleatório
     */
     generateRandomFilename(ext: string = ''): string {
@@ -732,20 +757,9 @@ class MediaProcessor {
             const cookiesPath = this.config?.YT_COOKIES_PATH;
             const poToken = this.config?.YT_PO_TOKEN;
 
-            // Bypass de Captcha: Usa extractor-args para simular cliente ios especificamente (mais estável contra detecção)
+            // Bypass de Captcha centralizado
             const nodePath = process.execPath;
-            const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
-
-            let bypassArgs = `--extractor-args "youtube:player_client=ios" --extractor-args "youtube:player_skip=web,web_music,mweb,android,tv" --user-agent "${userAgent}" --no-check-certificates --js-runtimes "node:${nodePath}"`;
-
-            if (cookiesPath && fs.existsSync(cookiesPath)) {
-                bypassArgs += ` --cookies "${cookiesPath}"`;
-            }
-
-            if (poToken) {
-                // Algumas versões do yt-dlp aceitam po_token via extractor-args
-                bypassArgs += ` --extractor-args "youtube:po_token=${poToken}"`;
-            }
+            const bypassArgs = this._getYtDlpBypassArgs(nodePath);
 
             const command = process.platform === 'win32'
                 ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`
@@ -1024,10 +1038,9 @@ class MediaProcessor {
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 2048;
-            // Bypass de Captcha: Usa extractor-args para simular cliente ios especificamente
+            // Bypass de Captcha centralizado
             const nodePath = process.execPath;
-            const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
-            const bypassArgs = `--extractor-args "youtube:player_client=ios" --extractor-args "youtube:player_skip=web,web_music,mweb,android,tv" --user-agent "${userAgent}" --no-check-certificates --js-runtimes "node:${nodePath}"`;
+            const bypassArgs = this._getYtDlpBypassArgs(nodePath);
             const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
 
             // Força o yt-dlp a ser mais verboso e explícito no output
@@ -1192,8 +1205,7 @@ class MediaProcessor {
             const thumbnailUrl = videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : null;
 
             const nodePath = process.execPath;
-            const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
-            const bypassArgs = `--extractor-args "youtube:player_client=ios" --extractor-args "youtube:player_skip=web,web_music,mweb,android,tv" --user-agent "${userAgent}" --no-check-certificates --js-runtimes "node:${nodePath}" --no-warnings`;
+            const bypassArgs = this._getYtDlpBypassArgs(nodePath);
             const command = process.platform === 'win32'
                 ? `"${ytdlp.cmd}" ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`
                 : `${ytdlp.cmd} ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;

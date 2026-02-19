@@ -64,6 +64,8 @@ class ConfigManager {
     public FEATURE_MODERATION: boolean = false;
     public FEATURE_LEVELING: boolean = false;
     public FEATURE_VISION: boolean = false;
+    public YT_COOKIES_PATH: string = "";
+    public YT_PO_TOKEN: string = "";
     [key: string]: any;
 
     constructor() {
@@ -118,6 +120,8 @@ class ConfigManager {
         this.YT_TIMEOUT_MS = Number(process.env?.YT_TIMEOUT_MS || 3600000); // Aumentado para 1 hora (era 15 min)
         this.YT_QUALITY = process.env?.YT_QUALITY || 'highestaudio';
         this.YT_MAX_DURATION_SECONDS = Number(process.env?.YT_MAX_DURATION_SECONDS || 21600); // Aumentado para 6 horas
+        this.YT_COOKIES_PATH = process.env?.YT_COOKIES_PATH || "";
+        this.YT_PO_TOKEN = process.env?.YT_PO_TOKEN || "";
 
         // ═══ MÍDIA ═══
         this.STICKER_SIZE = Number(process.env?.STICKER_SIZE || 512);
