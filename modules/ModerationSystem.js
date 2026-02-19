@@ -32,19 +32,31 @@ class ModerationSystem {
         this.mutedUsers = new Map(); // {groupId_userId} -> {expires, mutedAt, minutes}
         this.antiLinkGroups = new Set(); // groupIds com anti-link ativo
         this.antiLinkPath = '/tmp/akira_data/data/antilink.json'; // Persistência do AntiLink
-        this._loadAntiLinkSettings();
 
         this.muteCounts = new Map(); // {groupId_userId} -> {count, lastMuteDate}
         this.muteCounts = new Map(); // {groupId_userId} -> {count, lastMuteDate}
         this.bannedUsers = new Map(); // {userId} -> {reason, bannedAt, expiresAt}
         this.spamCache = new Map(); // {userId} -> [timestamps]
 
-        // ═══ NOVO: SISTEMA DE RATE LIMITING COM SEGURANÇA MILITAR ═══
         this.userRateLimit = new Map(); // {userId} -> { windowStart, count, blockedUntil, overAttempts, warnings, blocked_at, blocked_by_warning }
         this.hourlyLimit = 100; // Limite de mensagens por hora (não-dono)
         this.hourlyWindow = 60 * 60 * 1000; // 1 hora em ms
         this.blockDuration = 60 * 60 * 1000; // 1 hora de bloqueio
         this.maxAttemptsBeforeBlacklist = 3; // Auto-blacklist após 3 tentativas
+
+        // ═══ SISTEMA DE AVISOS E FILTROS ADICIONAIS ═══
+        this.warnings = new Map(); // {groupId_userId} -> {count, reasons[]}
+        this.antiFakeGroups = new Set(); // +244 filter
+        this.antiImageGroups = new Set();
+        this.antiStickerGroups = new Set();
+
+        // Persistência
+        this.warningsPath = '/tmp/akira_data/data/warnings.json';
+        this.antiFakePath = '/tmp/akira_data/data/antifake.json';
+        this.antiImagePath = '/tmp/akira_data/data/antiimage.json';
+        this.antiStickerPath = '/tmp/akira_data/data/antisticker.json';
+
+        this._loadAllSettings();
 
         // ═══ CONSTANTES ANTIGAS ═══
         this.HOURLY_LIMIT = 300;
@@ -505,6 +517,128 @@ class ModerationSystem {
     */
     isAntiLinkActive(groupId) {
         return this.antiLinkGroups.has(groupId);
+    }
+
+    // ═══ SISTEMA DE AVISOS ═══
+    addWarning(groupId, userId, reason = 'No reason') {
+        const key = `${groupId}_${userId}`;
+        const data = this.warnings.get(key) || { count: 0, reasons: [] };
+        data.count++;
+        data.reasons.push(reason);
+        this.warnings.set(key, data);
+        this._saveAllSettings();
+        return data.count;
+    }
+
+    getWarnings(groupId, userId) {
+        const key = `${groupId}_${userId}`;
+        return this.warnings.get(key) || { count: 0, reasons: [] };
+    }
+
+    resetWarnings(groupId, userId) {
+        const key = `${groupId}_${userId}`;
+        this.warnings.delete(key);
+        this._saveAllSettings();
+    }
+
+    // ═══ ANTI-FAKE (+244) ═══
+    toggleAntiFake(groupId, enable = true) {
+        if (enable) this.antiFakeGroups.add(groupId);
+        else this.antiFakeGroups.delete(groupId);
+        this._saveAllSettings();
+        return enable;
+    }
+
+    isAntiFakeActive(groupId) {
+        return this.antiFakeGroups.has(groupId);
+    }
+
+    isFakeNumber(userId) {
+        // Formato esperado: 244XXXXXXXXX@s.whatsapp.net
+        return !userId.startsWith('244');
+    }
+
+    // ═══ ANTI-MEDIA ═══
+    toggleAntiImage(groupId, enable = true) {
+        if (enable) this.antiImageGroups.add(groupId);
+        else this.antiImageGroups.delete(groupId);
+        this._saveAllSettings();
+        return enable;
+    }
+
+    isAntiImageActive(groupId) {
+        return this.antiImageGroups.has(groupId);
+    }
+
+    toggleAntiSticker(groupId, enable = true) {
+        if (enable) this.antiStickerGroups.add(groupId);
+        else this.antiStickerGroups.delete(groupId);
+        this._saveAllSettings();
+        return enable;
+    }
+
+    isAntiStickerActive(groupId) {
+        return this.antiStickerGroups.has(groupId);
+    }
+
+    // ═══ PERSISTÊNCIA UNIFICADA ═══
+    _loadAllSettings() {
+        this._loadSettingsSet(this.antiLinkPath, this.antiLinkGroups);
+        this._loadSettingsSet(this.antiFakePath, this.antiFakeGroups);
+        this._loadSettingsSet(this.antiImagePath, this.antiImageGroups);
+        this._loadSettingsSet(this.antiStickerPath, this.antiStickerGroups);
+        this._loadSettingsMap(this.warningsPath, this.warnings);
+    }
+
+    _saveAllSettings() {
+        this._saveSettingsSet(this.antiLinkPath, this.antiLinkGroups);
+        this._saveSettingsSet(this.antiFakePath, this.antiFakeGroups);
+        this._saveSettingsSet(this.antiImagePath, this.antiImageGroups);
+        this._saveSettingsSet(this.antiStickerPath, this.antiStickerGroups);
+        this._saveSettingsMap(this.warningsPath, this.warnings);
+    }
+
+    _loadSettingsSet(filePath, set) {
+        try {
+            if (fs.existsSync(filePath)) {
+                const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                if (Array.isArray(data)) data.forEach(i => set.add(i));
+            }
+        } catch (e) {
+            this.logger.error(`Erro ao carregar ${filePath}: ${e.message}`);
+        }
+    }
+
+    _saveSettingsSet(filePath, set) {
+        try {
+            const dir = path.dirname(filePath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(filePath, JSON.stringify(Array.from(set), null, 2));
+        } catch (e) {
+            this.logger.error(`Erro ao salvar ${filePath}: ${e.message}`);
+        }
+    }
+
+    _loadSettingsMap(filePath, map) {
+        try {
+            if (fs.existsSync(filePath)) {
+                const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                Object.entries(data).forEach(([k, v]) => map.set(k, v));
+            }
+        } catch (e) {
+            this.logger.error(`Erro ao carregar ${filePath}: ${e.message}`);
+        }
+    }
+
+    _saveSettingsMap(filePath, map) {
+        try {
+            const dir = path.dirname(filePath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const obj = Object.fromEntries(map);
+            fs.writeFileSync(filePath, JSON.stringify(obj, null, 2));
+        } catch (e) {
+            this.logger.error(`Erro ao salvar ${filePath}: ${e.message}`);
+        }
     }
 
     /**

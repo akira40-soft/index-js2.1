@@ -239,7 +239,9 @@ class BotCore {
             this.sock = makeWASocket(socketConfig);
 
             // Atualiza referência do sock nos componentes
-            if (this.commandHandler) this.commandHandler.bot = this.sock;
+            if (this.commandHandler && this.commandHandler.setSocket) {
+                this.commandHandler.setSocket(this.sock);
+            }
             if (this.presenceSimulator) this.presenceSimulator.sock = this.sock;
 
 
@@ -323,6 +325,22 @@ class BotCore {
                 }
             });
 
+            // ═══ EVENTO: ENTRADA/SAÍDA DE MEMBROS (Anti-Fake) ═══
+            this.sock.ev.on('group-participants.update', async (update) => {
+                const { id, participants, action } = update;
+                if (action !== 'add') return;
+
+                if (this.moderationSystem && this.moderationSystem.isAntiFakeActive(id)) {
+                    for (const participant of participants) {
+                        if (this.moderationSystem.isFakeNumber(participant)) {
+                            this.logger.warn(`🚫 [ANTI-FAKE] Kickando número fake: ${participant} do grupo ${id}`);
+                            await this.sock.sendMessage(id, { text: `⚠️ Número fake (+${participant.split('@')[0]}) detectado e removido.` });
+                            await this.sock.groupParticipantsUpdate(id, [participant], 'remove');
+                        }
+                    }
+                }
+            });
+
             // ═══ CASOS ESPECIAIS (Call, Group Update, etc) ═══
             // Implementar conforme necessidade...
 
@@ -403,15 +421,25 @@ class BotCore {
             this.logger.debug('🔹 [PIPELINE] ReplyInfo extraído, iniciando roteamento');
 
             // Roteamento de tipos
+            const temSticker = !!m.message?.stickerMessage;
+
+            if (temSticker && ehGrupo && this.moderationSystem.isAntiStickerActive(remoteJid)) {
+                await this.handleAntiMediaViolation(m, 'sticker');
+                return;
+            }
+
             if (temImagem) {
+                if (ehGrupo && this.moderationSystem.isAntiImageActive(remoteJid)) {
+                    await this.handleAntiMediaViolation(m, 'imagem');
+                    return;
+                }
                 await this.handleImageMessage(m, nome, numeroReal, replyInfo, ehGrupo);
             } else if (temAudio) {
                 await this.handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo);
             } else if (texto) {
                 await this.handleTextMessage(m, nome, numeroReal, texto, replyInfo, ehGrupo);
-            } else {
-                // Outros tipos (stickers, videos, documentos) - por enquanto ignora ou loga
-                // this.logger.debug('Tipo de mensagem não tratado:', Object.keys(m.message));
+            } else if (temSticker) {
+                // Se não foi bloqueado e é um sticker, pode processar se quiser
             }
 
         } catch (error) {
@@ -662,11 +690,15 @@ class BotCore {
     */
     async handleTextMessage(m, nome, numeroReal, texto, replyInfo, ehGrupo, foiAudio = false) {
         try {
-            // Check rate limit
+            // Check rate limit (Spam)
             if (!this.messageProcessor.checkRateLimit(numeroReal)) {
-                await this.sock.sendMessage(m.key.remoteJid, {
-                    text: '⏰ Você está usando comandos muito rápido.o. Aguarde um pouco.o.'
-                });
+                if (ehGrupo) {
+                    await this.handleWarning(m, 'Flood/Spam');
+                } else {
+                    await this.sock.sendMessage(m.key.remoteJid, {
+                        text: '⏰ Você está mandando mensagens muito rápido. Aguarde um pouco.'
+                    });
+                }
                 return;
             }
 
@@ -1151,6 +1183,59 @@ class BotCore {
             return await this.sock.sendMessage(m.key.remoteJid, { text, ...options }, { quoted: m });
         } catch (e) {
             this.logger.error('Erro ao enviar reply:', e.message);
+        }
+    }
+
+    // ═══ HANDLERS DE VIOLAÇÃO DE MODERAÇÃO ═══
+
+    async handleAntiLinkViolation(m, nome) {
+        const jid = m.key.remoteJid;
+        const participant = m.key.participant;
+
+        this.logger.warn(`🚫 [ANTI-LINK] Violação por ${nome} (${participant})`);
+
+        await this.reply(m, `🚫 @${participant.split('@')[0]}, links não são permitidos neste grupo!`, { mentions: [participant] });
+
+        // Deletar mensagem
+        await this.sock.sendMessage(jid, { delete: m.key });
+
+        // Kickar usuário (Anti-Link Pro)
+        await delay(1000);
+        await this.sock.groupParticipantsUpdate(jid, [participant], 'remove');
+    }
+
+    async handleAntiMediaViolation(m, tipo) {
+        const jid = m.key.remoteJid;
+        const participant = m.key.participant;
+
+        this.logger.warn(`🚫 [ANTI-MEDIA] ${tipo.toUpperCase()} bloqueado de ${participant}`);
+
+        // Deletar mensagem
+        await this.sock.sendMessage(jid, { delete: m.key });
+    }
+
+    async handleMutedUserMessage(m, nome) {
+        // Apenas deleta a mensagem silenciosamente ou avisa uma vez
+        await this.sock.sendMessage(m.key.remoteJid, { delete: m.key });
+    }
+
+    async handleWarning(m, reason) {
+        const jid = m.key.remoteJid;
+        const participant = m.key.participant;
+        const nome = m.pushName || 'Usuário';
+
+        if (!this.moderationSystem) return;
+
+        const warnCount = this.moderationSystem.addWarning(jid, participant, reason);
+        this.logger.warn(`⚠️ [WARN] ${nome} recebeu aviso ${warnCount}/3 por: ${reason}`);
+
+        if (warnCount >= 3) {
+            await this.reply(m, `🚫 @${participant.split('@')[0]} atingiu o limite de avisos (3/3) e foi removido.`, { mentions: [participant] });
+            await delay(1000);
+            await this.sock.groupParticipantsUpdate(jid, [participant], 'remove');
+            this.moderationSystem.resetWarnings(jid, participant);
+        } else {
+            await this.reply(m, `⚠️ @${participant.split('@')[0]}, você recebeu um aviso (${warnCount}/3).\nMotivo: ${reason}`, { mentions: [participant] });
         }
     }
 }

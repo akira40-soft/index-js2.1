@@ -13,6 +13,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import axios from 'axios';
 
 // Módulos Core
 import ConfigManager from './ConfigManager.js';
@@ -383,7 +384,6 @@ class CommandHandler {
                     }
                     return await this.cybersecurityToolkit.handleCommand(m, command, args);
 
-                case 'antilink':
                 case 'mute':
                 case 'desmute':
                 case 'kick':
@@ -398,6 +398,7 @@ class CommandHandler {
 
                 case 'setbotphoto':
                 case 'setbotpic':
+                case 'setphoto':
                     if (!isOwner) return false;
                     return await this._handleSetBotPhoto(m);
 
@@ -408,11 +409,32 @@ class CommandHandler {
 
                 case 'setbotstatus':
                 case 'setbio':
+                case 'setdesc':
                     if (!isOwner) return false;
                     return await this._handleSetBotStatus(m, fullArgs);
 
+                case 'getprofile':
+                case 'getuser':
+                    if (!isOwner) return false;
+                    return await this._handleGetProfileAdmin(m, args);
+
+                case 'antilink':
+                case 'antifake':
+                case 'antiimage':
+                case 'antisticker':
+                    if (!isOwner) return false;
+                    return await this._handleToggleModeration(m, command, args);
+
+                case 'warn':
+                    if (!isOwner) return false;
+                    return await this._handleManualWarn(m, args);
+
+                case 'unwarn':
+                case 'resetwarns':
+                    if (!isOwner) return false;
+                    return await this._handleResetWarns(m, args);
+
                 case 'restart':
-                case 'reiniciar':
                     if (!isOwner) return false;
                     await this.bot.reply(m, '🔄 Reiniciando sistemas Akira...');
                     process.exit(0);
@@ -700,7 +722,7 @@ todos os comandos!
             await this._reply(m, `❌ Uso: ${this.config.PREFIXO}play <nome da música ou link>`);
             return true;
         }
-        await this._reply(m, '⏳ Buscando e processando música... (Pode demorar para arquivos longos)');
+        await this._reply(m, '⏳ baixando');
 
         try {
             const res = await this.mediaProcessor.downloadYouTubeAudio(query);
@@ -1143,20 +1165,28 @@ todos os comandos!
     async _handleSetBotPhoto(m) {
         const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
         const targetMessage = quoted || m.message;
+        const chatJid = m.key.remoteJid;
+        const ehGrupo = chatJid.endsWith('@g.us');
 
         if (!targetMessage) {
-            await this._reply(m, '❌ Responda a uma imagem para definir como foto do bot.');
+            await this._reply(m, `❌ Responda a uma imagem para definir como foto do ${ehGrupo ? 'grupo' : 'bot'}.`);
             return true;
         }
 
-        await this._reply(m, '📸 Atualizando foto do bot...');
+        await this._reply(m, `📸 Atualizando foto do ${ehGrupo ? 'grupo' : 'bot'}...`);
         try {
             const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'image');
             if (!buf) throw new Error('Falha ao baixar imagem.');
 
-            const res = await this.botProfile.setBotPhoto(buf);
+            let res;
+            if (ehGrupo) {
+                res = await this.groupManagement.setGroupPhoto(chatJid, buf);
+            } else {
+                res = await this.botProfile.setBotPhoto(buf);
+            }
+
             if (res.success) {
-                await this._reply(m, '✅ Foto do bot atualizada com sucesso!');
+                await this._reply(m, `✅ Foto do ${ehGrupo ? 'grupo' : 'bot'} atualizada com sucesso!`);
             } else {
                 await this._reply(m, `❌ Erro ao atualizar foto: ${res.error}`);
             }
@@ -1168,14 +1198,25 @@ todos os comandos!
     }
 
     async _handleSetBotName(m, name) {
+        const chatJid = m.key.remoteJid;
+        const ehGrupo = chatJid.endsWith('@g.us');
+
         if (!name) {
-            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}setbotname <nome>`);
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}${ehGrupo ? 'setname' : 'setbotname'} <nome>`);
             return true;
         }
-        await this._reply(m, `📛 Alterando nome para: ${name}`);
-        const res = await this.botProfile.setBotName(name);
+
+        await this._reply(m, `📛 Alterando nome do ${ehGrupo ? 'grupo' : 'sistema'} para: ${name}`);
+
+        let res;
+        if (ehGrupo) {
+            res = await this.groupManagement.setGroupName(chatJid, name);
+        } else {
+            res = await this.botProfile.setBotName(name);
+        }
+
         if (res.success) {
-            await this._reply(m, '✅ Nome do bot atualizado!');
+            await this._reply(m, `✅ Nome do ${ehGrupo ? 'grupo' : 'bot'} atualizado!`);
         } else {
             await this._reply(m, `❌ Erro: ${res.error}`);
         }
@@ -1183,19 +1224,31 @@ todos os comandos!
     }
 
     async _handleSetBotStatus(m, status) {
+        const chatJid = m.key.remoteJid;
+        const ehGrupo = chatJid.endsWith('@g.us');
+
         if (!status) {
-            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}setbotstatus <texto>`);
+            await this._reply(m, `❌ Uso: ${this.config.PREFIXO}${ehGrupo ? 'setdesc' : 'setbotstatus'} <texto>`);
             return true;
         }
-        await this._reply(m, `📝 Alterando bio para: ${status}`);
-        const res = await this.botProfile.setBotStatus(status);
+
+        await this._reply(m, `📝 Alterando ${ehGrupo ? 'descrição' : 'bio'} para: ${status}`);
+
+        let res;
+        if (ehGrupo) {
+            res = await this.groupManagement.setGroupDescription(chatJid, status);
+        } else {
+            res = await this.botProfile.setBotStatus(status);
+        }
+
         if (res.success) {
-            await this._reply(m, '✅ Bio do bot atualizada!');
+            await this._reply(m, `✅ ${ehGrupo ? 'Descrição' : 'Bio'} atualizada!`);
         } else {
             await this._reply(m, `❌ Erro: ${res.error}`);
         }
         return true;
     }
+
 
     // ═══════════════════════════════════════════════════════════════════════
     // NOVOS COMANDOS (DIVERSÃO & GESTÃO)
@@ -1727,8 +1780,83 @@ todos os comandos!
         );
     }
 
-    async _reply(m, text, options = {}) {
-        return await this.bot.reply(m, text, options);
+
+    async _handleGetProfileAdmin(m, args) {
+        const target = this.userProfile.extractUserJidFromMessage(m.message, m) || m.key.participant || m.key.remoteJid;
+        const userInfo = await this.userProfile.getUserInfo(target);
+
+        if (!userInfo.success) {
+            await this._reply(m, `❌ Erro ao obter perfil: ${userInfo.error}`);
+            return true;
+        }
+
+        const msg = this.userProfile.formatUserDataMessage(userInfo);
+
+        if (userInfo.hasPhoto && userInfo.photoUrl) {
+            await this.sock.sendMessage(m.key.remoteJid, {
+                image: { url: userInfo.photoUrl },
+                caption: msg
+            }, { quoted: m });
+        } else {
+            await this._reply(m, msg);
+        }
+        return true;
+    }
+
+    async _handleToggleModeration(m, command, args) {
+        const jid = m.key.remoteJid;
+        const enable = args[0] === 'on' || args[0] === '1';
+        const actionStr = enable ? 'ATIVADO' : 'DESATIVADO';
+
+        if (!this.bot.moderationSystem) return true;
+
+        switch (command) {
+            case 'antilink':
+                this.bot.moderationSystem.toggleAntiLink(jid, enable);
+                await this._reply(m, `✅ Anti-Link ${actionStr} para este grupo.`);
+                break;
+            case 'antifake':
+                this.bot.moderationSystem.toggleAntiFake(jid, enable);
+                await this._reply(m, `✅ Anti-Fake (+244) ${actionStr} para este grupo.`);
+                break;
+            case 'antiimage':
+                this.bot.moderationSystem.toggleAntiImage(jid, enable);
+                await this._reply(m, `✅ Anti-Imagem ${actionStr} para este grupo.`);
+                break;
+            case 'antisticker':
+                this.bot.moderationSystem.toggleAntiSticker(jid, enable);
+                await this._reply(m, `✅ Anti-Sticker ${actionStr} para este grupo.`);
+                break;
+        }
+        return true;
+    }
+
+    async _handleManualWarn(m, args) {
+        const target = this.userProfile.extractUserJidFromMessage(m.message, m);
+        if (!target) {
+            await this._reply(m, `⚠️ Marque ou responda a alguém para dar um aviso.`);
+            return true;
+        }
+
+        const reason = args.join(' ') || 'Sem motivo especificado';
+        if (this.bot.handleWarning) {
+            await this.bot.handleWarning(m, reason);
+        }
+        return true;
+    }
+
+    async _handleResetWarns(m, args) {
+        const target = this.userProfile.extractUserJidFromMessage(m.message, m);
+        if (!target) {
+            await this._reply(m, `⚠️ Marque ou responda a alguém para resetar os avisos.`);
+            return true;
+        }
+
+        if (this.bot.moderationSystem) {
+            this.bot.moderationSystem.resetWarnings(m.key.remoteJid, target);
+            await this._reply(m, `✅ Avisos resetados para o usuário.`);
+        }
+        return true;
     }
 }
 
