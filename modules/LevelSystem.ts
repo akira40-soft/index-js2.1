@@ -1,0 +1,342 @@
+import fs from 'fs';
+import path from 'path';
+import ConfigManager from './ConfigManager.js';
+
+class LevelSystem {
+    public config: any;
+    public logger: any;
+    public dbPath: string;
+    public promoPath: string;
+    public data: any[];
+    public promos: any;
+    public windowDays: number;
+    public maxLevel: number;
+    public topForAdm: number;
+
+    constructor(logger: any = console) {
+        this.config = ConfigManager.getInstance();
+        this.logger = logger;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // HF SPACES: Usar /tmp para garantir permissões de escrita
+        // O HF Spaces tem sistema de arquivos somente-leitura em /
+        // ═══════════════════════════════════════════════════════════════════
+
+        // Forçar uso de /tmp no HF Spaces (sistema read-only)
+        const basePath = '/tmp/akira_data';
+        this.dbPath = path.join(basePath, 'data', 'group_levels.json');
+        this.promoPath = path.join(basePath, 'datauser', 'level_adm_promotion.json');
+
+        this._ensureFiles();
+        this.data = this._load(this.dbPath, []);
+        this.promos = this._load(this.promoPath, {});
+        this.windowDays = this.config.LEVEL_WINDOW_DAYS || 3;
+        this.maxLevel = this.config.LEVEL_MAX || 60;
+        this.topForAdm = this.config.LEVEL_TOP_FOR_ADM || 3;
+    }
+
+    _ensureFiles() {
+        try {
+            if (!fs.existsSync(path.dirname(this.dbPath))) fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
+            if (!fs.existsSync(path.dirname(this.promoPath))) fs.mkdirSync(path.dirname(this.promoPath), { recursive: true });
+            if (!fs.existsSync(this.dbPath)) fs.writeFileSync(this.dbPath, JSON.stringify([], null, 2));
+            if (!fs.existsSync(this.promoPath)) fs.writeFileSync(this.promoPath, JSON.stringify({}, null, 2));
+        } catch (e: any) {
+            this.logger.warn('LevelSystem: erro ao garantir arquivos:', e.message);
+            // Silenciosamente falha em caso de erro no HF Spaces
+        }
+    }
+
+    _load(p: string, fallback: any) {
+        try {
+            const raw = fs.readFileSync(p, 'utf8');
+            return JSON.parse(raw || (Array.isArray(fallback) ? '[]' : '{}'));
+        } catch (e: any) {
+            return fallback;
+        }
+    }
+
+    _save(p: string, obj: any) {
+        try { fs.writeFileSync(p, JSON.stringify(obj, null, 2)); } catch (e: any) { this.logger.warn('LevelSystem save erro:', e.message); }
+    }
+
+    getGroupRecord(gid: string, uid: string, createIfMissing: boolean = false) {
+        const rec = this.data.find(r => r.gid === gid && r.uid === uid);
+        if (rec) return rec;
+        if (createIfMissing) {
+            const n = { gid, uid, level: 0, xp: 0 };
+            this.data.push(n);
+            this._save(this.dbPath, this.data);
+            return n;
+        }
+        return { gid, uid, level: 0, xp: 0 };
+    }
+
+    saveRecord(rec: any) {
+        const i = this.data.findIndex(r => r.gid === rec.gid && r.uid === rec.uid);
+        if (i === -1) this.data.push(rec); else this.data[i] = rec;
+        this._save(this.dbPath, this.data);
+    }
+
+    // Fórmula: cada nível requer o dobro do anterior -> base * (2^level)
+    // Ex.: level 0 -> base, level 1 -> base*2, level 2 -> base*4...
+    requiredXp(level: number) {
+        const base = this.config.LEVEL_BASE_XP || 100;
+        const factor = 2; // crescimento x2 por nível
+        if (level >= this.maxLevel) return Infinity;
+        return Math.floor(base * Math.pow(factor, level));
+    }
+
+    awardXp(gid: string, uid: string, xpAmount: number = 10) {
+        const rec = this.getGroupRecord(gid, uid, true);
+        rec.xp = (rec.xp || 0) + xpAmount;
+        let leveled = false;
+
+        // Permitir múltiplos level-ups se receber muito XP de uma vez
+        while (rec.level < this.maxLevel) {
+            const req = this.requiredXp(rec.level || 0);
+            if (!isFinite(req)) break;
+            if (rec.xp >= req) {
+                rec.xp = rec.xp - req; // mantém overflow de XP
+                rec.level = (rec.level || 0) + 1;
+                leveled = true;
+                continue; // verifica próximo nível
+            }
+            break;
+        }
+
+        // Se atingiu nível máximo, zera XP para evitar overflow
+        if (rec.level >= this.maxLevel) {
+            rec.level = this.maxLevel;
+            rec.xp = 0;
+        }
+
+        this.saveRecord(rec);
+        return { rec, leveled };
+    }
+
+    // Auto-ADM promotion window logic
+    // REGRA: Cada usuário tem APENAS uma chance em 3 dias para chegar ao nível 60
+    // Se falhar, NUNCA mais poderá tentar novamente para se tornar ADM
+    registerMaxLevelUser(gid: string, uid: string, userName: string, sock: any) {
+        try {
+            const failedPath = path.join(this.config.DATABASE_FOLDER, 'datauser', 'level_adm_failed.json');
+
+            // ═══ VERIFICA SE JÁ FALHOU ANTES ═══
+            // Se falhou uma vez, nunca mais pode tentar
+            try {
+                if (fs.existsSync(failedPath)) {
+                    const failedData = JSON.parse(fs.readFileSync(failedPath, 'utf8') || '{}');
+                    if (failedData[uid] && failedData[uid].failed === true) {
+                        const failedDate = new Date(failedData[uid].failedAt).toLocaleDateString('pt-BR');
+                        return {
+                            success: false,
+                            message: `❌ Você já teve sua chance e falhou em ${failedDate}.\n\n⚠️ Não há mais tentativas disponíveis para se tornar ADM via level.`,
+                            permanentFailure: true
+                        };
+                    }
+                }
+            } catch (e: any) {
+                // Continua mesmo se falhar a leitura
+            }
+
+            // ═══ INICIA JANELA DE 3 DIAS ═══
+            if (!this.promos[gid]) {
+                this.promos[gid] = {
+                    windowStart: Date.now(),
+                    windowEnd: Date.now() + (this.windowDays * 24 * 60 * 60 * 1000),
+                    maxLevelUsers: [],
+                    promotedToADM: [],
+                    failedUsers: []
+                };
+            }
+
+            const window = this.promos[gid];
+
+            // ═══ SE JANELA EXPIROU, REGISTRA FALHA PERMANENTE ═══
+            if (Date.now() > window.windowEnd) {
+                // Verificar quem estava na janela e registrar falhas permanentes
+                const failedUsersInWindow = window.maxLevelUsers || [];
+
+                // Salvar falhas permanentes para usuários que não foram promovidos
+                let failedData: { [key: string]: any } = {};
+                try {
+                    if (fs.existsSync(failedPath)) {
+                        failedData = JSON.parse(fs.readFileSync(failedPath, 'utf8') || '{}');
+                    }
+                } catch (e: any) {
+                    failedData = {};
+                }
+
+                // Registrar falha permanente para todos que estavam na janela mas não foram promovidos
+                for (const user of failedUsersInWindow) {
+                    const wasPromoted = window.promotedToADM && window.promotedToADM.includes(user.uid);
+                    if (!wasPromoted) {
+                        failedData[user.uid] = {
+                            failed: true,
+                            failedAt: Date.now(),
+                            groupId: gid,
+                            levelReached: this.maxLevel,
+                            reason: 'Janela de 3 dias expirada sem promoção a ADM'
+                        };
+                    }
+                }
+
+                // Salvar arquivo de falhas
+                try {
+                    const failedDir = path.dirname(failedPath);
+                    if (!fs.existsSync(failedDir)) {
+                        fs.mkdirSync(failedDir, { recursive: true });
+                    }
+                    fs.writeFileSync(failedPath, JSON.stringify(failedData, null, 2));
+                } catch (e: any) {
+                    this.logger.warn('LevelSystem: erro ao salvar falhas:', e.message);
+                }
+
+                // Resetar janela
+                this.promos[gid] = {
+                    windowStart: Date.now(),
+                    windowEnd: Date.now() + (this.windowDays * 24 * 60 * 60 * 1000),
+                    maxLevelUsers: [],
+                    promotedToADM: [],
+                    failedUsers: []
+                };
+            }
+
+            // ═══ VERIFICAÇÕES ═══
+            if (window.promotedToADM.includes(uid)) {
+                return { success: false, message: '❌ Você já foi promovido a ADM nesta janela.' };
+            }
+
+            // Adiciona usuário à lista de max level users
+            if (!window.maxLevelUsers.find((u: any) => u.uid === uid)) {
+                window.maxLevelUsers.push({
+                    uid,
+                    userName,
+                    timestamp: Date.now(),
+                    position: window.maxLevelUsers.length + 1
+                });
+            }
+
+            const cfg = this._load(path.join(this.config.DATABASE_FOLDER, 'datauser', 'level_adm_config.json'), {});
+            const auto = cfg[gid]?.autoADMEnabled === true;
+
+            this._save(this.promoPath, this.promos);
+
+            // ═══ PROMOÇÃO A ADM ═══
+            if (auto && window.maxLevelUsers.length <= this.topForAdm) {
+                const position = window.maxLevelUsers.findIndex((u: any) => u.uid === uid) + 1;
+                if (position <= this.topForAdm) {
+                    try {
+                        window.promotedToADM.push(uid);
+                        this._save(this.promoPath, this.promos);
+
+                        if (sock && typeof sock.groupUpdateDescription === 'function') {
+                            sock.groupUpdateDescription(gid, `Akira Auto-ADM: ${userName} (Nível ${this.maxLevel} - Top ${position}/${this.topForAdm})`).catch(() => { });
+                        }
+
+                        return {
+                            success: true,
+                            promoted: true,
+                            position,
+                            message: `🎉 Parabéns! Você foi promovido a ADM! (Top ${position}/${this.topForAdm})`
+                        };
+                    } catch (e: any) {
+                        return { success: false, message: '❌ Erro ao promover ADM' };
+                    }
+                }
+            }
+
+            // ═══ STATUS ATUAL ═══
+            const daysRemaining = Math.ceil((window.windowEnd - Date.now()) / (24 * 60 * 60 * 1000));
+            return {
+                success: true,
+                promoted: false,
+                message: `📊 Max level registrado!\n\n🎯 Posição: ${window.maxLevelUsers.length}/${this.topForAdm}\n⏰ Tempo restante: ${daysRemaining} dias\n\n⚠️ Atenção: Esta é sua ÚNICA chance em 3 dias para se tornar ADM!\nSe a janela expirar sem você estar no Top ${this.topForAdm}, NÃO haverá mais tentativas.`,
+                daysRemaining,
+                position: window.maxLevelUsers.length,
+                maxPositions: this.topForAdm
+            };
+        } catch (e: any) {
+            return { success: false, message: e.message };
+        }
+    }
+
+    // Retorna o nome da patente baseado no nível
+    getPatente(nivelAtual: number) {
+        let patt = 'Recruta 🔰';
+        if (nivelAtual >= 61) patt = 'A Lenda  легенда 🛐';
+        else if (nivelAtual >= 60) patt = 'Transcendente V ✨';
+        else if (nivelAtual >= 59) patt = 'Transcendente IV ✨';
+        else if (nivelAtual >= 58) patt = 'Transcendente III ✨';
+        else if (nivelAtual >= 57) patt = 'Transcendente II ✨';
+        else if (nivelAtual >= 56) patt = 'Transcendente I ✨';
+        else if (nivelAtual >= 55) patt = 'Divino V 💠';
+        else if (nivelAtual >= 54) patt = 'Divino IV 💠';
+        else if (nivelAtual >= 53) patt = 'Divino III 💠';
+        else if (nivelAtual >= 52) patt = 'Divino II 💠';
+        else if (nivelAtual >= 51) patt = 'Divino I 💠';
+        else if (nivelAtual >= 50) patt = 'Imortal V ⚡';
+        else if (nivelAtual >= 49) patt = 'Imortal IV ⚡';
+        else if (nivelAtual >= 48) patt = 'Imortal III ⚡';
+        else if (nivelAtual >= 47) patt = 'Imortal II ⚡';
+        else if (nivelAtual >= 46) patt = 'Imortal I ⚡';
+        else if (nivelAtual >= 45) patt = 'Lendário V 🎖️';
+        else if (nivelAtual >= 44) patt = 'Lendário IV 🎖️';
+        else if (nivelAtual >= 43) patt = 'Lendário III 🎖️';
+        else if (nivelAtual >= 42) patt = 'Lendário II 🎖️';
+        else if (nivelAtual >= 41) patt = 'Lendário I 🎖️';
+        else if (nivelAtual >= 40) patt = 'God V 🕴️';
+        else if (nivelAtual >= 39) patt = 'God IV 🕴️';
+        else if (nivelAtual >= 38) patt = 'God III 🕴️';
+        else if (nivelAtual >= 37) patt = 'God II 🕴️';
+        else if (nivelAtual >= 36) patt = 'God I 🕴️';
+        else if (nivelAtual >= 35) patt = 'Mítico V 🔮';
+        else if (nivelAtual >= 34) patt = 'Mítico IV 🔮';
+        else if (nivelAtual >= 33) patt = 'Mítico III 🔮';
+        else if (nivelAtual >= 32) patt = 'Mítico II 🔮';
+        else if (nivelAtual >= 31) patt = 'Mítico I 🔮';
+        else if (nivelAtual >= 30) patt = 'Mestre V 🐂';
+        else if (nivelAtual >= 29) patt = 'Mestre IV 🐂';
+        else if (nivelAtual >= 28) patt = 'Mestre III 🐂';
+        else if (nivelAtual >= 27) patt = 'Mestre II 🐂';
+        else if (nivelAtual >= 26) patt = 'Mestre I 🐂';
+        else if (nivelAtual >= 25) patt = 'Diamante V 💎';
+        else if (nivelAtual >= 24) patt = 'Diamante IV 💎';
+        else if (nivelAtual >= 23) patt = 'Diamante III 💎';
+        else if (nivelAtual >= 22) patt = 'Diamante II 💎';
+        else if (nivelAtual >= 21) patt = 'Diamante I 💎';
+        else if (nivelAtual >= 20) patt = 'Campeão V 🏆';
+        else if (nivelAtual >= 19) patt = 'Campeão IV 🏆';
+        else if (nivelAtual >= 18) patt = 'Campeão III 🏆';
+        else if (nivelAtual >= 17) patt = 'Campeão II 🏆';
+        else if (nivelAtual >= 16) patt = 'Campeão I 🏆';
+        else if (nivelAtual >= 15) patt = 'Ouro V 🥇';
+        else if (nivelAtual >= 14) patt = 'Ouro IV 🥇';
+        else if (nivelAtual >= 13) patt = 'Ouro III 🥇';
+        else if (nivelAtual >= 12) patt = 'Ouro II 🥇';
+        else if (nivelAtual >= 11) patt = 'Ouro I 🥇';
+        else if (nivelAtual >= 10) patt = 'Prata V 🥈';
+        else if (nivelAtual >= 9) patt = 'Prata IV 🥈';
+        else if (nivelAtual >= 8) patt = 'Prata III 🥈';
+        else if (nivelAtual >= 7) patt = 'Prata II 🥈';
+        else if (nivelAtual >= 6) patt = 'Prata I 🥈';
+        else if (nivelAtual >= 5) patt = 'Bronze V 🥉';
+        else if (nivelAtual >= 4) patt = 'Bronze IV 🥉';
+        else if (nivelAtual >= 3) patt = 'Bronze III 🥉';
+        else if (nivelAtual >= 2) patt = 'Bronze II 🥉';
+        else if (nivelAtual >= 1) patt = 'Bronze I 🥉';
+
+        return patt;
+    }
+
+    // status info
+    getStatus(gid: string) {
+        const window = this.promos[gid];
+        if (!window) return { isActive: false };
+        const daysRemaining = Math.max(0, Math.ceil((window.windowEnd - Date.now()) / (24 * 60 * 60 * 1000)));
+        return { isActive: true, daysRemaining, maxLevelUsers: window.maxLevelUsers, promotedToADM: window.promotedToADM, failedUsers: window.failedUsers };
+    }
+}
+
+export default LevelSystem;

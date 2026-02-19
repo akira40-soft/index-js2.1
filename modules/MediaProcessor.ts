@@ -1,0 +1,1596 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * CLASSE: MediaProcessor
+ * ═══════════════════════════════════════════════════════════════════════
+ * Gerencia processamento de mídia: imagens, vídeos, stickers, YouTube
+ * Download, conversão, criação de stickers personalizados
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+
+import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
+import ffmpeg from 'fluent-ffmpeg';
+import { exec, execFile, spawn, execSync } from 'child_process';
+import util from 'util';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// yt-dlp ou ytdl-core (prioritário)
+let ytdl: any = null;
+try {
+    ytdl = await import('@distube/ytdl-core').then(m => m.default || m);
+} catch (e: any) {
+    try {
+        ytdl = await import('ytdl-core').then(m => m.default || m);
+    } catch (e2: any) {
+        ytdl = null;
+    }
+}
+
+import yts from 'yt-search';
+import { downloadContentFromMessage } from '@whiskeysockets/baileys';
+import ConfigManager from './ConfigManager.js';
+
+// Webpmux para metadados de stickers
+let Webpmux: any = null;
+try {
+    Webpmux = await import('node-webpmux').then(m => m.default || m);
+} catch (e: any) {
+    console.warn('⚠️ node-webpmux não instalado. Stickers sem metadados EXIF.');
+}
+
+class MediaProcessor {
+    private config: any;
+    private logger: any;
+    private tempFolder: string;
+    private downloadCache: Map<string, any>;
+
+    constructor(logger: any = null) {
+        this.config = ConfigManager.getInstance();
+        this.logger = logger || console;
+        this.tempFolder = this.config?.TEMP_FOLDER || './temp';
+        this.downloadCache = new Map();
+
+        // Garante que a pasta temporária exista
+        if (!fs.existsSync(this.tempFolder)) {
+            try {
+                fs.mkdirSync(this.tempFolder, { recursive: true });
+                this.logger?.info(`📁 Diretório temporário criado: ${this.tempFolder}`);
+            } catch (dirErr) {
+                this.logger.error(`❌ Erro ao criar/verificar pasta temporária ${this.tempFolder}:`, dirErr.message);
+            }
+        }
+    }
+
+    /**
+    * Gera nome de arquivo aleatório
+    */
+    generateRandomFilename(ext: string = ''): string {
+        return path.join(
+            this.tempFolder,
+            `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext ? '.' + ext : ''}`
+        );
+    }
+
+    /**
+    * Limpa arquivo
+    */
+    async cleanupFile(filePath: string): Promise<void> {
+        try {
+            if (!filePath || !fs.existsSync(filePath)) return;
+
+            return new Promise((resolve) => {
+                fs.unlink(filePath, (err) => {
+                    if (err && err.code !== 'ENOENT') {
+                        this.logger?.warn(`⚠️ Erro ao limpar ${path.basename(filePath)}`);
+                    }
+                    resolve();
+                });
+            });
+        } catch (e) {
+            this.logger?.error('Erro ao limpar arquivo:', e.message);
+        }
+    }
+
+    /**
+    * Download de mídia via Baileys
+    */
+    async downloadMedia(message: any, mimeType: string = 'image'): Promise<Buffer | null> {
+        try {
+            // Validação prévia
+            if (!message) {
+                this.logger?.error('❌ Mensagem é null ou undefined');
+                return null;
+            }
+
+            // Função auxiliar recursiva para encontrar o objeto de mídia (que contém url, mediaKey, etc)
+            const findMediaContent = (obj: any): any => {
+                if (!obj || typeof obj !== 'object') return null;
+
+                // Se houver mediaKey, encontramos o objeto final
+                if (obj.mediaKey || obj.url || obj.directPath) return obj;
+
+                // Tipos conhecidos de wrappers de mensagem
+                const wrappers = [
+                    'imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage',
+                    'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension',
+                    'ephemeralMessage', 'protocolMessage', 'templateMessage', 'interactiveMessage',
+                    'message'
+                ];
+
+                for (const key of wrappers) {
+                    if (obj[key]) {
+                        const result = findMediaContent(obj[key]);
+                        if (result) return result;
+                    }
+                }
+
+                // Busca genérica em propriedades que terminam com 'Message' se não encontrou nos conhecidos
+                for (const key in obj) {
+                    if (key.endsWith('Message') && obj[key] && typeof obj[key] === 'object') {
+                        const result = findMediaContent(obj[key]);
+                        if (result) return result;
+                    }
+                }
+
+                return null;
+            };
+
+            let mediaContent = findMediaContent(message);
+
+            if (!mediaContent) {
+                this.logger?.error('❌ Não foi possível encontrar conteúdo de mídia na mensagem');
+                return null;
+            }
+
+            // Atualiza referência
+            message = mediaContent;
+
+            this.logger?.debug(`⬇️ Baixando mídia (mime: ${mimeType})...`);
+            this.logger?.debug(`📋 Tipo de mensagem: ${typeof message}`);
+
+            // Timeout de 30 segundos para download
+            // Retry loop
+            let buffer = Buffer.from([]);
+            let lastError = null;
+            let chunksReceived = 0;
+
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    const downloadPromise = downloadContentFromMessage(message, mimeType as any);
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Timeout ao baixar mídia (30s)')), 30000)
+                    );
+
+                    const stream = await Promise.race([downloadPromise, timeoutPromise]);
+                    buffer = Buffer.from([]);
+
+                    for await (const chunk of stream as any) {
+                        buffer = Buffer.concat([buffer, chunk]);
+                    }
+
+                    if (buffer.length > 0) break; // Sucesso
+                } catch (err) {
+                    lastError = err;
+                    this.logger?.warn(`⚠️ Tentativa ${attempt} falhou: ${err.message}`);
+                    await new Promise(r => setTimeout(r, 1000)); // Wait 1s
+                }
+            }
+
+            if (buffer.length === 0 && lastError) throw lastError;
+
+            this.logger?.debug(`✅ Download concluído: ${buffer.length} bytes (${chunksReceived} chunks)`);
+
+            // Validação de tamanho mínimo (imagens válidas têm pelo menos 100 bytes)
+            if (buffer.length < 100) {
+                this.logger?.error(`❌ Buffer muito pequeno: ${buffer.length} bytes`);
+                return null;
+            }
+
+            return buffer;
+        } catch (e) {
+            this.logger?.error('❌ Erro ao baixar/decifrar mídia:', e.message);
+            this.logger?.error('Stack trace:', e.stack);
+            return null;
+        }
+    }
+
+    /**
+    * Converte buffer para base64
+    */
+    bufferToBase64(buffer: Buffer): string | null {
+        if (!buffer) return null;
+        return buffer.toString('base64');
+    }
+
+    /**
+    * Converte base64 para buffer
+    */
+    base64ToBuffer(base64String: string): Buffer | null {
+        if (!base64String) return null;
+        return Buffer.from(base64String, 'base64');
+    }
+
+    /**
+     * Busca buffer de uma URL externa (ex: thumbnail)
+     */
+    async fetchBuffer(url: string): Promise<Buffer | null> {
+        try {
+            const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 10000 });
+            return Buffer.from(res.data);
+        } catch (e) {
+            this.logger?.debug('Erro ao buscar buffer da URL:', e.message);
+            return null;
+        }
+    }
+
+    /**
+    * Adiciona metadados EXIF ao sticker
+    * Pack Name = nome do usuário que solicitou
+    * Author = Akira-Bot
+    */
+    async addStickerMetadata(webpBuffer: Buffer, packName: string = 'akira-bot', author: string = 'Akira-Bot'): Promise<Buffer> {
+        let tempInput = null;
+        let tempOutput = null;
+        try {
+            if (!Webpmux) return webpBuffer;
+
+            tempInput = this.generateRandomFilename('webp');
+            tempOutput = this.generateRandomFilename('webp');
+
+            fs.writeFileSync(tempInput, webpBuffer);
+
+            const img = new Webpmux.Image();
+            await img.load(tempInput); // Carrega do arquivo físico para evitar erro de Buffer no node-webpmux
+
+            const json = {
+                'sticker-pack-id': `akira-${crypto.randomBytes(8).toString('hex')}`,
+                'sticker-pack-name': String(packName || 'akira-bot').trim().slice(0, 30),
+                'sticker-pack-publisher': String(author || 'Akira-Bot').trim().slice(0, 30),
+                'emojis': ['🎨', '🤖']
+            };
+
+            const exifAttr = Buffer.from([
+                0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00,
+                0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x16, 0x00, 0x00, 0x00
+            ]);
+
+            const jsonBuff = Buffer.from(JSON.stringify(json), 'utf-8');
+            const exif = Buffer.concat([exifAttr, jsonBuff]);
+            exif.writeUIntLE(jsonBuff.length, 14, 4);
+
+            img.exif = exif;
+
+            // Diferenciação entre sticker estático e animado para o método de salvamento
+            if (img.anim && img.anim.frames && img.anim.frames.length > 0) {
+                this.logger?.debug(`🎞️ [ANIMADO] Usando muxAnim para preservar frames.`);
+                // Correção: muxAnim espera um único objeto com a propriedade 'path'
+                await img.muxAnim({
+                    path: tempOutput,
+                    frames: img.anim.frames,
+                    loops: img.anim.loops || 0,
+                    exif: exif
+                });
+            } else {
+                this.logger?.debug(`🖼️ [ESTÁTICO] Usando save normal.`);
+                await img.save(tempOutput);
+            }
+
+            const result = fs.readFileSync(tempOutput);
+
+            this.logger?.debug(`✅ Metadados EXIF inseridos via Arquivo: "${packName}" | "${author}"`);
+
+            // Cleanup imediato
+            await Promise.all([
+                this.cleanupFile(tempInput),
+                this.cleanupFile(tempOutput)
+            ]);
+
+            return result;
+        } catch (e) {
+            this.logger?.warn('⚠️ Erro ao adicionar EXIF:', e.message);
+            if (tempInput) await this.cleanupFile(tempInput);
+            if (tempOutput) await this.cleanupFile(tempOutput);
+            return webpBuffer;
+        }
+    }
+
+    /**
+    * Cria sticker de imagem - FORMATO QUADRADO PADRONIZADO
+    * Pack Name = nome do usuário
+    * Author = Akira-Bot
+    * 
+    * Melhorias:
+    * - Sempre gera sticker 512x512 (quadrado) independente da proporção da imagem
+    * - Usa padding transparente para manter proporção original
+    * - Compatibilidade total entre PC e mobile
+    */
+    async createStickerFromImage(imageBuffer: Buffer, metadata: any = {}): Promise<any> {
+        try {
+            this.logger?.info('🎨 Criando sticker de imagem (formato quadrado)..');
+
+            const inputPath = this.generateRandomFilename('jpg');
+            const outputPath = this.generateRandomFilename('webp');
+
+            fs.writeFileSync(inputPath, imageBuffer);
+
+            const { packName = 'akira-bot', author = 'Akira-Bot' } = metadata;
+
+            // Filtro otimizado: Preenchimento total (Fill) sem barras pretas
+            // Usa force_original_aspect_ratio=increase seguido de crop para preencher 512x512
+            const videoFilter = 'scale=512:512:flags=lanczos:force_original_aspect_ratio=increase,crop=512:512';
+
+            // Configuração do FFmpeg path (se necessário, mas fluent-ffmpeg geralmente acha no PATH)
+            // Se o usuário tem ffmpeg no sistema, isso deve funcionar direto
+            // this.logger?.info('🔧 Usando FFmpeg do sistema...');
+
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputPath)
+                    .inputOptions(['-y']) // Forçar overwrite no input se precisar
+                    .outputOptions([
+                        '-y',
+                        '-v', 'error',
+                        '-c:v', 'libwebp',
+                        '-lossless', '0',
+                        '-compression_level', '4', // Mais rápido
+                        '-q:v', '75', // Qualidade boa
+                        '-preset', 'default',
+                        '-vf', videoFilter,
+                        '-s', '512x512'
+                    ])
+                    .on('start', (cmdLine) => {
+                        this.logger?.debug(`⚡ FFmpeg comando: ${cmdLine}`);
+                    })
+                    .on('end', () => {
+                        this.logger?.debug('✅ Sticker criado com sucesso (FFmpeg)');
+                        resolve(void 0);
+                    })
+                    .on('error', (err) => {
+                        this.logger?.error(`❌ Erro crítico FFmpeg: ${err.message}`);
+                        reject(err);
+                    })
+                    .save(outputPath);
+            });
+
+            // Verifica se arquivo foi criado
+            if (!fs.existsSync(outputPath)) {
+                throw new Error('Arquivo de saída não foi criado');
+            }
+
+            const stickerBuffer = fs.readFileSync(outputPath);
+
+            // Validação: verificar dimensões (se possível)
+            if (stickerBuffer.length === 0) {
+                throw new Error('Sticker gerado está vazio');
+            }
+
+            // Adiciona metadados EXIF: packName configurado, author configurado
+            const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, author);
+
+            await Promise.all([
+                this.cleanupFile(inputPath),
+                this.cleanupFile(outputPath)
+            ]);
+
+            this.logger?.info(`✅ Sticker criado: ${(stickerComMetadados.length / 1024).toFixed(2)}KB`);
+
+            return {
+                sucesso: true,
+                buffer: stickerComMetadados,
+                tipo: 'sticker_image',
+                size: stickerComMetadados.length,
+                packName,
+                author
+            };
+
+        } catch (error) {
+            this.logger?.error('❌ Erro ao criar sticker:', error.message);
+            return {
+                sucesso: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+    * Cria sticker animado de vídeo - FORMATO QUADRADO PADRONIZADO
+    * 
+    * Melhorias:
+    * - Sempre gera sticker 512x512 (quadrado) independente da proporção do vídeo
+    * - Usa padding transparente para manter proporção original (sem distorção)
+    * - Compatibilidade total entre PC e mobile
+    * - Redução automática de qualidade se exceder 500KB
+    */
+    async createAnimatedStickerFromVideo(videoBuffer: Buffer, maxDuration: number | string = 30, metadata: any = {}): Promise<any> {
+        try {
+            // Use configured max duration if not explicitly provided
+            const cfgMax = parseInt(this.config?.STICKER_MAX_ANIMATED_SECONDS || '30');
+            maxDuration = parseInt(String(maxDuration || cfgMax));
+
+            this.logger?.info(`🎬 Criando sticker animado (max ${maxDuration}s)`);
+
+            const inputPath = this.generateRandomFilename('mp4');
+            const outputPath = this.generateRandomFilename('webp');
+
+            fs.writeFileSync(inputPath, videoBuffer);
+
+            // Check input duration and log/trim if necessary
+            let inputDuration = 0;
+            try {
+                await new Promise((resolve, reject) => {
+                    ffmpeg.ffprobe(inputPath, (err, metadataProbe) => {
+                        if (err) return reject(err);
+                        inputDuration = metadataProbe?.format?.duration ? Math.floor(metadataProbe.format.duration) : 0;
+                        if (inputDuration > Number(maxDuration)) {
+                            this.logger?.info(`🛑 Vídeo de entrada tem ${inputDuration}s; será cortado para ${maxDuration}s`);
+                        }
+                        resolve(void 0);
+                    });
+                });
+            } catch (probeErr) {
+                this.logger?.debug('⚠️ Não foi possível obter duração do vídeo antes da conversão:', probeErr.message);
+            }
+
+            // Pack name e Author vindos do metadata (fornecidos pelo Handler)
+            const { packName = 'akira-bot', author = 'Akira-Bot' } = metadata;
+
+            // Filtro otimizado: escala aumentando para preencher + crop para 512x512
+            // Isso garante formato quadrado preenchido
+            const videoFilter = `fps=15,scale=512:512:flags=lanczos:force_original_aspect_ratio=increase,crop=512:512`;
+
+            const stickerDuration = Math.min(maxDuration, 10); // Máximo 10s para WhatsApp mobile
+
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputPath)
+                    .outputOptions([
+                        '-vcodec', 'libwebp',
+                        '-vf', videoFilter,
+                        '-s', '512x512',
+                        '-loop', '0',
+                        '-lossless', '0',
+                        '-compression_level', '6',
+                        '-q:v', '75',
+                        '-preset', 'default',
+                        '-an',
+                        '-t', String(stickerDuration),
+                        '-y'
+                    ])
+                    .on('end', () => {
+                        this.logger?.debug('✅ FFmpeg processamento concluído');
+                        resolve(void 0);
+                    })
+                    .on('error', (err) => {
+                        this.logger?.error('❌ Erro FFmpeg:', err.message);
+                        reject(err);
+                    })
+                    .save(outputPath);
+            });
+
+            // Verifica se arquivo foi criado
+            if (!fs.existsSync(outputPath)) {
+                throw new Error('Arquivo de saída não foi criado');
+            }
+
+            let stickerBuffer = fs.readFileSync(outputPath);
+
+            // Validação de tamanho
+            if (stickerBuffer.length === 0) {
+                throw new Error('Sticker gerado está vazio');
+            }
+
+            // Se maior que 500KB, tenta reprocessar com qualidade reduzida
+            if (stickerBuffer.length > 500 * 1024) {
+                this.logger?.warn(`⚠️ Sticker muito grande (${(stickerBuffer.length / 1024).toFixed(2)}KB), reduzindo qualidade...`);
+
+                await this.cleanupFile(outputPath);
+
+                // Reprocessa com qualidade reduzida
+                await new Promise((resolve, reject) => {
+                    ffmpeg(inputPath)
+                        .outputOptions([
+                            '-vcodec', 'libwebp',
+                            '-vf', videoFilter,
+                            '-s', '512x512',
+                            '-loop', '0',
+                            '-lossless', '0',
+                            '-compression_level', '9',
+                            '-q:v', '50',
+                            '-preset', 'picture',
+                            '-an',
+                            '-t', String(Math.min(Number(maxDuration), 10)),
+                            '-y'
+                        ])
+                        .on('end', () => resolve(void 0))
+                        .on('error', (err: any) => reject(err))
+                        .save(outputPath);
+                });
+
+                stickerBuffer = fs.readFileSync(outputPath);
+
+                if (stickerBuffer.length > 500 * 1024) {
+                    await Promise.all([
+                        this.cleanupFile(inputPath),
+                        this.cleanupFile(outputPath)
+                    ]);
+                    return {
+                        sucesso: false,
+                        error: 'Sticker animado muito grande (>500KB) mesmo com qualidade reduzida. Use um vídeo mais curto.'
+                    };
+                }
+            }
+
+            // Adiciona metadados EXIF ao sticker animado
+            const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, author);
+
+            await Promise.all([
+                this.cleanupFile(inputPath),
+                this.cleanupFile(outputPath)
+            ]);
+
+            this.logger?.info(`✅ Sticker animado criado: ${(stickerComMetadados.length / 1024).toFixed(2)}KB`);
+
+            return {
+                sucesso: true,
+                buffer: stickerComMetadados,
+                tipo: 'sticker_animado',
+                size: stickerComMetadados.length,
+                packName,
+                author
+            };
+
+        } catch (error) {
+            this.logger?.error('❌ Erro ao criar sticker animado:', error.message);
+            return {
+                sucesso: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Converte vídeo para áudio (MP3)
+     */
+    async convertVideoToAudio(videoBuffer: Buffer): Promise<any> {
+        try {
+            const inputPath = this.generateRandomFilename('mp4');
+            const outputPath = this.generateRandomFilename('mp3');
+
+            fs.writeFileSync(inputPath, videoBuffer);
+
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputPath)
+                    .toFormat('mp3')
+                    .audioCodec('libmp3lame')
+                    .on('end', () => resolve(void 0))
+                    .on('error', (err: any) => reject(err))
+                    .save(outputPath);
+            });
+
+            const audioBuffer = fs.readFileSync(outputPath);
+
+            // Cleanup
+            this.cleanupFile(inputPath);
+            this.cleanupFile(outputPath);
+
+            return { sucesso: true, buffer: audioBuffer };
+        } catch (e) {
+            return { sucesso: false, error: e.message };
+        }
+    }
+
+    /**
+    * Converte sticker para imagem
+    */
+    async convertStickerToImage(stickerBuffer: Buffer): Promise<any> {
+        try {
+            this.logger?.info('🔄 Convertendo sticker para imagem..');
+
+            const inputPath = this.generateRandomFilename('webp');
+            const outputPath = this.generateRandomFilename('png');
+
+            fs.writeFileSync(inputPath, stickerBuffer);
+
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputPath)
+                    .outputOptions('-vcodec', 'png')
+                    .on('end', () => {
+                        this.logger?.debug('✅ Conversão concluída');
+                        resolve(void 0);
+                    })
+                    .on('error', (err) => {
+                        this.logger?.error('❌ Erro FFmpeg:', err.message);
+                        reject(err);
+                    })
+                    .save(outputPath);
+            });
+
+            if (!fs.existsSync(outputPath)) {
+                throw new Error('Arquivo de saída não foi criado');
+            }
+
+            const imageBuffer = fs.readFileSync(outputPath);
+
+            await Promise.all([
+                this.cleanupFile(inputPath),
+                this.cleanupFile(outputPath)
+            ]);
+
+            this.logger?.info('✅ Sticker convertido para imagem');
+
+            return {
+                sucesso: true,
+                buffer: imageBuffer,
+                tipo: 'imagem',
+                size: imageBuffer.length
+            };
+
+        } catch (error) {
+            this.logger?.error('❌ Erro ao converter sticker:', error.message);
+            return {
+                sucesso: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+    * Detecta se buffer é view-once
+    */
+    detectViewOnce(message: any): any {
+        if (!message) return null;
+        try {
+            if (message.viewOnceMessageV2?.message) return message.viewOnceMessageV2.message;
+            if (message.viewOnceMessageV2Extension?.message) return message.viewOnceMessageV2Extension.message;
+            if (message.viewOnceMessage?.message) return message.viewOnceMessage.message;
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+    * Extrai conteúdo de view-once e retorna tipo + buffer
+    */
+    async extractViewOnceContent(quotedMessage: any): Promise<any> {
+        try {
+            const unwrapped = this.detectViewOnce(quotedMessage);
+            if (!unwrapped) {
+                return { sucesso: false, error: 'Não é uma mensagem view-once' };
+            }
+
+            const tipo = unwrapped.imageMessage ? 'image' :
+                unwrapped.videoMessage ? 'video' :
+                    unwrapped.audioMessage ? 'audio' :
+                        unwrapped.stickerMessage ? 'sticker' : null;
+
+            if (!tipo) {
+                return { sucesso: false, error: 'Tipo de view-once não suportado' };
+            }
+
+            const mimeMap = {
+                'image': 'image',
+                'video': 'video',
+                'audio': 'audio',
+                'sticker': 'sticker'
+            };
+
+            const buffer = await this.downloadMedia(unwrapped[tipo + 'Message'], mimeMap[tipo]);
+
+            if (!buffer) {
+                return { sucesso: false, error: 'Erro ao extrair conteúdo' };
+            }
+
+            return {
+                sucesso: true,
+                buffer,
+                tipo,
+                size: buffer.length
+            };
+        } catch (e) {
+            this.logger?.error('❌ Erro ao extrair view-once:', e.message);
+            return { sucesso: false, error: e.message };
+        }
+    }
+
+    /**
+    * Localiza yt-dlp no sistema
+    */
+    findYtDlp() {
+        try {
+            const binName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+            const localPath = path.resolve(__dirname, '..', 'bin', binName);
+
+            if (fs.existsSync(localPath)) {
+                return { modo: 'exe', cmd: localPath };
+            }
+
+            // Tenta no PATH
+            try {
+                execSync(`${binName} --version`, { stdio: 'pipe', shell: true } as any);
+                return { modo: 'exe', cmd: binName };
+            } catch (_) { }
+
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+    * Download via yt-dlp
+    */
+    async _downloadWithYtDlp(url: string, videoId: string, tool: any): Promise<any> {
+        try {
+            const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
+
+            const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
+            const cookiesPath = this.config?.YT_COOKIES_PATH;
+            const poToken = this.config?.YT_PO_TOKEN;
+
+            // Bypass de Captcha: Usa extractor-args para simular cliente ios especificamente (mais estável contra detecção)
+            const nodePath = process.execPath;
+            const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+
+            let bypassArgs = `--extractor-args "youtube:player_client=ios" --extractor-args "youtube:player_skip=web,web_music,mweb,android,tv" --user-agent "${userAgent}" --no-check-certificates --js-runtimes "node:${nodePath}"`;
+
+            if (cookiesPath && fs.existsSync(cookiesPath)) {
+                bypassArgs += ` --cookies "${cookiesPath}"`;
+            }
+
+            if (poToken) {
+                // Algumas versões do yt-dlp aceitam po_token via extractor-args
+                bypassArgs += ` --extractor-args "youtube:po_token=${poToken}"`;
+            }
+
+            const command = process.platform === 'win32'
+                ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`
+                : `${tool.cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
+
+            return await new Promise((resolve, reject) => {
+                const execTimeout = this.config?.YT_TIMEOUT_MS || 900000;
+                exec(command, { timeout: execTimeout, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
+                    const actualPath = outputTemplate + '.mp3';
+
+                    if (fs.existsSync(actualPath)) {
+                        resolve({ sucesso: true, audioPath: actualPath, tamanho: fs.statSync(actualPath).size });
+                    } else if (error) {
+                        // SMART FALLBACK: Se falhar como "Video unavailable"
+                        if (stderr.includes('Video unavailable') || stdout.includes('Video unavailable')) {
+                            this.logger?.info('⚠️ ID inválido detectado pelo yt-dlp (Audio). Tentando buscar como termo...');
+                            return resolve({ fallbackToSearch: true });
+                        }
+                        reject(error);
+                    } else {
+                        reject(new Error('Arquivo não foi criado e nenhum erro foi reportado'));
+                    }
+                });
+            });
+
+            const actualPath = outputTemplate + '.mp3';
+            const stats = fs.statSync(actualPath);
+
+            if (stats.size === 0) {
+                await this.cleanupFile(actualPath);
+                return { sucesso: false, error: 'Arquivo vazio' };
+            }
+
+            // Retornamos o caminho para o handler enviar via stream (melhor p/ memória)
+            return {
+                sucesso: true,
+                audioPath: actualPath,
+                titulo: 'Áudio do YouTube',
+                tamanho: stats.size,
+                metodo: 'yt-dlp'
+            };
+        } catch (e: any) {
+            this.logger?.debug('yt-dlp error:', e.message);
+            return { sucesso: false, error: e.message };
+        }
+    }
+
+    /**
+    * Download via ytdl-core
+    */
+    async _downloadWithYtdlCore(url: string, videoId: string): Promise<any> {
+        try {
+            const outputPath = this.generateRandomFilename('mp3');
+
+            this.logger?.info('🔄 Obtendo informações do vídeo...');
+
+            const info = await ytdl.getInfo(videoId, {
+                requestOptions: {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+                    }
+                }
+            });
+
+            // Verifica duração máxima
+            try {
+                const videoLength = parseInt(info?.videoDetails?.lengthSeconds || 0);
+                const maxAllowed = parseInt(this.config?.YT_MAX_DURATION_SECONDS || 3600);
+                if (videoLength > 0 && videoLength > maxAllowed) {
+                    return { sucesso: false, error: `Vídeo muito longo (${videoLength}s). Limite: ${maxAllowed}s` };
+                }
+            } catch (lenErr) {
+                this.logger?.debug('Aviso de duração:', lenErr.message);
+            }
+
+            const audioFormat = ytdl.chooseFormat(info.formats, {
+                quality: 'highestaudio',
+                filter: 'audioonly'
+            });
+
+            if (!audioFormat) {
+                return { sucesso: false, error: 'Nenhum formato de áudio encontrado' };
+            }
+
+            this.logger?.info(`📦 Formato: ${audioFormat.container}`);
+            const writeStream = fs.createWriteStream(outputPath);
+            const stream = ytdl.downloadFromInfo(info, { format: audioFormat });
+
+            await new Promise((resolve, reject) => {
+                stream.pipe(writeStream);
+                writeStream.on('finish', () => resolve(true));
+                writeStream.on('error', reject);
+                stream.on('error', reject);
+            });
+
+            if (!fs.existsSync(outputPath)) {
+                throw new Error(`Arquivo não encontrado após download (ENOENT): ${outputPath}`);
+            }
+
+            const stats = fs.statSync(outputPath);
+            if (stats.size === 0) {
+                await this.cleanupFile(outputPath);
+                throw new Error('Arquivo baixado está vazio');
+            }
+
+            if (stats.size > this.config?.YT_MAX_SIZE_MB * 1024 * 1024) {
+                await this.cleanupFile(outputPath);
+                return { sucesso: false, error: `Arquivo muito grande (>${this.config?.YT_MAX_SIZE_MB}MB)` };
+            }
+
+            this.logger?.info(`✅ Download ytdl-core completo: ${(stats.size / 1024 / 1024).toFixed(2)}MB`);
+            return {
+                sucesso: true,
+                audioPath: outputPath,
+                titulo: info?.videoDetails?.title || 'Música do YouTube',
+                tamanho: stats.size,
+                metodo: 'ytdl-core'
+            };
+
+        } catch (e) {
+            this.logger?.debug('ytdl-core error:', e.message);
+            return { sucesso: false, error: e.message };
+        }
+    }
+
+    /**
+     * Extrai Video ID do YouTube de várias formas
+     */
+    extractYouTubeVideoId(url: string): string | null {
+        // Formato padrão: https://www.youtube.com/watch?v=VIDEO_ID
+        let match = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+        if (match) return match[1];
+
+        // Formato curto: https://youtu.be/VIDEO_ID
+        match = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+        if (match) return match[1];
+
+        // Formato embed: https://www.youtube.com/embed/VIDEO_ID
+        match = url.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
+        if (match) return match[1];
+
+        // Formato shorts: https://www.youtube.com/shorts/VIDEO_ID
+        match = url.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/);
+        if (match) return match[1];
+
+        // Se a URL já é apenas o ID (11 caracteres)
+        // Fix: Evita colisão com palavras comuns de 11 letras (ex: "darkacademy") exigindo pelo menos um número ou símbolo
+        if (url.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(url) && /[\d_-]/.test(url)) {
+            return url;
+        }
+
+        return null;
+    }
+
+    async downloadYouTubeAudio(input: string): Promise<any> {
+        try {
+            this.logger?.info('🎵 Iniciando download de áudio do YouTube...');
+            let url = input;
+
+            // Extrair video ID
+            let videoId = this.extractYouTubeVideoId(url);
+
+            if (!videoId) {
+                this.logger?.info(`🔍 Input não é URL, tentando busca: ${input}`);
+                const searchRes = await this.searchYouTube(input, 1);
+                if (searchRes.sucesso && searchRes.resultados.length > 0) {
+                    url = searchRes.resultados[0].url;
+                    videoId = this.extractYouTubeVideoId(url);
+                    this.logger?.info(`✅ Encontrado via busca: ${searchRes.resultados[0].titulo} (${url})`);
+                } else {
+                    return {
+                        sucesso: false,
+                        error: 'URL inválida e nenhum resultado encontrado para a busca. Formatos suportados:\n- youtube.com/watch?v=ID\n- youtu.be/ID\n- youtube.com/shorts/ID'
+                    };
+                }
+            }
+
+            this.logger?.info(`📹 Video ID: ${videoId}`);
+
+            // Tenta yt-dlp primeiro (mais robusto)
+            const ytdlpTool = this.findYtDlp();
+            let metadata = { titulo: 'Música do YouTube', autor: 'Desconhecido', duracao: 0, videoId };
+
+            if (ytdlpTool) {
+                this.logger?.info('🔧 Tentando yt-dlp (método 1 - mais robusto)');
+
+                // Busca metadados antes ou durante
+                const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                if (metaRes.sucesso) {
+                    metadata = metaRes;
+                }
+
+                try {
+                    const result = await this._downloadWithYtDlp(url, videoId, ytdlpTool);
+
+                    if (result.fallbackToSearch) {
+                        this.logger?.info(`🔍 Executando fallback de busca (Audio) para: ${input}`);
+                        const searchRes = await this.searchYouTube(input, 1);
+                        if (searchRes.sucesso && searchRes.resultados.length > 0) {
+                            const correctUrl = searchRes.resultados[0].url;
+                            this.logger?.info(`✅ Fallback encontrou: ${searchRes.resultados[0].titulo}`);
+                            return this.downloadYouTubeAudio(correctUrl); // Recursive call
+                        }
+                    }
+
+                    if (result.sucesso) {
+                        return { ...result, ...metadata, titulo: 'Áudio do YouTube', metodo: 'yt-dlp' };
+                    }
+                } catch (ytErr) {
+                    this.logger?.warn('⚠️ yt-dlp falhou:', ytErr.message);
+                }
+                this.logger?.info('⚠️ yt-dlp falhou, tentando ytdl-core...');
+            }
+
+            // Fallback para ytdl-core
+            if (ytdl) {
+                this.logger?.info('🔧 Tentando ytdl-core (método 2 - fallback)');
+                try {
+                    const res = await this._downloadWithYtdlCore(url, videoId);
+                    if (res.sucesso) {
+                        return { ...res, ...metadata };
+                    }
+                } catch (ytErr) {
+                    this.logger?.warn('⚠️ ytdl-core falhou:', ytErr.message);
+                }
+            }
+
+            // Fallback para axios direto (método 3)
+            this.logger?.info('🔧 Tentando método direto com axios (método 3)');
+            try {
+                return await this._downloadWithAxios(url, videoId);
+            } catch (axiosErr) {
+                this.logger?.warn('⚠️ Método direto falhou:', axiosErr.message);
+            }
+
+            return {
+                sucesso: false,
+                error: 'Nenhum método de download funcionou. Verifique:\n1. yt-dlp está instalado\n2. A URL do vídeo é válida'
+            };
+
+        } catch (error) {
+            this.logger?.error('❌ Erro geral no download:', error.message);
+            return { sucesso: false, error: error.message };
+        }
+    }
+
+    /**
+    * Download de VÍDEO do YouTube
+    */
+    async downloadYouTubeVideo(input: string): Promise<any> {
+        try {
+            this.logger?.info('🎬 Iniciando download de VÍDEO do YouTube...');
+            let url = input;
+            let isSearch = false; // Track if we performed a search
+
+            let videoId = this.extractYouTubeVideoId(url);
+            if (!videoId) {
+                this.logger?.info(`🔍 Input não é URL, tentando busca: ${input}`);
+                const searchRes = await this.searchYouTube(input, 1);
+                if (searchRes.sucesso && searchRes.resultados.length > 0) {
+                    url = searchRes.resultados[0].url;
+                    videoId = this.extractYouTubeVideoId(url);
+                    isSearch = true; // Mark as search result
+                    this.logger?.info(`✅ Encontrado via busca: ${searchRes.resultados[0].titulo} (${url})`);
+                } else {
+                    return { sucesso: false, error: 'URL do YouTube inválida ou nenhum vídeo encontrado.' };
+                }
+            }
+
+            const ytdlpTool = this.findYtDlp();
+            if (!ytdlpTool) {
+                return { sucesso: false, error: 'yt-dlp não encontrado. Necessário para baixar vídeos.' };
+            }
+
+            const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
+            const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 2048;
+            // Bypass de Captcha: Usa extractor-args para simular cliente ios especificamente
+            const nodePath = process.execPath;
+            const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+            const bypassArgs = `--extractor-args "youtube:player_client=ios" --extractor-args "youtube:player_skip=web,web_music,mweb,android,tv" --user-agent "${userAgent}" --no-check-certificates --js-runtimes "node:${nodePath}"`;
+            const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
+
+            // Força o yt-dlp a ser mais verboso e explícito no output
+            const command = process.platform === 'win32'
+                ? `"${ytdlpTool.cmd}" ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --verbose "${url}"`
+                : `${ytdlpTool.cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --verbose "${url}"`;
+
+            this.logger?.info(`🚀 Executando download: ${command}`);
+
+            return await new Promise((resolve, reject) => {
+                // Timeout configurável (padrão 15 minutos)
+                const execTimeout = this.config?.YT_TIMEOUT_MS || 900000;
+                exec(command, { timeout: execTimeout, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
+                    if (error) {
+                        this.logger?.error(`❌ Erro no yt-dlp: ${error.message}`);
+
+                        // SMART FALLBACK: Se falhar como "Video unavailable" e NÃO foi busca, tenta buscar!
+                        if (!isSearch && (stderr.includes('Video unavailable') || stdout.includes('Video unavailable'))) {
+                            this.logger?.info('⚠️ ID inválido detectado pelo yt-dlp. Tentando buscar como termo...');
+                            return resolve({ fallbackToSearch: true });
+                        }
+
+                        // Se for timeout, dar mensagem personalizada
+                        if (error.killed) {
+                            return reject(new Error('O download excedeu o tempo limite de 15 minutos.'));
+                        }
+                        this.logger?.debug(`STDOUT: ${stdout}`);
+                        this.logger?.debug(`STDERR: ${stderr}`);
+                        return reject(error);
+                    }
+
+                    // Busca o arquivo gerado com várias extensões possíveis (yt-dlp pode mudar conforme o merge)
+                    const possibleExts = ['.mp4', '.mkv', '.webm'];
+                    let foundFile = null;
+                    for (const ext of possibleExts) {
+                        const checkPath = outputTemplate + ext;
+                        if (fs.existsSync(checkPath)) {
+                            foundFile = checkPath;
+                            break;
+                        }
+                    }
+
+                    if (foundFile) {
+                        this.logger?.info(`✅ Arquivo baixado encontrado: ${path.basename(foundFile)}`);
+                        resolve(foundFile);
+                    } else {
+                        this.logger?.warn(`⚠️ yt-dlp terminou mas arquivo não foi localizado. STDOUT: ${stdout.substring(stdout.length - 500)}`);
+                        reject(new Error('Arquivo de vídeo não encontrado no sistema após o download.'));
+                    }
+                });
+            }).then(async (foundFile: any) => {
+                // Se o resolve retornou pedido de fallback
+                if (foundFile && (foundFile as any).fallbackToSearch) {
+                    this.logger?.info(`🔍 Executando fallback de busca para: ${input}`);
+                    const searchRes = await this.searchYouTube(input, 1);
+                    if (searchRes.sucesso && searchRes.resultados.length > 0) {
+                        const correctUrl = searchRes.resultados[0].url;
+                        this.logger?.info(`✅ Fallback encontrou: ${searchRes.resultados[0].titulo}`);
+                        return this.downloadYouTubeVideo(correctUrl); // Recursive with valid URL
+                    } else {
+                        throw new Error('Vídeo não encontrado mesmo após busca de fallback.');
+                    }
+                }
+
+                const actualPath = foundFile as string;
+                const stats = fs.statSync(actualPath);
+                const fileSizeMB = stats.size / (1024 * 1024);
+
+                if (stats.size > this.config?.YT_MAX_SIZE_MB * 1024 * 1024) {
+                    await this.cleanupFile(actualPath);
+                    throw new Error(`Vídeo muito grande (${fileSizeMB.toFixed(1)}MB > ${this.config?.YT_MAX_SIZE_MB}MB)`);
+                }
+
+                // 🛠️ ESTÁGIO DE OTIMIZAÇÃO / BYPASS
+                // Se o vídeo for > 50MB e já for MP4, tentamos enviar direto
+                const shouldSkipOptimization = fileSizeMB > 50 && (actualPath as string).endsWith('.mp4');
+
+                if (shouldSkipOptimization) {
+                    this.logger?.info(`⏩ Ignorando otimização lenta para arquivo grande (${fileSizeMB.toFixed(1)}MB)`);
+                    const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                    const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
+
+                    return {
+                        sucesso: true,
+                        videoPath: actualPath,
+                        titulo: metadata.titulo,
+                        size: stats.size,
+                        mimetype: 'video/mp4',
+                        ...metadata
+                    };
+                }
+
+                this.logger?.info(`🛠️ Otimizando vídeo (${fileSizeMB.toFixed(1)}MB)...`);
+                const optimizedPath = this.generateRandomFilename('mp4');
+
+                try {
+                    await new Promise((resolve, reject) => {
+                        ffmpeg(actualPath)
+                            .outputOptions([
+                                '-c:v', 'libx264',
+                                '-profile:v', 'baseline',
+                                '-level', '3.0',
+                                '-pix_fmt', 'yuv420p',
+                                '-threads', '1',
+                                '-c:a', 'aac',
+                                '-b:a', '128k',
+                                '-ar', '44100',
+                                '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                                '-movflags', '+faststart',
+                                '-preset', 'ultrafast',
+                                '-crf', '26'
+                            ])
+                            .on('start', (cmd) => this.logger?.debug(`FFMPEG: ${cmd}`))
+                            .on('end', resolve)
+                            .on('error', (err) => {
+                                this.logger?.error(`Erro FFMPEG: ${err.message}`);
+                                reject(err);
+                            })
+                            .save(optimizedPath);
+                    });
+
+                    const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                    const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
+
+                    await this.cleanupFile(actualPath);
+
+                    return {
+                        sucesso: true,
+                        videoPath: optimizedPath,
+                        titulo: metadata.titulo,
+                        size: fs.statSync(optimizedPath).size,
+                        mimetype: 'video/mp4',
+                        ...metadata
+                    };
+                } catch (optError) {
+                    this.logger?.warn('⚠️ Otimização falhou, enviando original...');
+                    const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
+                    const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
+                    return {
+                        sucesso: true,
+                        videoPath: actualPath,
+                        titulo: metadata.titulo,
+                        size: fs.statSync(actualPath as string).size,
+                        mimetype: 'video/mp4',
+                        ...metadata
+                    };
+                }
+            });
+        } catch (error) {
+            this.logger?.error('❌ Erro download vídeo:', error.message);
+            return { sucesso: false, error: error.message };
+        }
+    }
+
+    async getYouTubeMetadata(url: string, tool: any = null): Promise<any> {
+        try {
+            const ytdlp = tool || this.findYtDlp();
+            if (!ytdlp) return { sucesso: false, error: 'yt-dlp não encontrado' };
+
+            // Extrair ID para thumbnail
+            const videoId = this.extractYouTubeVideoId(url);
+            const thumbnailUrl = videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : null;
+
+            const nodePath = process.execPath;
+            const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+            const bypassArgs = `--extractor-args "youtube:player_client=ios" --extractor-args "youtube:player_skip=web,web_music,mweb,android,tv" --user-agent "${userAgent}" --no-check-certificates --js-runtimes "node:${nodePath}" --no-warnings`;
+            const command = process.platform === 'win32'
+                ? `"${ytdlp.cmd}" ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`
+                : `${ytdlp.cmd} ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;
+
+            const output = execSync(command, { encoding: 'utf8', timeout: 30000, stdio: 'pipe' }).trim();
+            const [title, author, duration, views, likes, date] = output.split('|');
+
+            // Formata views para algo legível (ex: 1.5M)
+            const formatCount = (count: any) => {
+                const n = parseInt(count);
+                if (isNaN(n)) return '0';
+                if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+                if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+                return n.toString();
+            };
+
+            return {
+                sucesso: true,
+                titulo: title || 'Música do YouTube',
+                autor: author || 'Desconhecido',
+                duracao: parseInt(duration) || 0,
+                views: formatCount(views),
+                likes: formatCount(likes),
+                data: date || '',
+                thumbnail: thumbnailUrl,
+                videoId
+            };
+        } catch (e) {
+            this.logger?.debug('Erro ao obter metadados:', e.message);
+            return { sucesso: false, error: e.message };
+        }
+    }
+
+    /**
+    * Download direto via axios (fallback)
+    */
+    async _downloadWithAxios(url: string, videoId: string): Promise<any> {
+        try {
+            // Usar API pública do YouTube para obter info
+            const apiUrl = `https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`;
+            const apiResponse = await axios.get(apiUrl, { timeout: 10000 });
+
+            const titulo = apiResponse.data?.title || 'Música do YouTube';
+
+            // Tentar obter URL de áudio direto (muitas vezes não funciona, mas worth a try)
+            // Este é um fallback limitado - yt-dlp é sempre preferível
+
+            this.logger?.info('⚠️ Método direto limitado - considere instalar yt-dlp para melhor qualidade');
+
+            return {
+                sucesso: false,
+                error: `Método direto não suporta download. Instale yt-dlp:\napt install yt-dlp\nou\nnpm install -g yt-dlp`
+            };
+        } catch (e) {
+            return { sucesso: false, error: e.message };
+        }
+    }
+
+    /**
+    * Processa link do YouTube (validação)
+    */
+    isValidYouTubeUrl(url: any): boolean {
+        const regex = /^(https?:\/\/(www\.)?)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\/.*$/i;
+        return regex.test(String(url));
+    }
+
+    /**
+    * Busca música no YouTube por nome
+    */
+    async searchYouTube(query: string, limit: number = 5): Promise<any> {
+        try {
+            this.logger?.info(`🔍 Buscando: ${query}`);
+
+            const result = await yts(query);
+
+            if (!result || !result.videos || result.videos.length === 0) {
+                return {
+                    sucesso: false,
+                    error: 'Nenhum resultado encontrado'
+                };
+            }
+
+            const videos = result.videos.slice(0, limit).map((v: any) => ({
+                titulo: v.title,
+                url: v.url,
+                duracao: v.duration?.toString(),
+                views: v.views || 0,
+                uploadedAt: v.uploadedAt || 'unknown'
+            }));
+
+            this.logger?.info(`✅ Encontrados ${videos.length} resultados`);
+
+            return {
+                sucesso: true,
+                resultados: videos,
+                query
+            };
+
+        } catch (error) {
+            this.logger?.error('❌ Erro na busca:', error.message);
+            return {
+                sucesso: false,
+            };
+        }
+    }
+
+
+    // ═════════════════════════════════════════════════════════════════
+    // DOWNLOADS DE MÍDIA SOCIAL (Pinterest & Facebook)
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Download de vídeo do Pinterest (Scraping HTML)
+     */
+    async downloadPinterestVideo(url: string): Promise<any> {
+        try {
+            this.logger?.info(`📌 Baixando vídeo do Pinterest: ${url}`);
+
+            // Fazer fetch da página
+            const response = await axios.get(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+
+            const html = response.data;
+
+            // Procurar pelo JSON embutido com dados do vídeo
+            const videoDataMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>(\{[^<]+)<\/script>/);
+
+            let videoUrl = null;
+
+            if (videoDataMatch) {
+                try {
+                    const jsonData = JSON.parse(videoDataMatch[1]);
+                    videoUrl = jsonData.contentUrl || jsonData.video?.contentUrl;
+                } catch (e) {
+                    this.logger?.warn('Erro ao parsear JSON do Pinterest:', e.message);
+                }
+            }
+
+            // Fallback: procurar por URLs de vídeo diretamente no HTML
+            if (!videoUrl) {
+                const urlMatches = html.match(/https:\/\/v\.pinimg\.com\/videos\/[^"]+\.mp4/);
+                if (urlMatches && urlMatches.length > 0) {
+                    videoUrl = urlMatches[0];
+                }
+            }
+
+            if (!videoUrl) {
+                return {
+                    sucesso: false,
+                    error: 'Não foi possível encontrar o vídeo no Pinterest'
+                };
+            }
+
+            // Download do arquivo de vídeo
+            const videoResponse = await axios.get(videoUrl, {
+                responseType: 'arraybuffer',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+
+            const buffer = Buffer.from(videoResponse.data);
+
+            return {
+                sucesso: true,
+                buffer: buffer,
+                ext: 'mp4',
+                mime: 'video/mp4'
+            };
+
+        } catch (error) {
+            this.logger?.error(`❌ Erro no download Pinterest: ${error.message}`);
+            return {
+                sucesso: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Download de vídeo do Facebook (usando yt-dlp)
+     */
+    async downloadFacebookVideo(url: string): Promise<any> {
+        try {
+            this.logger?.info(`📘 Baixando vídeo do Facebook: ${url}`);
+
+            // Buscar binário yt-dlp
+            const projectRoot = path.resolve(__dirname, '..');
+            const ytdlpPath = path.join(projectRoot, 'node_modules', '@types', 'yt-dlp', 'yt-dlp.exe');
+
+            // Fallback: tentar PATH global
+            const ytdlpCommand = fs.existsSync(ytdlpPath) ? ytdlpPath : 'yt-dlp';
+
+            const outputPath = this.generateRandomFilename('mp4');
+
+            const execPromise = util.promisify(exec);
+
+            // Chamar yt-dlp com opções para Facebook
+            const command = `"${ytdlpCommand}" -f best -o "${outputPath}" "${url}"`;
+
+            await execPromise(command, {
+                maxBuffer: 50 * 1024 * 1024, // 50MB buffer
+                timeout: 120000 // 2 minutos timeout
+            });
+
+            if (!fs.existsSync(outputPath)) {
+                return {
+                    sucesso: false,
+                    error: 'Arquivo não foi criado pelo yt-dlp'
+                };
+            }
+
+            const buffer = fs.readFileSync(outputPath);
+
+            // Limpar arquivo temporário
+            await this.cleanupFile(outputPath);
+
+            return {
+                sucesso: true,
+                buffer: buffer,
+                ext: 'mp4',
+                mime: 'video/mp4'
+            };
+
+        } catch (error) {
+            this.logger?.error(`❌ Erro no download Facebook: ${error.message}`);
+            return {
+                sucesso: false,
+                error: error.message
+            };
+        }
+    }
+
+    clearCache() {
+        this.downloadCache?.clear();
+        this.logger?.info('💾 Cache de mídia limpo');
+    }
+
+    /**
+    * Retorna estatísticas
+    */
+    getStats() {
+        return {
+            cacheSize: this.downloadCache?.size,
+            ytDownloadEnabled: this.config?.FEATURE_YT_DOWNLOAD,
+            stickerEnabled: this.config?.FEATURE_STICKERS,
+            maxVideoSize: `${this.config?.YT_MAX_SIZE_MB}MB`,
+            stickerSize: this.config?.STICKER_SIZE,
+            stickerAnimatedMax: `${this.config?.STICKER_MAX_ANIMATED_SECONDS}s`
+        };
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // EFEITOS DE ÁUDIO
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Aplica efeito de áudio usando ffmpeg
+     * @param {Buffer|string} audioInput - Buffer ou path do áudio
+     * @param {string} effect - Efeito: nightcore, slow, bass, deep, robot, reverse, squirrel, echo, 8d
+     * @returns {Promise<Buffer>} Buffer do áudio processado
+     */
+    async applyAudioEffect(audioInput: Buffer | string, effect: string): Promise<any> {
+        return new Promise((resolve, reject) => {
+            const inputPath = typeof audioInput === 'string'
+                ? audioInput
+                : path.join(this.tempFolder, `audio_input_${Date.now()}.mp3`);
+
+            const outputPath = path.join(this.tempFolder, `audio_effect_${Date.now()}.mp3`);
+
+            try {
+                // Se for buffer, salvar temporariamente
+                if (Buffer.isBuffer(audioInput)) {
+                    fs.writeFileSync(inputPath, audioInput);
+                }
+
+                const command = ffmpeg(inputPath);
+
+                // Configurar efeito
+                switch (effect.toLowerCase()) {
+                    case 'nightcore':
+                        // Aumenta velocidade e pitch
+                        command.audioFilters('atempo=1.25,asetrate=44100*1.25,aresample=44100');
+                        break;
+
+                    case 'slow':
+                    case 'slowed':
+                    case 'slower':
+                        // Slowed + Reverb (Estilo Lo-fi/Aesthetic)
+                        // atempo=0.85 (85% velocidade), aecho (reverb espacial), lowpass (som abafado lo-fi)
+                        command.audioFilters([
+                            'atempo=0.85',
+                            'aecho=0.8:0.9:1000:0.3',
+                            'lowpass=f=3000',
+                            'volume=1.2'
+                        ]);
+                        break;
+
+                    case 'bass':
+                    case 'bassboost':
+                        // Bass Boost Premium (Parametric EQ)
+                        // Foca nos sub-graves (60Hz) sem distorcer os médios + Limiter para evitar clipping
+                        command.audioFilters([
+                            'equalizer=f=60:width_type=h:width=50:g=15',
+                            'equalizer=f=120:width_type=h:width=100:g=5',
+                            'limiter=threshold=-1dB'
+                        ]);
+                        break;
+
+                    case 'deep':
+                    case 'deepvoice':
+                        // Voz profunda (pitch baixo) sem perder qualidade
+                        command.audioFilters([
+                            'asetrate=44100*0.75',
+                            'aresample=44100',
+                            'atempo=1.25'
+                        ]);
+                        break;
+
+                    case 'robot':
+                    case 'robotic':
+                        // Efeito robótico
+                        command.audioFilters('chorus=0.5:0.9:50|60|40:0.4|0.32|0.3:0.25|0.4|0.3:2|2.3|1.3');
+                        break;
+
+                    case 'reverse':
+                    case 'reverso':
+                        // Áudio reverso
+                        command.audioFilters('areverse');
+                        break;
+
+                    case 'squirrel':
+                    case 'chipmunk':
+                        // Voz de esquilo (pitch alto)
+                        command.audioFilters('asetrate=44100*1.5,aresample=44100');
+                        break;
+
+                    case 'echo':
+                        // Eco
+                        command.audioFilters('aecho=0.8:0.9:1000:0.3');
+                        break;
+
+                    case '8d':
+                    case '8daudio':
+                        // Áudio 8D (pan esquerda-direita)
+                        command.audioFilters('apulsator=hz=0.125');
+                        break;
+
+                    default:
+                        throw new Error(`Efeito desconhecido: ${effect}`);
+                }
+
+                command
+                    .audioCodec('libmp3lame')
+                    .audioBitrate('128k')
+                    .format('mp3')
+                    .on('end', () => {
+                        try {
+                            const buffer = fs.readFileSync(outputPath);
+
+                            // Limpar arquivos temporários
+                            if (Buffer.isBuffer(audioInput)) {
+                                fs.unlinkSync(inputPath);
+                            }
+                            fs.unlinkSync(outputPath);
+
+                            resolve(buffer);
+                        } catch (e) {
+                            reject(e);
+                        }
+                    })
+                    .on('error', (err) => {
+                        this.logger.error('Erro ao aplicar efeito de áudio:', err);
+
+                        // Limpar em caso de erro
+                        try {
+                            if (Buffer.isBuffer(audioInput) && fs.existsSync(inputPath)) {
+                                fs.unlinkSync(inputPath);
+                            }
+                            if (fs.existsSync(outputPath)) {
+                                fs.unlinkSync(outputPath);
+                            }
+                        } catch (e) { }
+
+                        reject(err);
+                    })
+                    .save(outputPath);
+
+            } catch (error) {
+                this.logger.error('Erro ao configurar efeito:', error);
+                reject(error);
+            }
+        });
+    }
+}
+
+export default MediaProcessor;
