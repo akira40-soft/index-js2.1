@@ -5,14 +5,14 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
+    "start": "node dist/index.js",
     "dev": "node --watch index.js",
+    "build": "tsc",
     "clean": "rm -rf temp auth_info_baileys node_modules package-lock.json",
     "reinstall": "npm run clean && npm install",
     "install-ffmpeg": "npm install ffmpeg-static --save",
     "fix-deps": "npm audit fix --force",
     "test": "echo \"✅ Bot configurado com sucesso!\" && node -v && npm -v",
-    "build": "echo 'Build não necessário para Node.js'",
     "hf-start": "NODE_ENV=production node index.js",
     "hf-dev": "NODE_ENV=development node index.js"
   },
@@ -73,9 +73,10 @@
     "@types/moment": "^2.13.0",
     "@types/moment-timezone": "^0.5.30",
     "@types/ms": "^2.1.0",
-    "@types/node": "^20.0.0",
+    "@types/node": "^20.19.33",
     "@types/qrcode": "^1.5.5",
-    "@types/ws": "^8.5.10"
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=18.0.0",
