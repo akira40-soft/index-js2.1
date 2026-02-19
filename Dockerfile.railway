@@ -122,15 +122,17 @@ COPY package*.json ./
 # Instalação otimizada para Railway
 RUN npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
-    npm install --include=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps && \
-    npx tsc && \
-    npm prune --omit=dev
+    npm install --include=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps
 
 # ═══════════════════════════════════════════════════════════════════
 # COPIAR CÓDIGO DA APLICAÇÃO
 # ═══════════════════════════════════════════════════════════════════
 
 COPY . .
+
+# Build e Limpeza
+RUN npx tsc && \
+    npm prune --omit=dev
 
 # ═══════════════════════════════════════════════════════════════════
 # VERIFICAÇÃO FINAL PARA RAILWAY
