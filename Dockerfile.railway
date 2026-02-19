@@ -122,7 +122,7 @@ COPY package*.json ./
 # Instalação otimizada para Railway
 RUN npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
-    npm install --omit=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps && \
+    npm install --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps && \
     npm run build
 
 # ═══════════════════════════════════════════════════════════════════
