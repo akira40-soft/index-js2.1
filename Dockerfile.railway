@@ -41,13 +41,22 @@ RUN apk add --no-cache \
     openssl \
     openssl-dev \
     zlib-dev \
+    zlib-dev \
     bash \
-    # Cybersecurity tools
-    nmap \
-    hydra \
-    nikto \
-    unzip \
-    perl
+    perl \
+    ruby \
+    ruby-dev \
+    libffi-dev \
+    readline-dev \
+    sqlite-dev \
+    postgresql-dev \
+    # Ferramentas de rede nativas (OSINT)
+    whois \
+    bind-tools \
+    iputils \
+    # Habilita edge testing para metasploit
+    && echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories \
+    && apk add --no-cache metasploit-framework
 
 # ═══════════════════════════════════════════════════════════════════
 # INSTALAÇÃO MANUAL DO YT-DLP (LATEST) - REQUISITO DEPLOY
@@ -67,23 +76,23 @@ RUN mkdir -p /opt && \
     chmod +x /opt/sqlmap/sqlmap.py && \
     ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
 
-# NUCLEI - Vulnerability Scanning (temporarily disabled - download issues)
-# RUN ARCH=$(uname -m) && \
-#     if [ "$ARCH" = "x86_64" ]; then \
-#         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_amd64.zip"; \
-#     elif [ "$ARCH" = "aarch64" ]; then \
-#         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_arm64.zip"; \
-#     else \
-#         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_amd64.zip"; \
-#     fi && \
-#     mkdir -p /tmp/nuclei_install && \
-#     cd /tmp/nuclei_install && \
-#     curl -L "$NUCLEI_URL" -o nuclei.zip && \
-#     unzip -q nuclei.zip && \
-#     mv nuclei /usr/local/bin/ && \
-#     chmod +x /usr/local/bin/nuclei && \
-#     cd - && \
-#     rm -rf /tmp/nuclei_install
+# NUCLEI - Vulnerability Scanning
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_amd64.zip"; \
+    elif [ "$ARCH" = "aarch64" ]; then \
+        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_arm64.zip"; \
+    else \
+        NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_amd64.zip"; \
+    fi && \
+    mkdir -p /tmp/nuclei_install && \
+    cd /tmp/nuclei_install && \
+    curl -L "$NUCLEI_URL" -o nuclei.zip && \
+    unzip -q nuclei.zip && \
+    mv nuclei /usr/local/bin/ && \
+    chmod +x /usr/local/bin/nuclei && \
+    cd - && \
+    rm -rf /tmp/nuclei_install
 
 # MASSCAN - Fast Port Scanner
 RUN mkdir -p /tmp/masscan_build && \
@@ -95,6 +104,13 @@ RUN mkdir -p /tmp/masscan_build && \
     chmod +x /usr/local/bin/masscan && \
     cd - && \
     rm -rf /tmp/masscan_build
+
+# SETOOLKIT - Social-Engineer Toolkit
+RUN git clone https://github.com/trustedsec/social-engineer-toolkit/ /opt/setoolkit && \
+    cd /opt/setoolkit && \
+    pip3 install -r requirements.txt --break-system-packages && \
+    python3 setup.py install && \
+    ln -s /usr/local/bin/setoolkit /usr/bin/setoolkit
 
 # ═══════════════════════════════════════════════════════════════════
 # CONFIGURAÇÃO DE DIRETÓRIOS PARA RAILWAY
