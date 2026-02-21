@@ -124,11 +124,17 @@ class SubscriptionManager {
     }
 
     /**
-    * Obtém tier do usuário
+    * Obtém tier do usuário — verifica expiração antes de conceder subscriber
     */
     public getUserTier(userId: string): string {
         if (this.config.isDono(userId)) return 'owner';
-        if (this.subscribers[userId]) return 'subscriber';
+        // Verifica sub activa E não expirada
+        if (this.subscribers[userId] && this.isSubscriptionValid(userId)) return 'subscriber';
+        // Se expirou, limpa o registo automaticamente
+        if (this.subscribers[userId] && !this.isSubscriptionValid(userId)) {
+            delete this.subscribers[userId];
+            this._saveJSON(this.subscribersPath, this.subscribers);
+        }
         return 'free';
     }
 
@@ -358,12 +364,32 @@ class SubscriptionManager {
     _cleanOldUsage() {
         try {
             const agora = new Date();
+            const cutoff90Days = new Date(agora.getTime() - 90 * 24 * 60 * 60 * 1000);
             const limpo: { [key: string]: any } = {};
 
+            // Formato da chave: userId_feature_YYYY-M ou userId_feature_YYYY-M-wN
             for (const [key, count] of Object.entries(this.usage)) {
-                // Mantém últimos 90 dias
+                const parts = key.split('_');
+                // A data fica na última parte — tenta parsear
+                if (parts.length >= 3) {
+                    const datePart = parts[parts.length - 1];
+                    // Formato: YYYY-MM ou YYYY-MM-wN (semana)
+                    const yearMonth = datePart.split('-w')[0]; // remove sufixo de semana
+                    const [year, month] = yearMonth.split('-').map(Number);
+                    if (!isNaN(year) && !isNaN(month)) {
+                        const keyDate = new Date(year, month, 1);
+                        if (keyDate >= cutoff90Days) {
+                            limpo[key] = count; // mantém apenas os recentes
+                        }
+                        continue;
+                    }
+                }
+                // Chaves sem data reconhecível são sempre mantidas
                 limpo[key] = count;
             }
+
+            const removidos = Object.keys(this.usage).length - Object.keys(limpo).length;
+            if (removidos > 0) console.log(`🧹 SubscriptionManager: ${removidos} registo(s) antigos limpos`);
 
             this.usage = limpo;
             this._saveJSON(this.usagePath, this.usage);

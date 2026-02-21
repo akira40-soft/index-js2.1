@@ -78,13 +78,15 @@ class LevelSystem {
         this._save(this.dbPath, this.data);
     }
 
-    // Fórmula: cada nível requer o dobro do anterior -> base * (2^level)
-    // Ex.: level 0 -> base, level 1 -> base*2, level 2 -> base*4...
+    // Fórmula POLINOMIAL: level * 100 + level^2 * 10
+    // Ex.: level 1 -> 110 XP, level 2 -> 240 XP, level 3 -> 390 XP...
+    // Esta fórmula é mais justa e permite subir níveis mais facilmente
     requiredXp(level: number) {
         const base = this.config.LEVEL_BASE_XP || 100;
-        const factor = 2; // crescimento x2 por nível
+        const multiplier = this.config.LEVEL_XP_MULTIPLIER || 10;
         if (level >= this.maxLevel) return Infinity;
-        return Math.floor(base * Math.pow(factor, level));
+        // Nova fórmula polinomial: level * base + level^2 * multiplier
+        return Math.floor((level * base) + (level * level * multiplier));
     }
 
     awardXp(gid: string, uid: string, xpAmount: number = 10) {

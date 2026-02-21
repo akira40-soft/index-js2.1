@@ -67,28 +67,104 @@ class MediaProcessor {
     }
 
     /**
-     * Gera os argumentos de bypass do yt-dlp centralizados
+     * ═══════════════════════════════════════════════════════════════════
+     * ESTRATÉGIA DE BYPASS YOUTUBE 2026
+     * ═══════════════════════════════════════════════════════════════════
+     * Ordem de clientes por menor resistência ao bot-detection:
+     * 1. web_embedded   -> Não requer po_token, menos bloqueado em servidores
+     * 2. tv_embedded    -> Client da TV, raramente bloqueado
+     * 3. android        -> Bypass clássico, ainda funciona
+     * 4. ios            -> Fallback mobile
+     * 5. mweb           -> Mobile web, último recurso
+     *
+     * Com cookies: web (mais confiável e completo)
      */
-    private _getYtDlpBypassArgs(nodePath: string): string {
-        const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
-        const poToken = this.config?.YT_PO_TOKEN || "";
-        const cookiesPath = this.config?.YT_COOKIES_PATH || "";
+    private _getClientStrategies(): Array<{ client: string; args: string }> {
+        const cookiesPath = this.config?.YT_COOKIES_PATH || '';
+        const poToken = this.config?.YT_PO_TOKEN || '';
+        const cookieArg = (cookiesPath && fs.existsSync(cookiesPath)) ? `--cookies "${cookiesPath}"` : '';
 
-        // Usamos múltiplos clientes (ios, android) para aumentar as chances
-        // O android costuma ser mais permissivo, mas o ios simula melhor um dispositivo móvel
-        let args = `--extractor-args "youtube:player_client=android,ios" --user-agent "${userAgent}" --no-check-certificates --js-runtimes "node:${nodePath}"`;
+        const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5';
 
-        if (poToken) {
-            // Suporte para Proof of Origin Token
-            // Formato aceito pelo yt-dlp moderno
-            args += ` --extractor-args "youtube:po_token=android+${poToken},ios+${poToken}"`;
+        const strategies: Array<{ client: string; args: string }> = [];
+
+        // Se tiver cookies configurados, começa com web (mais estável e completo)
+        if (cookieArg) {
+            let webArgs = `--extractor-args "youtube:player_client=web" ${cookieArg} ${baseSleepArgs}`;
+            if (poToken) {
+                webArgs = `--extractor-args "youtube:player_client=web;po_token=web+${poToken}" ${cookieArg} ${baseSleepArgs}`;
+            }
+            strategies.push({ client: 'web+cookies', args: webArgs });
         }
 
-        if (cookiesPath && fs.existsSync(cookiesPath)) {
-            args += ` --cookies "${cookiesPath}"`;
+        // web_embedded: Não requer po_token - funciona bem em servidores sem conta
+        strategies.push({
+            client: 'web_embedded',
+            args: `--extractor-args "youtube:player_client=web_embedded" --no-check-certificates ${cookieArg} ${baseSleepArgs}`.trim()
+        });
+
+        // tv_embedded: Client da Smart TV, raramente sofre bot-detection
+        strategies.push({
+            client: 'tv_embedded',
+            args: `--extractor-args "youtube:player_client=tv_embedded" --no-check-certificates ${cookieArg} ${baseSleepArgs}`.trim()
+        });
+
+        // android: Bypass clássico e bem testado
+        const androidArgs = poToken
+            ? `--extractor-args "youtube:player_client=android;po_token=android+${poToken}" ${cookieArg} ${baseSleepArgs}`
+            : `--extractor-args "youtube:player_client=android" --no-check-certificates ${cookieArg} ${baseSleepArgs}`;
+        strategies.push({ client: 'android', args: androidArgs.trim() });
+
+        // ios: Mobile fallback
+        strategies.push({
+            client: 'ios',
+            args: `--extractor-args "youtube:player_client=ios" --no-check-certificates ${cookieArg} ${baseSleepArgs}`.trim()
+        });
+
+        return strategies;
+    }
+
+    /**
+     * Executa yt-dlp com fallback automático entre client strategies.
+     * Retorna o resultado do primeiro que funcionar.
+     */
+    private async _runYtDlpWithFallback(
+        tool: any,
+        buildCommand: (bypassArgs: string) => string,
+        expectedOutputPath: string
+    ): Promise<{ sucesso: boolean; error?: string }> {
+        const strategies = this._getClientStrategies();
+
+        for (const strategy of strategies) {
+            this.logger?.info(`🔄 Tentando strategy: [${strategy.client}]`);
+            const command = buildCommand(strategy.args);
+
+            const result = await new Promise<{ sucesso: boolean; error?: string }>((resolve) => {
+                exec(command, { timeout: this.config?.YT_TIMEOUT_MS || 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
+                    if (fs.existsSync(expectedOutputPath)) {
+                        return resolve({ sucesso: true });
+                    }
+                    const errMsg = stderr || (error?.message) || 'Arquivo não criado';
+                    // Detecta bloqueio real de bot-detection para logar corretamente
+                    if (errMsg.includes('Sign in') || errMsg.includes('bot') || errMsg.includes('403')) {
+                        this.logger?.warn(`⛔ [${strategy.client}] Bot detection ativado, tentando próximo client...`);
+                    } else if (errMsg.includes('Video unavailable') || errMsg.includes('Private video')) {
+                        // Não adianta tentar outros clients para vídeo inválido
+                        return resolve({ sucesso: false, error: 'Vídeo indisponível ou privado' });
+                    } else {
+                        this.logger?.warn(`⚠️ [${strategy.client}] Falhou: ${errMsg.slice(0, 150)}`);
+                    }
+                    resolve({ sucesso: false, error: errMsg.slice(0, 300) });
+                });
+            });
+
+            if (result.sucesso) {
+                this.logger?.info(`✅ Strategy [${strategy.client}] funcionou!`);
+                return result;
+            }
         }
 
-        return args;
+        return { sucesso: false, error: 'Todos os métodos de bypass falharam. Tente configurar YT_COOKIES_PATH ou YT_PO_TOKEN nas variáveis de ambiente.' };
     }
 
     /**
@@ -747,56 +823,38 @@ class MediaProcessor {
     }
 
     /**
-    * Download via yt-dlp
+    * Download via yt-dlp com fallback automático entre múltiplos clients
     */
     async _downloadWithYtDlp(url: string, videoId: string, tool: any): Promise<any> {
         try {
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
-
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 500;
-            const cookiesPath = this.config?.YT_COOKIES_PATH;
-            const poToken = this.config?.YT_PO_TOKEN;
+            const expectedPath = outputTemplate + '.mp3';
 
-            // Bypass de Captcha centralizado
-            const nodePath = process.execPath;
-            const bypassArgs = this._getYtDlpBypassArgs(nodePath);
+            const buildCommand = (bypassArgs: string) => {
+                const cmd = process.platform === 'win32' ? `"${tool.cmd}"` : tool.cmd;
+                return `${cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
+            };
 
-            const command = process.platform === 'win32'
-                ? `"${tool.cmd}" ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`
-                : `${tool.cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
+            const result = await this._runYtDlpWithFallback(tool, buildCommand, expectedPath);
 
-            return await new Promise((resolve, reject) => {
-                const execTimeout = this.config?.YT_TIMEOUT_MS || 900000;
-                exec(command, { timeout: execTimeout, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
-                    const actualPath = outputTemplate + '.mp3';
+            if (!result.sucesso) {
+                return { sucesso: false, error: result.error };
+            }
 
-                    if (fs.existsSync(actualPath)) {
-                        resolve({ sucesso: true, audioPath: actualPath, tamanho: fs.statSync(actualPath).size });
-                    } else if (error) {
-                        // SMART FALLBACK: Se falhar como "Video unavailable"
-                        if (stderr.includes('Video unavailable') || stdout.includes('Video unavailable')) {
-                            this.logger?.info('⚠️ ID inválido detectado pelo yt-dlp (Audio). Tentando buscar como termo...');
-                            return resolve({ fallbackToSearch: true });
-                        }
-                        reject(error);
-                    } else {
-                        reject(new Error('Arquivo não foi criado e nenhum erro foi reportado'));
-                    }
-                });
-            });
+            if (!fs.existsSync(expectedPath)) {
+                return { sucesso: false, error: 'Arquivo MP3 não encontrado após download' };
+            }
 
-            const actualPath = outputTemplate + '.mp3';
-            const stats = fs.statSync(actualPath);
-
+            const stats = fs.statSync(expectedPath);
             if (stats.size === 0) {
-                await this.cleanupFile(actualPath);
+                await this.cleanupFile(expectedPath);
                 return { sucesso: false, error: 'Arquivo vazio' };
             }
 
-            // Retornamos o caminho para o handler enviar via stream (melhor p/ memória)
             return {
                 sucesso: true,
-                audioPath: actualPath,
+                audioPath: expectedPath,
                 titulo: 'Áudio do YouTube',
                 tamanho: stats.size,
                 metodo: 'yt-dlp'
@@ -1038,162 +1096,96 @@ class MediaProcessor {
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 2048;
-            // Bypass de Captcha centralizado
-            const nodePath = process.execPath;
-            const bypassArgs = this._getYtDlpBypassArgs(nodePath);
             const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
 
-            // Força o yt-dlp a ser mais verboso e explícito no output
-            const command = process.platform === 'win32'
-                ? `"${ytdlpTool.cmd}" ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --verbose "${url}"`
-                : `${ytdlpTool.cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --verbose "${url}"`;
+            // Detecta extensão real após download (pode ser mp4, webm, mkv)
+            const findOutputFile = () => {
+                for (const ext of ['.mp4', '.mkv', '.webm']) {
+                    const p = outputTemplate + ext;
+                    if (fs.existsSync(p)) return p;
+                }
+                return null;
+            };
 
-            this.logger?.info(`🚀 Executando download: ${command}`);
+            const buildCommand = (bypassArgs: string) => {
+                const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
+                return `${cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --merge-output-format mp4 --no-warnings "${url}"`;
+            };
 
-            return await new Promise((resolve, reject) => {
-                // Timeout configurável (padrão 15 minutos)
-                const execTimeout = this.config?.YT_TIMEOUT_MS || 900000;
-                exec(command, { timeout: execTimeout, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
-                    if (error) {
-                        this.logger?.error(`❌ Erro no yt-dlp: ${error.message}`);
+            // Usa o mesmo sistema de fallback progressivo do áudio
+            const expectedPath = outputTemplate + '.mp4';
+            const result = await this._runYtDlpWithFallback(ytdlpTool, buildCommand, expectedPath);
 
-                        // SMART FALLBACK: Se falhar como "Video unavailable" e NÃO foi busca, tenta buscar!
-                        if (!isSearch && (stderr.includes('Video unavailable') || stdout.includes('Video unavailable'))) {
-                            this.logger?.info('⚠️ ID inválido detectado pelo yt-dlp. Tentando buscar como termo...');
-                            return resolve({ fallbackToSearch: true });
-                        }
-
-                        // Se for timeout, dar mensagem personalizada
-                        if (error.killed) {
-                            return reject(new Error('O download excedeu o tempo limite de 15 minutos.'));
-                        }
-                        this.logger?.debug(`STDOUT: ${stdout}`);
-                        this.logger?.debug(`STDERR: ${stderr}`);
-                        return reject(error);
+            if (!result.sucesso) {
+                // Tenta detectar qualquer extensão criada
+                const anyFile = findOutputFile();
+                if (!anyFile) {
+                    if (result.error?.includes('indisponível') && !isSearch) {
+                        return { fallbackToSearch: true };
                     }
+                    return { sucesso: false, error: result.error };
+                }
+            }
 
-                    // Busca o arquivo gerado com várias extensões possíveis (yt-dlp pode mudar conforme o merge)
-                    const possibleExts = ['.mp4', '.mkv', '.webm'];
-                    let foundFile = null;
-                    for (const ext of possibleExts) {
-                        const checkPath = outputTemplate + ext;
-                        if (fs.existsSync(checkPath)) {
-                            foundFile = checkPath;
-                            break;
-                        }
-                    }
+            const videoPath = findOutputFile();
 
-                    if (foundFile) {
-                        this.logger?.info(`✅ Arquivo baixado encontrado: ${path.basename(foundFile)}`);
-                        resolve(foundFile);
-                    } else {
-                        this.logger?.warn(`⚠️ yt-dlp terminou mas arquivo não foi localizado. STDOUT: ${stdout.substring(stdout.length - 500)}`);
-                        reject(new Error('Arquivo de vídeo não encontrado no sistema após o download.'));
-                    }
+            if (!videoPath) {
+                return { sucesso: false, error: 'Arquivo de vídeo não encontrado após download.' };
+            }
+
+            const stats = fs.statSync(videoPath);
+            const fileSizeMB = stats.size / (1024 * 1024);
+
+            if (stats.size > this.config?.YT_MAX_SIZE_MB * 1024 * 1024) {
+                await this.cleanupFile(videoPath);
+                return { sucesso: false, error: `Vídeo muito grande (${fileSizeMB.toFixed(1)}MB > ${this.config?.YT_MAX_SIZE_MB}MB)` };
+            }
+
+            // Se for grande (>50MB) e já mp4, envia direto sem processamento pesado
+            if (fileSizeMB > 50 && videoPath.endsWith('.mp4')) {
+                this.logger?.info(`⏩ Ignorando otimização para arquivo grande (${fileSizeMB.toFixed(1)}MB)`);
+                const metaLarge = await this.getYouTubeMetadata(url, ytdlpTool);
+                const mdLarge = metaLarge.sucesso ? metaLarge : { titulo: 'Vídeo do YouTube' };
+                return { sucesso: true, videoPath, titulo: mdLarge.titulo, size: stats.size, mimetype: 'video/mp4', ...mdLarge };
+            }
+
+            // Otimiza vídeo via FFmpeg para compatibilidade WhatsApp
+            this.logger?.info(`🛠️ Otimizando vídeo (${fileSizeMB.toFixed(1)}MB)...`);
+            const optimizedPath = this.generateRandomFilename('mp4');
+
+            try {
+                await new Promise((resolve, reject) => {
+                    ffmpeg(videoPath)
+                        .outputOptions([
+                            '-c:v', 'libx264', '-profile:v', 'baseline', '-level', '3.0',
+                            '-pix_fmt', 'yuv420p', '-threads', '1',
+                            '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
+                            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                            '-movflags', '+faststart', '-preset', 'ultrafast', '-crf', '26'
+                        ])
+                        .on('start', (cmd: any) => this.logger?.debug(`FFMPEG: ${cmd}`))
+                        .on('end', resolve)
+                        .on('error', (err: any) => { this.logger?.error(`Erro FFMPEG: ${err.message}`); reject(err); })
+                        .save(optimizedPath);
                 });
-            }).then(async (foundFile: any) => {
-                // Se o resolve retornou pedido de fallback
-                if (foundFile && (foundFile as any).fallbackToSearch) {
-                    this.logger?.info(`🔍 Executando fallback de busca para: ${input}`);
-                    const searchRes = await this.searchYouTube(input, 1);
-                    if (searchRes.sucesso && searchRes.resultados.length > 0) {
-                        const correctUrl = searchRes.resultados[0].url;
-                        this.logger?.info(`✅ Fallback encontrou: ${searchRes.resultados[0].titulo}`);
-                        return this.downloadYouTubeVideo(correctUrl); // Recursive with valid URL
-                    } else {
-                        throw new Error('Vídeo não encontrado mesmo após busca de fallback.');
-                    }
-                }
 
-                const actualPath = foundFile as string;
-                const stats = fs.statSync(actualPath);
-                const fileSizeMB = stats.size / (1024 * 1024);
+                const metaOpt = await this.getYouTubeMetadata(url, ytdlpTool);
+                const mdOpt = metaOpt.sucesso ? metaOpt : { titulo: 'Vídeo do YouTube' };
+                await this.cleanupFile(videoPath);
+                return { sucesso: true, videoPath: optimizedPath, titulo: mdOpt.titulo, size: fs.statSync(optimizedPath).size, mimetype: 'video/mp4', ...mdOpt };
+            } catch (optErr: any) {
+                this.logger?.warn('⚠️ Otimização falhou, enviando original...');
+                const metaFall = await this.getYouTubeMetadata(url, ytdlpTool);
+                const mdFall = metaFall.sucesso ? metaFall : { titulo: 'Vídeo do YouTube' };
+                return { sucesso: true, videoPath, titulo: mdFall.titulo, size: stats.size, mimetype: 'video/mp4', ...mdFall };
+            }
 
-                if (stats.size > this.config?.YT_MAX_SIZE_MB * 1024 * 1024) {
-                    await this.cleanupFile(actualPath);
-                    throw new Error(`Vídeo muito grande (${fileSizeMB.toFixed(1)}MB > ${this.config?.YT_MAX_SIZE_MB}MB)`);
-                }
-
-                // 🛠️ ESTÁGIO DE OTIMIZAÇÃO / BYPASS
-                // Se o vídeo for > 50MB e já for MP4, tentamos enviar direto
-                const shouldSkipOptimization = fileSizeMB > 50 && (actualPath as string).endsWith('.mp4');
-
-                if (shouldSkipOptimization) {
-                    this.logger?.info(`⏩ Ignorando otimização lenta para arquivo grande (${fileSizeMB.toFixed(1)}MB)`);
-                    const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
-                    const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
-
-                    return {
-                        sucesso: true,
-                        videoPath: actualPath,
-                        titulo: metadata.titulo,
-                        size: stats.size,
-                        mimetype: 'video/mp4',
-                        ...metadata
-                    };
-                }
-
-                this.logger?.info(`🛠️ Otimizando vídeo (${fileSizeMB.toFixed(1)}MB)...`);
-                const optimizedPath = this.generateRandomFilename('mp4');
-
-                try {
-                    await new Promise((resolve, reject) => {
-                        ffmpeg(actualPath)
-                            .outputOptions([
-                                '-c:v', 'libx264',
-                                '-profile:v', 'baseline',
-                                '-level', '3.0',
-                                '-pix_fmt', 'yuv420p',
-                                '-threads', '1',
-                                '-c:a', 'aac',
-                                '-b:a', '128k',
-                                '-ar', '44100',
-                                '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                                '-movflags', '+faststart',
-                                '-preset', 'ultrafast',
-                                '-crf', '26'
-                            ])
-                            .on('start', (cmd) => this.logger?.debug(`FFMPEG: ${cmd}`))
-                            .on('end', resolve)
-                            .on('error', (err) => {
-                                this.logger?.error(`Erro FFMPEG: ${err.message}`);
-                                reject(err);
-                            })
-                            .save(optimizedPath);
-                    });
-
-                    const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
-                    const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
-
-                    await this.cleanupFile(actualPath);
-
-                    return {
-                        sucesso: true,
-                        videoPath: optimizedPath,
-                        titulo: metadata.titulo,
-                        size: fs.statSync(optimizedPath).size,
-                        mimetype: 'video/mp4',
-                        ...metadata
-                    };
-                } catch (optError) {
-                    this.logger?.warn('⚠️ Otimização falhou, enviando original...');
-                    const metaRes = await this.getYouTubeMetadata(url, ytdlpTool);
-                    const metadata = metaRes.sucesso ? metaRes : { titulo: 'Vídeo do YouTube' };
-                    return {
-                        sucesso: true,
-                        videoPath: actualPath,
-                        titulo: metadata.titulo,
-                        size: fs.statSync(actualPath as string).size,
-                        mimetype: 'video/mp4',
-                        ...metadata
-                    };
-                }
-            });
-        } catch (error) {
+        } catch (error: any) {
             this.logger?.error('❌ Erro download vídeo:', error.message);
             return { sucesso: false, error: error.message };
         }
     }
+
 
     async getYouTubeMetadata(url: string, tool: any = null): Promise<any> {
         try {
@@ -1205,7 +1197,9 @@ class MediaProcessor {
             const thumbnailUrl = videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : null;
 
             const nodePath = process.execPath;
-            const bypassArgs = this._getYtDlpBypassArgs(nodePath);
+            // Usa o primeiro client strategy disponível para metadados (não precisa de fallback aqui)
+            const strategies = this._getClientStrategies();
+            const bypassArgs = strategies.length > 0 ? strategies[0].args : '';
             const command = process.platform === 'win32'
                 ? `"${ytdlp.cmd}" ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`
                 : `${ytdlp.cmd} ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;

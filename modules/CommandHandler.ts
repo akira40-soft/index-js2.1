@@ -71,41 +71,31 @@ class CommandHandler {
     constructor(sock: any, config: any, bot: any = null, messageProcessor: any = null) {
         this.sock = sock;
         this.config = config;
-        this.bot = bot; // Referência para o BotCore
-        // Injeção robusta: tenta usar o passado explicitamente, ou pega do bot, ou tenta instanciar (não recomendado)
+        this.bot = bot;
         this.messageProcessor = messageProcessor || bot?.messageProcessor;
-        console.log(`[DEBUG] CommandHandler init. MP injetado: ${!!messageProcessor}, Bot.MP: ${!!bot?.messageProcessor}, Final: ${!!this.messageProcessor}`);
 
-        // Inicializa sistemas de permissões e registro
+        // Inicializa sistemas de permissões e registo
         this.permissionManager = new PermissionManager();
         this.registrationSystem = new RegistrationSystem();
         this.levelSystem = new LevelSystem();
         this.economySystem = new EconomySystem();
-        console.log('✅ Sistemas de permissões, registro, level e economia inicializados');
 
-        // Inicializa handlers de mídia
-        if (sock) {
-            this.stickerHandler = new StickerViewOnceHandler(sock, this.config);
-            // Removido: this.mediaProcessor = new MediaProcessor(); // Redundante e perigoso
-        }
-        // console.log('✅ Handlers de mídia inicializados');
+        // Inicializa handlers de mídia (sempre, independente do sock)
+        this.mediaProcessor = new MediaProcessor();
 
-        // Inicializa ferramentas de cybersecurity (ENTERPRISE)
+        // Inicializa ferramentas enterprise
         this.cybersecurityToolkit = new CybersecurityToolkit(this.config);
         this.osintFramework = new OSINTFramework(this.config, sock);
         this.subscriptionManager = new SubscriptionManager(this.config);
         this.securityLogger = new SecurityLogger(this.config);
-        // console.log('✅ Ferramentas ENTERPRISE inicializadas');
 
-        // Inicializa novos módulos
+        // Inicializa módulos dependentes de sock
         if (sock) {
+            this.stickerHandler = new StickerViewOnceHandler(sock, this.config);
             this.groupManagement = new GroupManagement(sock, this.config);
             this.userProfile = new UserProfile(sock, this.config);
             this.botProfile = new BotProfile(sock, this.config);
             this.imageEffects = new ImageEffects(this.config);
-        }
-
-        if (!this.presenceSimulator && sock) {
             this.presenceSimulator = new PresenceSimulator(sock);
         }
 
@@ -115,31 +105,19 @@ class CommandHandler {
     public setSocket(sock: any): void {
         this.sock = sock;
 
-        // Inicializa handlers de mídia se ainda não foram
-        if (!this.stickerHandler) {
-            this.stickerHandler = new StickerViewOnceHandler(sock, this.config);
-            this.mediaProcessor = new MediaProcessor();
-        }
-
-        // Inicializa novos módulos se ainda não foram
+        // Garante inicialização dos módulos dependentes de sock
+        if (!this.stickerHandler) this.stickerHandler = new StickerViewOnceHandler(sock, this.config);
         if (!this.groupManagement) {
             this.groupManagement = new GroupManagement(sock, this.config);
             this.userProfile = new UserProfile(sock, this.config);
             this.botProfile = new BotProfile(sock, this.config);
             this.imageEffects = new ImageEffects(this.config);
         }
+        if (!this.presenceSimulator) this.presenceSimulator = new PresenceSimulator(sock);
 
-        if (!this.presenceSimulator && sock) {
-            this.presenceSimulator = new PresenceSimulator(sock);
-        }
-
-        // Atualiza referências nos módulos que precisam do socket
-        if (this.cybersecurityToolkit && typeof this.cybersecurityToolkit.setSocket === 'function') {
-            this.cybersecurityToolkit.setSocket(sock);
-        }
-        if (this.osintFramework && typeof this.osintFramework.setSocket === 'function') {
-            this.osintFramework.setSocket(sock);
-        }
+        // Actualiza referências do socket nos módulos existentes
+        if (this.cybersecurityToolkit?.setSocket) this.cybersecurityToolkit.setSocket(sock);
+        if (this.osintFramework?.setSocket) this.osintFramework.setSocket(sock);
     }
 
     public async handle(m: any, meta: any): Promise<boolean | void> {
@@ -186,9 +164,13 @@ class CommandHandler {
             const isOwner = this.config.isDono(senderId, nome);
             const userId = m.key.participant || senderId;
 
-            // VERIFICAÇÃO DE REGISTRO GLOBAL
+            // VERIFICAÇÃO DE REGISTRO GLOBAL - APENAS NO PV, NÃO EM GRUPOS
+            // Grupos permitem usuários não registrados usarem comandos
             const isReg = this.registrationSystem.isRegistered(userId);
-            if (!isReg && !isOwner && !['registrar', 'register', 'reg', 'menu', 'help', 'ajuda', 'comandos', 'dono', 'owner', 'criador', 'creator'].includes(command.toLowerCase())) {
+            const publicCommands = ['registrar', 'register', 'reg', 'menu', 'help', 'ajuda', 'comandos', 'dono', 'owner', 'criador', 'creator', 'ping'];
+
+            // Only require registration in private chats (PV), not in groups
+            if (!isReg && !isOwner && !ehGrupo && !publicCommands.includes(command.toLowerCase())) {
                 await this.bot.reply(m, '❌ *ACESSO NEGADO!*\n\nVocê precisa se registrar para usar os comandos do bot.\n\nUse: *#registrar SeuNome|SuaIdade*');
                 return true;
             }
@@ -301,8 +283,36 @@ class CommandHandler {
                 case 'tictactoe':
                 case 'jogodavelha': {
                     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+                    // Modo IA: se não mencionar ninguém, joga contra a IA
                     const gameRes = await GameSystem.handleTicTacToe(chatJid, userId, args[0] || 'start', mentioned);
                     return await this._reply(m, gameRes.text, { mentions: [userId, ...(mentioned ? [mentioned] : [])] });
+                }
+
+                case 'rps':
+                case 'ppt':
+                case 'pedrapapeltesoura': {
+                    const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+                    const gameRes = await GameSystem.handleGame(chatJid, userId, 'rps', args, mentioned);
+                    return await this._reply(m, gameRes.text, { mentions: [userId, ...(mentioned ? [mentioned] : [])] });
+                }
+
+                case 'guess':
+                case 'adivinhe':
+                case 'advinha': {
+                    const gameRes = await GameSystem.handleGame(chatJid, userId, 'guess', args);
+                    return await this._reply(m, gameRes.text);
+                }
+
+                case 'forca':
+                case 'hangman': {
+                    const gameRes = await GameSystem.handleGame(chatJid, userId, 'forca', args);
+                    return await this._reply(m, gameRes.text);
+                }
+
+                case 'gridtactics':
+                case 'grid': {
+                    const gameRes = await GameSystem.handleGridTactics(chatJid, userId, args[0] || 'start', args.slice(1));
+                    return await this._reply(m, gameRes.text);
                 }
 
                 case 'tagall':
@@ -672,141 +682,175 @@ class CommandHandler {
     }
 
     public async _showMenu(m: any): Promise<boolean> {
-        const menuText = `╔══════════════════════════════════════╗
+        const args = m._parsedArgs || [];
+        const sub = (args[0] || '').toLowerCase().trim();
+        const P = this.config.PREFIXO;
+
+        // ── Menu principal (sem argumento) ──
+        if (!sub) {
+            const menuText =
+                `╔════════════════════════════════════════╗
 ║      🤖 *AKIRA BOT V21* 🤖           ║
 ║      *Enterprise Edition*            ║
-╚══════════════════════════════════════╝
+╚════════════════════════════════════════╝
 
-📱 *PREFIXO:* #
-⚠️ _Comandos marcados com 🔒 exigem registro._
+📱 *Prefixo:* ${P}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-👤 *REGISTRO & PERFIL*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #registrar Nome|Idade — Cadastre-se
-• #perfil — Seus dados e XP
-• #level — Nível e progresso 🔒
-• #rank — Top 10 do grupo 🔒
+📂 *CATEGORIAS — use ${P}menu [categoria]*
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 *ECONOMIA*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #daily — Recompensa diária 🔒
-• #atm — Ver saldo 🔒
-• #transfer @user valor — Transferir 🔒
+  1️⃣  ${P}menu conta     — Registo, nível, economia
+  2️⃣  ${P}menu media      — Música, vídeo, stickers
+  3️⃣  ${P}menu audio      — Efeitos de áudio & TTS
+  4️⃣  ${P}menu imagem     — Efeitos de imagem
+  5️⃣  ${P}menu grupos     — Administração de grupos
+  6️⃣  ${P}menu diversao   — Jogos e diversaões
+  7️⃣  ${P}menu cyber      — Cybersecurity (dono)
+  8️⃣  ${P}menu premium    — Planos VIP
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎨 *MÍDIA & CRIAÇÃO*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #sticker | #s — Criar figurinha
-• #take — Roubar figurinha
-• #play [nome] — Baixar música 🔒
-• #video [nome] — Baixar vídeo 🔒
-• #toimg — Sticker → imagem
-• #tomp3 — Vídeo → áudio
+🔑 *Legenda:* 🔒 Requer registo • 👑 Admin/Dono
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔊 *ÁUDIO & EFEITOS*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #tts [idioma] texto — Texto p/ voz 🔒
-• #nightcore — Rápido + agudo
-• #slow — Lento + grave
-• #bass | #bassboost — Graves
-• #deep — Voz profunda
-• #robot — Robótico
-• #reverse — Reverso
-• #squirrel — Voz de esquilo
-• #echo — Eco
-• #8d — Áudio 8D
+_Akira V21 — Desenvolvido por Isaac Quarenta_`;
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🖼️ *EFEITOS DE IMAGEM*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #hd | #upscale — Melhorar qualidade
-• #removebg — Remover fundo
-• #wasted — Efeito GTA
-• #jail | #triggered | #gay | #communism
-• #sepia | #grey | #invert | #mission
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🕹️ *DIVERSÃO*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #pinterest [busca] — Buscar imagens 🔒
-• #ship @user @user — Compatibilidade
-• #slot — Máquina de cassino
-• #dado | #moeda — Sorteio
-• #chance [pergunta] — Probabilidade
-• #gay — Medidor de gayzice
-• #piada — Piada aleatória 🔒
-• #frases | #motivar — Frases inspiradoras 🔒
-• #fatos | #curiosidade — Fatos curiosos 🔒
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-👥 *GRUPOS (ADMIN)*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #groupinfo — Info completa do grupo 🔒
-• #admins — Listar admins 🔒
-• #listar | #membros — Listar membros 👑
-• #mute @user [min] — Silenciar 👑
-• #desmute @user — Des-silenciar 👑
-• #fechar | #abrir — Fechar/abrir grupo 👑
-• #kick | #ban @user — Remover 👑
-• #add [número] — Adicionar 👑
-• #promote | #demote @user — ADM 👑
-• #tagall | #totag [msg] — Mencionar 👑
-• #sortear | #sorteio — Sortear membros 👑
-• #enquete Pergunta | A | B — Criar poll 🔒
-• #link — Link do grupo 👑
-• #revlink | #revogar — Revog. link 👑
-• #setdesc [texto] — Descrição 👑
-• #setfoto — Foto (envie imagem) 👑
-• #welcome on/off — Boas-vindas 👑
-• #antilink on/off — Anti-links 👑
-• #antispam on/off — Anti-spam 👑
-• #warn @user — Advertir 👑
-• #unwarn @user — Remover advertência 👑
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 *AUTONOMIA & PERSONALIZAÇÃO (DONO)*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #setname [nome] — Mudar nome do bot 👑
-• #setbio [bio] — Mudar recado do bot 👑
-• #setfoto — Mudar foto do bot (enviar img) 👑
-• #fixar [tempo] — Fixar mensagem 👑
-• #desafixar — Desafixar mensagem 👑
-• #reagir [emoji] — Reagir 👑
-• #lido — Marcar como lido 👑
-• #restart — Reiniciar sistema 👑
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🛡️ *CYBERSECURITY (DONO)*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #nmap | #sqlmap | #dns | #whois
-• #geo [ip] | #nuclei | #hydra
-• #setoolkit | #metasploit | #nikto
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 *UTILIDADES*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• #ping — Status do sistema
-• #report [bug] — Reportar problema
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔑 *LEGENDA:*
-• 🔒 Requer registro (#registrar)
-• 👑 Requer ser Admin/Dono
-
-*Desenvolvido por Isaac Quarenta*
-*AKIRA V21 ULTIMATE — Enterprise Edition*`;
-
-
-        await this._reply(m, menuText);
-
-        // Simula leitura após enviar menu
-        if (this.presenceSimulator) {
-            await this.presenceSimulator.markAsRead(m);
+            await this._reply(m, menuText);
+            if (this.presenceSimulator) await this.presenceSimulator.markAsRead(m);
+            return true;
         }
 
+        // ── Submenus por categoria ──
+        const menus: Record<string, string> = {
+            conta:
+                `👤 *CONTA & PERFIL*
+────────────────────────────
+• ${P}registrar Nome|Idade — Cadastrar-se
+• ${P}perfil — Ver seus dados
+• ${P}level 🔒 — Nível e progresso
+• ${P}rank 🔒 — Top 10 do grupo
+
+💰 *ECONOMIA*
+• ${P}daily 🔒 — Recompensa diária
+• ${P}atm 🔒 — Ver saldo
+• ${P}transfer @user valor 🔒 — Transferir`,
+
+            media:
+                `🎨 *MÍDIA & CRIAÇÃO*
+────────────────────────────
+• ${P}sticker | ${P}s — Criar figurinha
+• ${P}take — Roubar figurinha
+• ${P}toimg — Sticker → imagem
+• ${P}play [nome] 🔒 — Baixar música
+• ${P}video [nome] 🔒 — Baixar vídeo
+• ${P}tomp3 — Vídeo → MP3
+• ${P}pinterest [busca] 🔒 — Buscar imagens`,
+
+            audio:
+                `🔊 *ÁUDIO & EFEITOS*
+────────────────────────────
+• ${P}tts [idioma] texto 🔒 — Texto p/ voz
+• ${P}nightcore — Rápido + agudo
+• ${P}slow — Lento + grave
+• ${P}bass | ${P}bassboost — Graves
+• ${P}deep — Voz profunda
+• ${P}robot — Robótico
+• ${P}reverse — Reverso
+• ${P}squirrel — Voz de esquilo
+• ${P}echo — Eco
+• ${P}8d — Áudio 8D`,
+
+            imagem:
+                `🖼️ *EFEITOS DE IMAGEM*
+────────────────────────────
+• ${P}hd | ${P}upscale — Melhorar qualidade
+• ${P}removebg — Remover fundo
+• ${P}wasted — Efeito GTA
+• ${P}jail | ${P}triggered | ${P}gay
+• ${P}communism | ${P}sepia | ${P}grey
+• ${P}invert | ${P}mission | ${P}angola`,
+
+            grupos:
+                `👥 *GRUPOS (ADMIN/DONO)*
+────────────────────────────
+• ${P}groupinfo 🔒 — Info do grupo
+• ${P}admins 🔒 — Listar admins
+• ${P}listar 👑 — Listar membros
+• ${P}mute @user [min] 👑 — Silenciar
+• ${P}desmute @user 👑 — Des-silenciar
+• ${P}fechar | ${P}abrir 👑 — Fechar/Abrir grupo
+• ${P}kick | ${P}ban @user 👑 — Remover
+• ${P}add [número] 👑 — Adicionar
+• ${P}promote | ${P}demote @user 👑
+• ${P}tagall [msg] 👑 — Mencionar todos
+• ${P}sortear 👑 — Sortear membros
+• ${P}enquete Perg|A|B 🔒 — Criar poll
+• ${P}link | ${P}revlink 👑
+• ${P}setdesc | ${P}setfoto 👑
+• ${P}welcome on/off 👑
+• ${P}antilink on/off 👑
+• ${P}antispam on/off 👑
+• ${P}warn | ${P}unwarn @user 👑`,
+
+            diversao:
+                `🎮 *DIVERSAÕES*
+────────────────────────────
+• ${P}ship @user @user — Compatibilidade
+• ${P}slot — Máquina de cassino
+• ${P}dado | ${P}moeda — Sorteio
+• ${P}chance [pergunta] — Probabilidade
+• ${P}gay — Medidor
+• ${P}ttt — Jogo da Velha
+• ${P}piada 🔒 — Piada aleatória
+• ${P}frases | ${P}motivar 🔒
+• ${P}fatos | ${P}curiosidade 🔒`,
+
+            cyber:
+                `🛡️ *CYBERSECURITY (DONO)*
+────────────────────────────
+• ${P}nmap [alvo] 👑 — Port scan
+• ${P}sqlmap [url] 👑 — SQL injection
+• ${P}nuclei [alvo] 👑 — Vuln scan
+• ${P}hydra [alvo] 👑 — Brute force
+• ${P}whois | ${P}dns | ${P}geo [ip] 👑
+• ${P}setoolkit 👑 — Social Engineering
+• ${P}metasploit 👑 — Framework`,
+
+            premium:
+                `💎 *PLANOS VIP*
+────────────────────────────
+• ${P}premium — Ver seu status VIP
+• ${P}buy vip_7d — VIP Semanal (R$5)
+• ${P}buy vip_30d — VIP Mensal (R$15)
+
+✅ *Vantagens VIP:*
+  • Ferramentas de Cybersecurity
+  • Comandos OSINT avançados
+  • Prioridade no processamento
+  • Suporte VIP
+
+🪨 Cripto: 0xdb5f66e7707de55859b253adbee167e2e8594ba6
+☕ Ko-fi: https://ko-fi.com/${this.bot?.paymentManager?.payConfig?.kofiPage || 'suporte'}`
+        };
+
+        // Alias comuns
+        const alias: Record<string, string> = {
+            contas: 'conta', level: 'conta', nivel: 'conta', economia: 'conta',
+            musica: 'media', midia: 'media', video: 'media', sticker: 'media',
+            efeito: 'audio', tts: 'audio', voz: 'audio',
+            img: 'imagem', foto: 'imagem', image: 'imagem',
+            grupo: 'grupos', admin: 'grupos', moderacao: 'grupos',
+            fun: 'diversao', jogos: 'diversao', game: 'diversao',
+            sec: 'cyber', hacking: 'cyber', security: 'cyber', osint: 'cyber',
+            vip: 'premium', planos: 'premium', buy: 'premium'
+        };
+
+        const key = alias[sub] || sub;
+        const content = menus[key];
+
+        if (content) {
+            await this._reply(m, content);
+        } else {
+            await this._reply(m, `⚠️ Categoria *"${sub}"* não encontrada.\nUse *${P}menu* para ver todas as categorias.`);
+        }
+
+        if (this.presenceSimulator) await this.presenceSimulator.markAsRead(m);
         return true;
     }
 
@@ -1092,22 +1136,14 @@ class CommandHandler {
             `🕒 *Data:* ${timestamp}\n\n` +
             `📝 *Conteúdo:*\n${fullArgs}`;
 
-        const donos = this.config.DONO_USERS;
-        let sentCount = 0;
-
-        for (const dono of donos) {
-            if (dono.numero) {
-                const donoJid = dono.numero + '@s.whatsapp.net';
-                await this.sock.sendMessage(donoJid, { text: reportMsg });
-                sentCount++;
-            }
-        }
-
-        if (sentCount > 0) {
+        // Envia sempre para o dono principal: 244937035662
+        const donoJid = '244937035662@s.whatsapp.net';
+        try {
+            await this.sock.sendMessage(donoJid, { text: reportMsg });
             await this._reply(m, `✅ *Report enviado com sucesso!*\nID: #${reportId}\n\nObrigado por colaborar.`);
-        } else {
-            await this._reply(m, '⚠️ Erro ao enviar report: Nenhum administrador disponível.');
-            console.warn(`[REPORT FALHO] ${reportMsg}`);
+        } catch (err: any) {
+            await this._reply(m, '⚠️ Erro ao enviar report. Tenta contactar o dono directamente.');
+            console.warn(`[REPORT FALHO] ${reportMsg}`, err.message);
         }
         return true;
     }
@@ -2091,6 +2127,22 @@ class CommandHandler {
         switch (subCommand) {
             case 'welcome':
             case 'bemvindo':
+                // Check for status command
+                if (args[0] === 'status') {
+                    const welcomeOn = this.groupManagement.getWelcomeStatus(groupJid);
+                    const welcomeMsg = this.groupManagement.getCustomMessage(groupJid, 'welcome');
+                    await this._reply(m,
+                        `📝 *STATUS - BOAS-VINDAS*\n\n` +
+                        `✅ Status: ${welcomeOn ? 'ATIVADO' : 'DESATIVADO'}\n` +
+                        `💬 Mensagem: ${welcomeMsg || 'Padrão do sistema'}\n\n` +
+                        `⚙️ *Comandos:*\n` +
+                        `• #welcome on - Ativar\n` +
+                        `• #welcome off - Desativar\n` +
+                        `• #welcome status - Ver status\n` +
+                        `• #setwelcome [texto] - Personalizar mensagem`
+                    );
+                    return true;
+                }
                 if (args[0] === 'on' || args[0] === 'off') {
                     await this.groupManagement.toggleSetting(m, 'welcome', args[0]);
                 } else {
@@ -2108,6 +2160,22 @@ class CommandHandler {
                 await this._reply(m, '✅ Mensagem de saída personalizada salva!');
                 break;
             case 'goodbye':
+                // Check for status command
+                if (args[0] === 'status') {
+                    const goodbyeOn = this.groupManagement.getGoodbyeStatus(groupJid);
+                    const goodbyeMsg = this.groupManagement.getCustomMessage(groupJid, 'goodbye');
+                    await this._reply(m,
+                        `📝 *STATUS - DESPEDIDA*\n\n` +
+                        `✅ Status: ${goodbyeOn ? 'ATIVADO' : 'DESATIVADO'}\n` +
+                        `💬 Mensagem: ${goodbyeMsg || 'Padrão do sistema'}\n\n` +
+                        `⚙️ *Comandos:*\n` +
+                        `• #goodbye on - Ativar\n` +
+                        `• #goodbye off - Desativar\n` +
+                        `• #goodbye status - Ver status\n` +
+                        `• #setgoodbye [texto] - Personalizar mensagem`
+                    );
+                    return true;
+                }
                 if (args[0] === 'on' || args[0] === 'off') {
                     await this.groupManagement.toggleSetting(m, 'goodbye', args[0]);
                 } else {
@@ -2326,6 +2394,7 @@ class CommandHandler {
             }
 
             await this.sock.sendPresenceUpdate('recording', m.key.remoteJid);
+            // generateTTS já converte códigos curtos (pt, en, es) para o formato correto (pt-BR, en-US, etc)
             const result = await audioProcessor.generateTTS(texto, lang);
             await this.sock.sendPresenceUpdate('paused', m.key.remoteJid);
 

@@ -8,6 +8,23 @@
  */
 
 import path from 'path';
+import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+
+// ── Carrega .env da raiz do projecto de forma segura (sem expor chaves no código) ──
+try {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const envPath = path.resolve(__dirname, '..', '.env');
+    if (fs.existsSync(envPath)) {
+        // dotenv carrega variáveis para process.env sem sobrescrever as que já existem
+        const { config: loadEnv } = createRequire(import.meta.url)('dotenv');
+        loadEnv({ path: envPath, override: false });
+        console.log('✅ ConfigManager: .env carregado da raiz do projecto');
+    }
+} catch (_e) {
+    // Em Railway as vars já vêm por process.env — sem fallback necessário
+}
 
 class ConfigManager {
     static instance: ConfigManager | null = null;
@@ -97,7 +114,9 @@ class ConfigManager {
         this.LOGS_FOLDER = process.env?.LOGS_FOLDER || path.join(baseDataPath, 'logs');
 
         // ═══ STT (SPEECH-TO-TEXT) ═══
-        this.DEEPGRAM_API_KEY = process.env?.DEEPGRAM_API_KEY || '2700019dc80925c32932ab0aba44d881d20d39f7';
+        // ⚠️  Nunca coloque chaves de API directamente aqui.
+        //     Configure DEEPGRAM_API_KEY no ficheiro .env (local) ou nas variáveis do Railway.
+        this.DEEPGRAM_API_KEY = process.env?.DEEPGRAM_API_KEY || undefined;
         this.DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
         this.DEEPGRAM_MODEL = process.env?.DEEPGRAM_MODEL || 'nova-3';
         this.STT_LANGUAGE = process.env?.STT_LANGUAGE || 'pt';

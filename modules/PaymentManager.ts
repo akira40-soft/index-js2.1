@@ -22,13 +22,15 @@ class PaymentManager {
 
         this._ensureFiles();
 
-        // Carrega configurações do PayPlay
+        // Carrega configurações do sistema de pagamento
         this.payConfig = this._loadJSON(this.configPath, {
             enabled: true,
-            merchantId: 'akira_bot_store',
             currency: 'BRL',
-            webhookSecret: '9b8a1a6c-00ef-47e7-ac00-19809ecfab78', // Token real fornecido
-            kofiPage: 'seu_usuario_kofi', // Adicione seu usuário do Ko-fi aqui
+            // Chave secreta do Ko-fi — configura em KOFI_WEBHOOK_SECRET no Railway
+            webhookSecret: process.env?.KOFI_WEBHOOK_SECRET || '',
+            kofiPage: process.env?.KOFI_PAGE || 'https://ko-fi.com/isaacquarenta',
+            // Endereço BTC para receber pagamentos cripto
+            btcAddress: process.env?.BTC_ADDRESS || '0xdb5f66e7707de55859b253adbee167e2e8594ba6',
             plans: {
                 'vip_7d': { name: 'VIP Semanal', price: 5.00, days: 7 },
                 'vip_30d': { name: 'VIP Mensal', price: 15.00, days: 30 }
@@ -66,10 +68,10 @@ class PaymentManager {
             if (!fs.existsSync(this.configPath)) {
                 this._saveJSON(this.configPath, {
                     enabled: true,
-                    merchantId: 'akira_bot_store',
                     currency: 'BRL',
-                    webhookSecret: '9b8a1a6c-00ef-47e7-ac00-19809ecfab78',
-                    kofiPage: 'seu_usuario_kofi',
+                    webhookSecret: process.env?.KOFI_WEBHOOK_SECRET || '',
+                    kofiPage: process.env?.KOFI_PAGE || 'seu_usuario_kofi',
+                    btcAddress: process.env?.BTC_ADDRESS || '0xdb5f66e7707de55859b253adbee167e2e8594ba6',
                     plans: {
                         'vip_7d': { name: 'VIP Semanal', price: 5.00, days: 7 },
                         'vip_30d': { name: 'VIP Mensal', price: 15.00, days: 30 }
@@ -77,7 +79,7 @@ class PaymentManager {
                 });
             }
         } catch (e: any) {
-            console.error('PaymentManager: erro ao garantir arquivos:', e.message);
+            console.error('PaymentManager: erro ao garantir ficheiros:', e.message);
         }
     }
 
@@ -101,36 +103,30 @@ class PaymentManager {
         const plan = this.payConfig.plans[planKey];
         if (!plan) return { success: false, message: 'Plano não encontrado.' };
 
-        // Simulação de link (em produção, chamaria API do PayPal/MercadoPago/PayPlay)
-        // Aqui usamos um link deep com payload para simular
-        const baseUrl = 'https://paypal.com/pay'; // Exemplo
-        const payload = Buffer.from(JSON.stringify({
-            u: userId,
-            p: planKey,
-            ts: Date.now()
-        })).toString('base64');
+        const btcAddress = this.payConfig.btcAddress || '0xdb5f66e7707de55859b253adbee167e2e8594ba6';
+        const kofiPage = this.payConfig.kofiPage || '';
 
-        const link = `${baseUrl}?info=${payload}&amount=${plan.price}`;
+        // Mensagem de pagamento honesta — sem links falsos
+        let msg = `🧾 *FATURA — ${plan.name}*\n\n`;
+        msg += `💰 *Valor:* R$ ${plan.price.toFixed(2)} (ou equivalente em cripto)\n`;
+        msg += `📅 *Duração:* ${plan.days} dias de acesso VIP\n\n`;
 
-        // Link do Ko-fi se configurado
-        let kofiLink = '';
-        if (this.payConfig.kofiPage) {
-            kofiLink = `https://ko-fi.com/${this.payConfig.kofiPage}`;
+        msg += `🪨 *Pagar com Cripto (BTC/ETH):*\n`;
+        msg += `${btcAddress}\n`;
+        msg += `_Envie o comprovante após o pagamento._\n\n`;
+
+        if (kofiPage && kofiPage !== 'seu_usuario_kofi') {
+            msg += `☕ *Ou apoie no Ko-fi:*\nhttps://ko-fi.com/${kofiPage}\n`;
+            msg += `⚠️ *IMPORTANTE:* Ao pagar, escreva o teu número de WhatsApp na mensagem para activar o VIP automaticamente!\n\n`;
         }
 
-        const msg = `🧾 *FATURA GERADA*\n\n` +
-            `📦 Plano: ${plan.name}\n` +
-            `💰 Valor: R$ ${plan.price.toFixed(2)}\n\n` +
-            `🔗 *Link de Pagamento (PayPal/PayPlay):*\n${link}\n\n` +
-            (kofiLink ? `☕ *Ou apoie no Ko-fi:*\n${kofiLink}\n(Envie o comprovante se usar Ko-fi)\n\n` : '') +
-            `_O pagamento é processado automaticamente._`;
+        msg += `📩 *Após pagar:*\nEnvia o comprovante para o dono:\nhttps://wa.me/244937035662`;
 
         return {
             success: true,
-            link: link,
             message: msg,
-            qrPayload: link,
-            kofiLink: kofiLink
+            btcAddress,
+            kofiLink: kofiPage ? `https://ko-fi.com/${kofiPage}` : ''
         };
     }
 
@@ -198,10 +194,11 @@ class PaymentManager {
 
         console.log('☕ [KO-FI] Webhook recebido:', kofiData);
 
-        // Verifica token se configurado (segurança)
-        if (this.payConfig.webhookSecret && kofiData.verification_token !== this.payConfig.webhookSecret && kofiData.verification_token !== 'troque_isso_agora') {
-            // return { success: false, message: 'Token inválido' };
-            console.warn('⚠️ Token de verificação do Ko-fi não corresponde (mas processando em modo debug)');
+        // Verifica token Ko-fi (segurança — nunca pular em produção)
+        const secret = this.payConfig.webhookSecret;
+        if (secret && kofiData.verification_token !== secret) {
+            console.warn('⚠️ [KO-FI] Token de verificação inválido. Pagamento rejeitado.');
+            return { success: false, message: 'Token de verificação inválido' };
         }
 
         // Tenta extrair usuário da mensagem ou nome

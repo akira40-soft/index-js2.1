@@ -197,9 +197,9 @@ No new dependencies required.
 
 ## Task Progress
 
-- [ ] Step 1: Fix RegistrationSystem
-- [ ] Step 2: Fix CommandHandler Registration
-- [ ] Step 3: Fix Welcome/Goodbye System
-- [ ] Step 4: Fix Anti-Link Admin Check
-- [ ] Step 5: Fix Rate Limiting
-- [ ] Step 6: Fix Level System XP
+- [x] Step 1: Fix RegistrationSystem - Added getProfile() method, fixed register() to auto-generate serial
+- [x] Step 2: Fix CommandHandler Registration - Registration now only required in PV, not in groups
+- [x] Step 3: Fix Welcome/Goodbye System - Added status commands for welcome and goodbye
+- [x] Step 4: Fix Anti-Link Admin Check - Already implemented in ModerationSystem.checkLink() with isAdmin parameter
+- [x] Step 5: Fix Rate Limiting - Already implemented with warning at 80% and auto-blacklist after 3 violations
+- [x] Step 6: Fix Level System XP - Changed from exponential (2^level) to polynomial formula

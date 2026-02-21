@@ -32,6 +32,7 @@ class AudioProcessor {
         // Filtros de Áudio (Legacy + Novos)
         this.AUDIO_FILTERS = {
             'bass': 'firequalizer=gain_entry=\'entry(0,10);entry(250,20);entry(4000,-10)\'',
+            'bassboost': 'firequalizer=gain_entry=\'entry(0,12);entry(200,15);entry(4000,-8)\'',
             'esquilo': 'asetrate=44100*2,atempo=0.5',
             'gemuk': 'asetrate=44100*0.5,atempo=2.0',
             'nightcore': 'asetrate=44100*1.25,atempo=1.0',
@@ -44,7 +45,12 @@ class AudioProcessor {
             'smooth': 'minterpolate=\'mi_mode=mci:mc_mode=aobmc:vsbmc=1:fps=120\'',
             'tupai': 'atempo=0.5,asetrate=65100',
             'treble': 'treble=g=10',
-            'echo': 'aecho=0.8:0.9:1000:0.3'
+            'echo': 'aecho=0.8:0.9:1000:0.3',
+            'deep': 'asetrate=44100*0.7,atempo=0.8,lowpass=f=2000',
+            'squirrel': 'asetrate=44100*2.5,atempo=0.5',
+            // 8D Audio Effect - Cria sensação de áudio 360 graus
+            // Usa filtros de reverb e delay para criar efeito surround
+            '8d': 'aecho=0.8:0.88:60:0.4,aecho=0.8:0.88:30:0.3,aecho=0.8:0.88:15:0.2,apulsator=hz=0.5'
         };
     }
 
@@ -428,6 +434,28 @@ class AudioProcessor {
                 error: error.message
             };
         }
+    }
+
+    /**
+    * Alias para textToSpeech (compatibilidade com CommandHandler)
+    * Converte códigos de idioma para formato correto (ex: 'en' -> 'en-US')
+    */
+    async generateTTS(text: string, language: string = 'pt'): Promise<any> {
+        const langMap: Record<string, string> = {
+            'pt': 'pt-BR',
+            'en': 'en-US',
+            'es': 'es-ES',
+            'fr': 'fr-FR',
+            'de': 'de-DE',
+            'it': 'it-IT',
+            'ja': 'ja-JP',
+            'zh': 'zh-CN',
+            'ar': 'ar-SA'
+        };
+
+        const langCode = langMap[language.toLowerCase()] || language;
+
+        return await this.textToSpeech(text, langCode);
     }
 
     /**
