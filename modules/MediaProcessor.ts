@@ -125,34 +125,43 @@ class MediaProcessor {
 
     /**
      * Executa yt-dlp com fallback automático entre client strategies.
-     * Retorna o resultado do primeiro que funcionar.
+     * Pode retornar output do stdout (ex: para metadados) ou apenas sucesso de arquivo criado.
      */
     private async _runYtDlpWithFallback(
-        tool: any,
         buildCommand: (bypassArgs: string) => string,
-        expectedOutputPath: string
-    ): Promise<{ sucesso: boolean; error?: string }> {
+        expectedOutputPath?: string,
+        captureOutput: boolean = false
+    ): Promise<{ sucesso: boolean; output?: string; error?: string }> {
         const strategies = this._getClientStrategies();
+        let lastError = '';
 
         for (const strategy of strategies) {
             this.logger?.info(`🔄 Tentando strategy: [${strategy.client}]`);
             const command = buildCommand(strategy.args);
 
-            const result = await new Promise<{ sucesso: boolean; error?: string }>((resolve) => {
+            const result = await new Promise<{ sucesso: boolean; output?: string; error?: string }>((resolve) => {
                 exec(command, { timeout: this.config?.YT_TIMEOUT_MS || 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
-                    if (fs.existsSync(expectedOutputPath)) {
-                        return resolve({ sucesso: true });
+                    // Se esperamos um arquivo, verificamos a existência
+                    if (expectedOutputPath && fs.existsSync(expectedOutputPath)) {
+                        return resolve({ sucesso: true, output: stdout });
                     }
-                    const errMsg = stderr || (error?.message) || 'Arquivo não criado';
-                    // Detecta bloqueio real de bot-detection para logar corretamente
-                    if (errMsg.includes('Sign in') || errMsg.includes('bot') || errMsg.includes('403')) {
-                        this.logger?.warn(`⛔ [${strategy.client}] Bot detection ativado, tentando próximo client...`);
+
+                    // Se apenas capturamos output (metadados), verificamos stdout
+                    if (captureOutput && stdout && stdout.includes('|')) {
+                        return resolve({ sucesso: true, output: stdout });
+                    }
+
+                    const errMsg = stderr || (error?.message) || 'Falha na execução';
+
+                    // Detecta bloqueio real de bot-detection
+                    if (errMsg.includes('Sign in') || errMsg.includes('bot') || errMsg.includes('403') || errMsg.includes('Requested format is not available')) {
+                        this.logger?.warn(`⛔ [${strategy.client}] Bloqueado ou formato indisponível, tentando próximo...`);
                     } else if (errMsg.includes('Video unavailable') || errMsg.includes('Private video')) {
-                        // Não adianta tentar outros clients para vídeo inválido
                         return resolve({ sucesso: false, error: 'Vídeo indisponível ou privado' });
                     } else {
                         this.logger?.warn(`⚠️ [${strategy.client}] Falhou: ${errMsg.slice(0, 150)}`);
                     }
+                    lastError = errMsg;
                     resolve({ sucesso: false, error: errMsg.slice(0, 300) });
                 });
             });
@@ -163,7 +172,7 @@ class MediaProcessor {
             }
         }
 
-        return { sucesso: false, error: 'Todos os métodos de bypass falharam. Tente configurar YT_COOKIES_PATH ou YT_PO_TOKEN nas variáveis de ambiente.' };
+        return { sucesso: false, error: lastError || 'Todos os métodos de bypass falharam.' };
     }
 
     /**
@@ -836,11 +845,12 @@ class MediaProcessor {
             const expectedPath = outputTemplate + '.mp3';
 
             const buildCommand = (bypassArgs: string) => {
-                const cmd = process.platform === 'win32' ? `"${tool.cmd}"` : tool.cmd;
+                const ytdlpTool = this.findYtDlp();
+                const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
                 return `${cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
             };
 
-            const result = await this._runYtDlpWithFallback(tool, buildCommand, expectedPath);
+            const result = await this._runYtDlpWithFallback(buildCommand, expectedPath);
 
             if (!result.sucesso) {
                 return { sucesso: false, error: result.error };
@@ -1118,7 +1128,7 @@ class MediaProcessor {
 
             // Usa o mesmo sistema de fallback progressivo do áudio
             const expectedPath = outputTemplate + '.mp4';
-            const result = await this._runYtDlpWithFallback(ytdlpTool, buildCommand, expectedPath);
+            const result = await this._runYtDlpWithFallback(buildCommand, expectedPath);
 
             if (!result.sucesso) {
                 // Tenta detectar qualquer extensão criada
@@ -1200,16 +1210,18 @@ class MediaProcessor {
             const videoId = this.extractYouTubeVideoId(url);
             const thumbnailUrl = videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : null;
 
-            const nodePath = process.execPath;
-            // Usa o primeiro client strategy disponível para metadados (não precisa de fallback aqui)
-            const strategies = this._getClientStrategies();
-            const bypassArgs = strategies.length > 0 ? strategies[0].args : '';
-            const command = process.platform === 'win32'
-                ? `"${ytdlp.cmd}" ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`
-                : `${ytdlp.cmd} ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;
+            const buildCommand = (bypassArgs: string) => {
+                const cmd = process.platform === 'win32' ? `"${ytdlp.cmd}"` : ytdlp.cmd;
+                return `${cmd} ${bypassArgs} --print "%(title)s|%(uploader)s|%(duration)s|%(view_count)s|%(like_count)s|%(upload_date)s" --no-playlist "${url}"`;
+            };
 
-            const output = execSync(command, { encoding: 'utf8', timeout: 30000, stdio: 'pipe' }).trim();
-            const [title, author, duration, views, likes, date] = output.split('|');
+            const result = await this._runYtDlpWithFallback(buildCommand, undefined, true);
+
+            if (!result.sucesso || !result.output) {
+                return { sucesso: false, error: result.error || 'Não foi possível extrair metadados' };
+            }
+
+            const [title, author, duration, views, likes, date] = result.output.trim().split('|');
 
             // Formata views para algo legível (ex: 1.5M)
             const formatCount = (count: any) => {
