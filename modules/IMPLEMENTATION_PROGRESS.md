@@ -1,107 +1,126 @@
-# Progresso da Implementação - Akira Bot V21
+# Akira Bot V21 - Progresso de Implementação
 
-## ✅ Correções Implementadas
+## ✅ Correções Realizadas
 
-### 1. Efeito 8D de Áudio (AudioProcessor.ts)
-**Status:** ✅ IMPLEMENTADO
-
-**Problema:** O efeito 8D não estava funcionando ("não encontrado")
+### 1. AudioProcessor.ts - Efeito 8D Corrigido
+**Problema:** O efeito de áudio 8D não funcionava ("não encontrado")
 
 **Solução:** Adicionado o filtro 8D ao objeto AUDIO_FILTERS:
-
 ```
 typescript
-// 8D Audio Effect - Cria sensação de áudio 360 graus
-// Usa filtros de reverb e delay para criar efeito surround
 '8d': 'aecho=0.8:0.88:60:0.4,aecho=0.8:0.88:30:0.3,aecho=0.8:0.88:15:0.2,apulsator=hz=0.5'
 ```
 
-**Filtros adicionais adicionados:**
-- `bassboost`: Graves intensificados
-- `deep`: Voz profunda
-- `squirrel`: Versão rápida do áudio
+**Filtros adicionados:**
+- `bassboost` - Graves intensos
+- `deep` - Voz profunda
+- `squirrel` - Áudio esquilo
 
----
+### 2. AudioProcessor.ts - Método generateTTS
+**Problema:** O CommandHandler usava `audioProcessor.generateTTS()` mas o método não existia
 
-### 2. Sistema de Jogos (GameSystem.ts)
-**Status:** ✅ JÁ IMPLEMENTADO
+**Solução:** Adicionado método alias com mapeamento de idiomas
 
-O GameSystem já contém múltiplos jogos:
-- Tic-Tac-Toe (Jogo da Velha) com modo IA
-- Rock-Paper-Scissors (Pedra, Papel, Tesoura)
-- Guess the Number (Advinha o Número)
-- Forca (Hangman)
-- Grid Tactics (hibrido Sudoku + Jogo da Velha)
+### 3. AdvancedPentestingToolkit.ts - Novas Ferramentas
+**Problema:** SEToolkit e Metasploit não funcionam no Alpine Linux
 
----
+**Solução:** Substituídos por alternativas reais:
 
-### 3. Patentes Personalizadas (LevelSystem.ts)
-**Status:** ✅ JÁ IMPLEMENTADO
+| Original | Substituto | Descrição |
+|----------|------------|------------|
+| Metasploit | **Commix** | Command Injection Scanner (github.com/commixproject/commix) |
+| Metasploit | **SearchSploit** | Exploit Database (github.com/offensive-security/exploitdb) |
+| SEToolkit | **SocialFish** | Social Engineering Tool (github.com/UndeadSec/SocialFish) |
+| SEToolkit | **BlackEye** | Phishing Tool (github.com/thelinuxchoice/blackeye) |
 
-O sistema de patentes já está funcionando corretamente com 61 níveis:
-- Recruta 🔰 → A Lenda 🛐
-- Sistema de promoção ADM automático
+### 4. CybersecurityToolkit.ts - Atualizado
+**Problema:** Não incluía os novos comandos
 
----
+**Solução:** Adicionados mapeamentos para:
+- `#commix` - Scanner de Command Injection
+- `#searchsploit` - Busca de exploits
+- `#socialfish` - Ferramenta de phishing
+- `#blackeye` - Alternativa de phishing
 
-### 4. Sistema de Registro (RegistrationSystem.ts)
-**Status:** ✅ JÁ IMPLEMENTADO
+## 📋 Ferramentas Disponíveis
 
-Métodos verificados:
-- `register()` - Registro de usuários
-- `getProfile()` - Alias para getUser()
-- `isRegistered()` - Verificação de registro
-- Serial automático implementado
+### Pentesting Original
+- `#nmap` - Port Scanner
+- `#sqlmap` - SQL Injection
+- `#hydra` - Password Cracking
+- `#nuclei` - Vulnerability Scanner
+- `#nikto` - Web Server Scanner
+- `#masscan` - Fast Port Scanner
 
----
+### Novas Ferramentas
+- `#commix` - Command Injection (SUBSTITUTO DO METASPLOIT)
+- `#searchsploit` - Exploit Database (SUBSTITUTO DO METASPLOIT)
+- `#socialfish` - Phishing (SUBSTITUTO DO SETOOLKIT)
+- `#blackeye` - Phishing (SUBSTITUTO DO SETOOLKIT)
 
-### 5. Pinterest Command (CommandHandler.ts)
-**Status:** ✅ JÁ IMPLEMENTADO
+### Legados (Retornam mensagem de substituição)
+- `#setoolkit` - Informa sobre alternativas
+- `#metasploit` - Informa sobre alternativas
 
-Comandos disponíveis:
-- `#pinterest <busca>`
-- `#pin <busca>`
-- `#img <busca>`
+## 📋 Próximas Implementações (Planejadas)
 
----
+### Fase 2: Sistema de Jogos
+- [ ] Adicionar Rock-Paper-Scissors
+- [ ] Adicionar Trivia
+- [ ] Adicionar Memory Game
+- [ ] Adicionar Snake Game
+- [ ] Adicionar 2048
+- [ ] Adicionar Wordle
 
-## 📋 Status dos Planos de Implementação
+### Fase 3: Comandos de Entretenimento
+- [ ] Piadas em português
+- [ ] Fatos interessantes
+- [ ] Quotes motivacionais
 
-### implementation_plan_comprehensive.md
-- [x] Phase 1: Core Fixes - Audio effects (8D) ✅
-- [ ] Phase 2: Game System Enhancement
-- [ ] Phase 3: Advanced Games
-- [ ] Phase 4: UI/UX Enhancement
-- [ ] Phase 5: Entertainment Expansion
-- [ ] Phase 6: Testing and Polish
-
-### implementation_plan_review.md
-- [x] Todos os 27 módulos verificados
-- [x] Patentes personalizadas funcionando
-- [x] Integração entre módulos validada
-
----
-
-## 🎯 Próximos Passos Recomendados
-
-1. **Melhorar sistema de jogos** - Adicionar mais jogos (Wordle, 2048, etc.)
-2. **Melhorar menu** - Adicionar submenus e organização
-3. **Adicionar mais comandos de entretenimento** - Piadas, fatos, quotes
-4. **Otimizar performance** - Cache, rate limiting
-
----
-
-## 📊 Resumo de Arquivos Principais
+## 📊 Status dos Módulos
 
 | Módulo | Status | Notas |
 |--------|--------|-------|
-| AudioProcessor.ts | ✅ Atualizado | 8D efeito adicionado |
-| GameSystem.ts | ✅ OK | Múltiplos jogos |
-| LevelSystem.ts | ✅ OK | Patentes funcionam |
-| RegistrationSystem.ts | ✅ OK | Registro OK |
-| CommandHandler.ts | ✅ OK | Comandos completos |
-| Pinterest | ✅ OK | Scraping implementado |
+| AudioProcessor | ✅ Pronto | 8D, generateTTS |
+| AdvancedPentestingToolkit | ✅ Pronto | 10 ferramentas |
+| CybersecurityToolkit | ✅ Pronto | 14 comandos |
+| CommandHandler | ✅ Verificado | Integração completa |
+| LevelSystem | ✅ Verificado | Patentes funcionando |
+| GameSystem | ⚠️ Parcial | Apenas Tic-Tac-Toe |
 
----
+## 🧪 Testes Recomendados
 
-*Última atualização: 2025*
+1. `#8d` - Testar efeito de áudio 8D
+2. `#tts pt Olá mundo` - Testar TTS
+3. `#nightcore`, `#slow`, `#bass`, `#deep` - Testar efeitos de áudio
+4. `#nmap scanme.nmap.org` - Testar ferramentas pentest
+5. `#commix http://example.com` - Testar Commix
+6. `#searchsploit wordpress` - Testar SearchSploit
+
+## 📝 Notas de Versão
+
+### v21.1.02.2025
+- ✅ Correção do efeito 8D
+- ✅ Adição de método generateTTS
+- ✅ Novas ferramentas de pentesting (Commix, SearchSploit, SocialFish, BlackEye)
+- ✅ Substitutos do SEToolkit e Metasploit
+- ✅ Compatibilidade com Alpine Linux
+
+## 🔧 Instalação de Novas Ferramentas
+
+Para ativar as novas ferramentas, adicione ao Dockerfile:
+
+```
+dockerfile
+# Commix - Command Injection
+RUN pip install commix
+
+# SearchSploit - Exploit Database  
+RUN apt-get update && apt-get install -y exploitdb
+
+# SocialFish - Phishing
+RUN git clone https://github.com/UndeadSec/SocialFish.git && \
+    cd SocialFish && pip install -r requirements.txt
+
+# BlackEye - Phishing
+RUN git clone https://github.com/thelinuxchoice/blackeye.git

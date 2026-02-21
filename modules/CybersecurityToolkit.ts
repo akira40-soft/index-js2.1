@@ -49,10 +49,17 @@ class CybersecurityToolkit {
             'geo': this.geoIp,
             'nmap': (t: string) => this.pt.nmapScan(t),
             'sqlmap': (t: string) => this.pt.sqlmapTest(t, 'id'),
-            'hydra': (t: string) => this.pt.hydraBrute(t, 'ssh', 'root'), // Exemplo de uso simplificado
+            'hydra': (t: string) => this.pt.hydraBrute(t, 'ssh', 'root'),
             'nuclei': (t: string) => this.pt.nucleiScan(t),
             'nikto': (t: string) => this.pt.niktoScan(t),
             'masscan': (t: string) => this.pt.masscanScan(t),
+            // Novas ferramentas - Substitutos do Metasploit
+            'commix': (t: string) => this.pt.commixScan(t),
+            'searchsploit': (t: string) => this.pt.searchExploit(t),
+            // Substitutos do SEToolkit
+            'socialfish': () => this.pt.socialFishHelp(),
+            'blackeye': () => this.pt.blackEyeHelp(),
+            // Comandos legados (retornam mensagem de substituição)
             'setoolkit': (t: string) => this.pt.setoolkitHelp(t),
             'metasploit': (t: string) => this.pt.metasploitCheck(t),
             'shodan': this.shodanSearch,
@@ -77,7 +84,7 @@ class CybersecurityToolkit {
                 await this.sock.sendMessage(m.key.remoteJid, { text: `🛡️ Executando ${command}...` }, { quoted: m });
 
                 const target = args[0];
-                if (!target && command !== 'cve') { // CVE usa ano, mas ok tratar como target
+                if (!target && command !== 'cve' && command !== 'socialfish' && command !== 'blackeye') {
                     await this.sock.sendMessage(m.key.remoteJid, { text: `❌ Uso: #${command} <alvo>` }, { quoted: m });
                     return true;
                 }
@@ -103,8 +110,6 @@ class CybersecurityToolkit {
 
     async shodanSearch(ip: string): Promise<string> {
         try {
-            // Usa InternetDB (API Gratuita e Sem Chave do Shodan)
-            // Excelente para buscar portas abertas e vulnerabilidades de um IP rapidamente
             const response = await axios.get(`https://internetdb.shodan.io/${ip}`);
             const d = response.data;
 
@@ -123,8 +128,6 @@ class CybersecurityToolkit {
 
     async cveSearch(term: string): Promise<string> {
         try {
-            // NIST NVD API v2.0 - Busca vulnerabilidades por ID ou Ano/Termo
-            // Se for apenas um ano, busca por CVE-ANO. Se for um termo, busca por keyword
             let url = `https://services.nvd.nist.gov/rest/json/cves/2.0`;
             if (/^CVE-\d{4}-\d{4,7}$/i.test(term)) {
                 url += `?cveId=${term.toUpperCase()}`;
@@ -152,17 +155,11 @@ class CybersecurityToolkit {
         }
     }
 
-    /**
-    * WHOIS LOOKUP (Real API)
-    */
     async whois(domain: string): Promise<string> {
         try {
-            // Usa API gratuita do whoisxmlapi ou similar se tiver chave, 
-            // senão usa hackertarget ou similar que não requer chave para baixo volume
             const response = await axios.get(`https://api.hackertarget.com/whois/?q=${domain}`);
             if (response.data.includes('error valid key required')) {
-                // Fallback para ip-api whois se disponível ou apenas avisar
-                return `⚠️ API Principal instável. Tente novamente em instantes ou verifique manualmente.\n\nDados brutos: ${response.data}`;
+                return `⚠️ API Principal instável. Tente novamente em instantes.\n\nDados brutos: ${response.data}`;
             }
             return response.data;
         } catch (e: any) {
@@ -170,9 +167,6 @@ class CybersecurityToolkit {
         }
     }
 
-    /**
-    * DNS LOOKUP (Real API)
-    */
     async dnsLookup(domain: string): Promise<string> {
         try {
             const response = await axios.get(`https://api.hackertarget.com/dnslookup/?q=${domain}`);
@@ -182,14 +176,8 @@ class CybersecurityToolkit {
         }
     }
 
-    /**
-    * GEOIP LOOKUP (Real API)
-    */
     async geoIp(ip: string): Promise<string> {
         if (!ip) return '❌ Informe um IP ou domínio.';
-
-        // Basic IP validation (could be enhanced for domain resolution)
-        const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(ip);
 
         try {
             const response = await axios.get(`http://ip-api.com/json/${ip}`);
@@ -208,17 +196,13 @@ class CybersecurityToolkit {
         }
     }
 
-    /**
-    * DISCOVER SUBDOMAINS (Real API)
-    */
     async subdomains(domain: string): Promise<string> {
         try {
-            // Usa crt.sh para enumeração passiva real
             const response = await axios.get(`https://crt.sh/?q=${domain}&output=json`);
 
             if (!response.data || response.data.length === 0) return 'Nenhum subdomínio encontrado.';
 
-            const subs = [...new Set(response.data.map((entry: any) => entry.name_value))]; // Remove duplicatas
+            const subs = [...new Set(response.data.map((entry: any) => entry.name_value))];
             return `🌐 *SUBDOMÍNIOS ENCONTRADOS (${subs.length})*\n\n` +
                 subs.slice(0, 20).join('\n') +
                 (subs.length > 20 ? `\n\n...e mais ${subs.length - 20}` : '');
@@ -227,9 +211,6 @@ class CybersecurityToolkit {
         }
     }
 
-    /**
-    * PASSWORD STRENGTH (Algoritmo local)
-    */
     checkPasswordStrength(password: string): { score: number, verdict: string, length: number, hasSpecial: boolean } {
         let score = 0;
         if (password.length > 8) score++;
