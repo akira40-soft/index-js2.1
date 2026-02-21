@@ -56,24 +56,66 @@ class RegistrationSystem {
         }
     }
 
-    public registerUser(uid: string, name: string, age: number, serial: string): { success: boolean; message?: string; user?: RegisteredUser } {
+    /**
+     * Generate a unique serial number
+     */
+    private generateSerial(): string {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let serial = '';
+        for (let i = 0; i < 8; i++) {
+            serial += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return serial;
+    }
+
+    /**
+     * Generate a unique link for the user
+     */
+    private generateLink(serial: string): string {
+        return `https://wa.me/${serial}`;
+    }
+
+    /**
+     * Register a new user (alias for registerUser for compatibility)
+     * Auto-generates serial if not provided
+     */
+    public register(uid: string, name: string, age: number, serial?: string): { success: boolean; message?: string; user?: RegisteredUser, link?: string } {
+        return this.registerUser(uid, name, age, serial);
+    }
+
+    public registerUser(uid: string, name: string, age: number, serial?: string): { success: boolean; message?: string, user?: any, link?: string } {
         const existing = this.users.find(u => u.id === uid);
         if (existing) {
             return { success: false, message: 'Usuário já registrado.' };
         }
 
-        const newUser: RegisteredUser = {
+        // Auto-generate serial if not provided
+        const userSerial = serial || this.generateSerial();
+        const userLink = this.generateLink(userSerial);
+        const now = new Date().toISOString();
+
+        const newUser: any = {
             id: uid,
             name: name,
             age: age,
-            serial: serial,
-            date: new Date().toISOString(),
+            serial: userSerial,
+            link: userLink,
+            registeredAt: now,
+            date: now,
             platform: 'WhatsApp'
         };
 
         this.users.push(newUser);
         this._save();
-        return { success: true, user: newUser };
+        
+        return { success: true, user: newUser, link: userLink };
+    }
+
+    /**
+     * Get user profile (alias for getUser for compatibility)
+     */
+    public getProfile(uid: string): any | undefined {
+        return this.getUser(uid);
     }
 
     public isRegistered(uid: string): boolean {

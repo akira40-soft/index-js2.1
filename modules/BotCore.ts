@@ -477,10 +477,24 @@ class BotCore {
             const temAudio = this.messageProcessor.hasAudio(m);
             this.logger.warn(`🔹 [PIPELINE 6] Conteúdo detectado: txt=${!!texto} img=${temImagem} aud=${temAudio}`);
 
-            // Verifica Anti-Link (se tiver texto)
-            if (ehGrupo && texto && this.moderationSystem && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
-                await this.handleAntiLinkViolation(m, nome);
-                return;
+            // Verifica Anti-Link (se tiver texto) - com verificação de admin
+            if (ehGrupo && texto && this.moderationSystem) {
+                // Verifica se o usuário é admin do grupo
+                let isAdmin = false;
+                try {
+                    if (this.groupManagement) {
+                        isAdmin = await this.groupManagement.isUserAdmin(remoteJid, m.key.participant);
+                    }
+                } catch (e) {
+                    // Se falhar a verificação, assume que não é admin
+                    isAdmin = false;
+                }
+                
+                // Se não for admin, verifica se tem link
+                if (!isAdmin && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
+                    await this.handleAntiLinkViolation(m, nome);
+                    return;
+                }
             }
 
             // Anti-Spam (Rate Limit) -> Verificado dentro do handleTextMessage para economizar calls, 

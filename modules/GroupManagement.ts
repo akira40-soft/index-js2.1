@@ -170,6 +170,34 @@ class GroupManagement {
     }
 
     /**
+     * Verifica se welcome está ativo
+     */
+    getWelcomeStatus(groupJid: string): boolean {
+        return this.groupSettings[groupJid]?.welcome === true;
+    }
+
+    /**
+     * Verifica se goodbye está ativo
+     */
+    getGoodbyeStatus(groupJid: string): boolean {
+        return this.groupSettings[groupJid]?.goodbye === true;
+    }
+
+    /**
+     * Define mensagem de welcome
+     */
+    async setWelcomeMessage(groupJid: string, message: string): Promise<boolean> {
+        return await this.setCustomMessage(groupJid, 'welcome', message);
+    }
+
+    /**
+     * Define mensagem de goodbye
+     */
+    async setGoodbyeMessage(groupJid: string, message: string): Promise<boolean> {
+        return await this.setCustomMessage(groupJid, 'goodbye', message);
+    }
+
+    /**
      * Formata uma mensagem com placeholders
      */
     async formatMessage(groupJid: string, participantJid: string, template: string) {

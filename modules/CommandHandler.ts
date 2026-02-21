@@ -36,6 +36,7 @@ import PermissionManager from './PermissionManager.js';
 import RegistrationSystem from './RegistrationSystem.js';
 import LevelSystem from './LevelSystem.js';
 import EconomySystem from './EconomySystem.js';
+import GameSystem from './GameSystem.js';
 
 // Sistema de rate limiting para features premium (1x a cada 3 meses para users)
 const premiumFeatureUsage = new Map();
@@ -183,9 +184,16 @@ class CommandHandler {
 
             // Verifica permissões de dono
             const isOwner = this.config.isDono(senderId, nome);
+            const userId = m.key.participant || senderId;
+
+            // VERIFICAÇÃO DE REGISTRO GLOBAL
+            const isReg = this.registrationSystem.isRegistered(userId);
+            if (!isReg && !isOwner && !['registrar', 'register', 'reg', 'menu', 'help', 'ajuda', 'comandos', 'dono', 'owner', 'criador', 'creator'].includes(command.toLowerCase())) {
+                await this.bot.reply(m, '❌ *ACESSO NEGADO!*\n\nVocê precisa se registrar para usar os comandos do bot.\n\nUse: *#registrar SeuNome|SuaIdade*');
+                return true;
+            }
 
             // NOVO: Verifica se o usuário é admin do grupo
-            const userId = m.key.participant || senderId;
             let isAdminUsers = false;
             if (ehGrupo && this.groupManagement) {
                 isAdminUsers = await this.groupManagement.isUserAdmin(chatJid, userId);
@@ -214,9 +222,27 @@ class CommandHandler {
             // ══════════════════════════════════════════
 
             switch (command) {
-                case 'ping':
-                    await this.bot.reply(m, `🏓 Pong! Uptime: ${Math.floor(process.uptime())}s`);
+                case 'ping': {
+                    const uptime = Math.floor(process.uptime());
+                    const hours = Math.floor(uptime / 3600);
+                    const minutes = Math.floor((uptime % 3600) / 60);
+                    const seconds = uptime % 60;
+
+                    const stats = this.bot?.getStats?.() || { api: {}, message: {}, audio: {} };
+                    const latencia = Date.now() - (m.messageTimestamp * 1000 || Date.now());
+
+                    const statusMsg = `🏓 *PONG!* \n\n` +
+                        `⚡ *Latência:* ${Math.abs(latencia)}ms\n` +
+                        `📡 *Uptime:* ${hours}h ${minutes}m ${seconds}s\n` +
+                        `🤖 *Bot:* ${this.config.BOT_NAME} V${this.config.BOT_VERSION}\n` +
+                        `📊 *Status:* Online e Operacional\n` +
+                        `🔗 *API:* ${stats.api?.error ? '⚠️ Offline' : '✅ Conectada'}\n` +
+                        `🎤 *STT/TTS:* ${stats.audio?.error ? '⚠️ Inativo' : '✅ Ativo'}\n\n` +
+                        `_Sistema respondendo normalmente!_`;
+
+                    await this.bot.reply(m, statusMsg);
                     return true;
+                }
 
                 case 'registrar':
                 case 'register':
@@ -270,6 +296,14 @@ class CommandHandler {
                 case 'chance':
                 case 'gay':
                     return await this._handleGames(m, command, args);
+
+                case 'ttt':
+                case 'tictactoe':
+                case 'jogodavelha': {
+                    const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+                    const gameRes = await GameSystem.handleTicTacToe(chatJid, userId, args[0] || 'start', mentioned);
+                    return await this._reply(m, gameRes.text, { mentions: [userId, ...(mentioned ? [mentioned] : [])] });
+                }
 
                 case 'tagall':
                 case 'hidetag':
@@ -406,6 +440,8 @@ class CommandHandler {
                 case 'whois':
                 case 'dns':
                 case 'geo':
+                case 'setoolkit':
+                case 'metasploit':
                     if (!isOwner) {
                         await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
                         return true;
@@ -731,18 +767,23 @@ class CommandHandler {
 • #unwarn @user — Remover advertência 👑
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 *AUTONOMIA (ADMIN)*
+🤖 *AUTONOMIA & PERSONALIZAÇÃO (DONO)*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• #setname [nome] — Mudar nome do bot 👑
+• #setbio [bio] — Mudar recado do bot 👑
+• #setfoto — Mudar foto do bot (enviar img) 👑
 • #fixar [tempo] — Fixar mensagem 👑
 • #desafixar — Desafixar mensagem 👑
 • #reagir [emoji] — Reagir 👑
 • #lido — Marcar como lido 👑
+• #restart — Reiniciar sistema 👑
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🛡️ *CYBERSECURITY (DONO)*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • #nmap | #sqlmap | #dns | #whois
 • #geo [ip] | #nuclei | #hydra
+• #setoolkit | #metasploit | #nikto
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 *UTILIDADES*
@@ -753,7 +794,7 @@ class CommandHandler {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔑 *LEGENDA:*
 • 🔒 Requer registro (#registrar)
-• 👑 Requer ser Admin do grupo
+• 👑 Requer ser Admin/Dono
 
 *Desenvolvido por Isaac Quarenta*
 *AKIRA V21 ULTIMATE — Enterprise Edition*`;

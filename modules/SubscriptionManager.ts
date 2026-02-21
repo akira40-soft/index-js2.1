@@ -187,6 +187,16 @@ class SubscriptionManager {
     }
 
     /**
+    * Verifica se o usuário é Premium (Subscriber ou Owner)
+    */
+    public isPremium(userId: string): boolean {
+        const tier = this.getUserTier(userId);
+        if (tier === 'owner') return true;
+        if (tier === 'subscriber' && this.isSubscriptionValid(userId)) return true;
+        return false;
+    }
+
+    /**
     * Obtém informações de assinatura
     */
     public getSubscriptionInfo(userId: string): { tier: string, status: string, usoPorPeriodo: string, periodo: string, recursos: string[], expiraEm?: string, upgrade?: string } {

@@ -53,6 +53,8 @@ class CybersecurityToolkit {
             'nuclei': (t: string) => this.pt.nucleiScan(t),
             'nikto': (t: string) => this.pt.niktoScan(t),
             'masscan': (t: string) => this.pt.masscanScan(t),
+            'setoolkit': (t: string) => this.pt.setoolkitHelp(t),
+            'metasploit': (t: string) => this.pt.metasploitCheck(t),
             'shodan': this.shodanSearch,
             'cve': this.cveSearch
         };
@@ -158,6 +160,10 @@ class CybersecurityToolkit {
             // Usa API gratuita do whoisxmlapi ou similar se tiver chave, 
             // senão usa hackertarget ou similar que não requer chave para baixo volume
             const response = await axios.get(`https://api.hackertarget.com/whois/?q=${domain}`);
+            if (response.data.includes('error valid key required')) {
+                // Fallback para ip-api whois se disponível ou apenas avisar
+                return `⚠️ API Principal instável. Tente novamente em instantes ou verifique manualmente.\n\nDados brutos: ${response.data}`;
+            }
             return response.data;
         } catch (e: any) {
             return `Erro ao consultar WHOIS: ${e.message}`;
@@ -180,14 +186,20 @@ class CybersecurityToolkit {
     * GEOIP LOOKUP (Real API)
     */
     async geoIp(ip: string): Promise<string> {
+        if (!ip) return '❌ Informe um IP ou domínio.';
+
+        // Basic IP validation (could be enhanced for domain resolution)
+        const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(ip);
+
         try {
             const response = await axios.get(`http://ip-api.com/json/${ip}`);
-            if (response.data.status === 'fail') return 'IP inválido ou privado';
+            if (response.data.status === 'fail') return `❌ IP/Domínio inválido ou privado: ${ip}`;
 
             const d = response.data;
             return `📍 *GEOIP LOCATOR*\n` +
                 `IP: ${d.query}\n` +
                 `País: ${d.country} (${d.countryCode})\n` +
+                `Estado: ${d.regionName}\n` +
                 `Cidade: ${d.city}\n` +
                 `ISP: ${d.isp}\n` +
                 `Org: ${d.org}`;
