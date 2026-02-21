@@ -6,22 +6,20 @@
 
 FROM node:20-alpine
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # VARIÁVEIS DE AMBIENTE PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 ENV NODE_ENV=production \
     RAILWAY_ENVIRONMENT=true \
-    # Pino sem transport para evitar erros no Railway
     PINO_NO_PRETTY=true \
-    # Configurações de rede
     NODE_OPTIONS="--dns-result-order=ipv4first --no-warnings" \
     UV_THREADPOOL_SIZE=128 \
     LANG=C.UTF-8 \
     GOPATH=/root/go
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # INSTALAR DEPENDÊNCIAS DO SISTEMA ESSENCIAIS PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 RUN apk add --no-cache \
     git \
@@ -44,25 +42,21 @@ RUN apk add --no-cache \
     libffi-dev \
     sqlite-dev \
     postgresql-dev \
-    # Ferramentas de rede nativas (OSINT)
     whois \
     bind-tools \
     nmap \
-    iputils \
-    # Habilita edge testing para metasploit
-    && echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories \
-    && apk add --no-cache metasploit-framework || echo "⚠️ Metasploit não disponível nesta arch"
+    iputils
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO MANUAL DO YT-DLP (LATEST) - REQUISITO DEPLOY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \
     echo "✅ yt-dlp instalado manualmente: $(yt-dlp --version)"
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 # SQLMAP - SQL Injection Testing
 RUN mkdir -p /opt && \
@@ -100,16 +94,9 @@ RUN mkdir -p /tmp/masscan_build && \
     cd - && \
     rm -rf /tmp/masscan_build
 
-# SETOOLKIT - Social-Engineer Toolkit
-RUN git clone https://github.com/trustedsec/social-engineer-toolkit/ /opt/setoolkit && \
-    cd /opt/setoolkit && \
-    pip3 install -r requirements.txt --break-system-packages && \
-    python3 setup.py install && \
-    ln -s /usr/local/bin/setoolkit /usr/bin/setoolkit
-
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # CONFIGURAÇÃO DE DIRETÓRIOS PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 RUN mkdir -p /app/data && \
     mkdir -p /app/data/auth_info_baileys && \
@@ -118,15 +105,15 @@ RUN mkdir -p /app/data && \
     mkdir -p /app/data/temp && \
     chmod -R 755 /app/data
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # DIRETÓRIO DE TRABALHO
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 WORKDIR /app
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DE DEPENDÊNCIAS NODE.JS PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 COPY package*.json ./
 
@@ -135,9 +122,9 @@ RUN npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
     npm install --include=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # COPIAR CÓDIGO DA APLICAÇÃO
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 COPY . .
 
@@ -145,9 +132,9 @@ COPY . .
 RUN npx tsc && \
     npm prune --omit=dev
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # VERIFICAÇÃO FINAL PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 RUN echo "🔍 Verificando instalação para Railway..." && \
     node -v && \
@@ -165,20 +152,16 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
 # Limpar cache para reduzir tamanho da imagem
 RUN npm cache clean --force 2>/dev/null || true
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # EXPOR PORTA PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
-# Railway usa $PORT automaticamente
+# ═══════════════════════════════════════════════════════════════════════
+
 EXPOSE $PORT
 
+# ═══════════════════════════════════════════════════════════════════════
+# COMANDO DE INICIALIZAÇÃO PARA RAILWAY
+# ═══════════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════
-# COMANDO DE INICIALIZAÇÃO PARA RAILWAY (ESM - ECMAScript Modules)
-# ═══════════════════════════════════════════════════════════════════
-# O projeto usa ESM (type: "module" no package.json)
-# Não requer flag --experimental-modules pois Node 18+ suporta ESM nativamente
-
-# Script de inicialização — descodifica cookies YT se definidos em Base64
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
