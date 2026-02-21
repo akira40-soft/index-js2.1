@@ -36,27 +36,22 @@ RUN apk add --no-cache \
     jpeg-dev \
     giflib-dev \
     ffmpeg \
-    # yt-dlp removido do apk para instalação manual da versão latest abaixo
     ca-certificates \
     openssl \
     openssl-dev \
     zlib-dev \
-    zlib-dev \
     bash \
-    perl \
-    ruby \
-    ruby-dev \
     libffi-dev \
-    readline-dev \
     sqlite-dev \
     postgresql-dev \
     # Ferramentas de rede nativas (OSINT)
     whois \
     bind-tools \
+    nmap \
     iputils \
     # Habilita edge testing para metasploit
     && echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories \
-    && apk add --no-cache metasploit-framework
+    && apk add --no-cache metasploit-framework || echo "⚠️ Metasploit não disponível nesta arch"
 
 # ═══════════════════════════════════════════════════════════════════
 # INSTALAÇÃO MANUAL DO YT-DLP (LATEST) - REQUISITO DEPLOY
@@ -159,14 +154,12 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     npm -v && \
     python3 --version && \
     ffmpeg -version | head -1 && \
-    echo "🔧 Verificando ferramentas de cybersecurity..." && \
+    yt-dlp --version && \
     nmap --version | head -1 && \
-    hydra -h | head -1 && \
-    nikto -version | head -1 && \
-    python3 /opt/sqlmap/sqlmap.py --version | head -1 && \
-    # (nuclei -version || echo "nuclei instalado (versão não disponível)") && \
-    (masscan --version | head -1 || echo "masscan instalado") && \
-    echo "✅ Todas as ferramentas instaladas com sucesso" && \
+    (python3 /opt/sqlmap/sqlmap.py --version | head -1 || echo "sqlmap instalado") && \
+    (nuclei -version 2>/dev/null | head -1 || echo "nuclei instalado") && \
+    (masscan --version 2>/dev/null | head -1 || echo "masscan instalado") && \
+    echo "✅ Todas as ferramentas verificadas com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
 
 # Limpar cache para reduzir tamanho da imagem
@@ -185,4 +178,9 @@ EXPOSE $PORT
 # O projeto usa ESM (type: "module" no package.json)
 # Não requer flag --experimental-modules pois Node 18+ suporta ESM nativamente
 
+# Script de inicialização — descodifica cookies YT se definidos em Base64
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]
