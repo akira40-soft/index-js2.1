@@ -84,41 +84,40 @@ class MediaProcessor {
         const poToken = this.config?.YT_PO_TOKEN || '';
         const cookieArg = (cookiesPath && fs.existsSync(cookiesPath)) ? `--cookies "${cookiesPath}"` : '';
 
-        const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5';
+        // Fallback para cookies em local padrão do Railway se não definido
+        let finalCookieArg = cookieArg;
+        if (!finalCookieArg && fs.existsSync('/tmp/akira_data/cookies/youtube_cookies.txt')) {
+            finalCookieArg = '--cookies "/tmp/akira_data/cookies/youtube_cookies.txt"';
+        }
 
+        const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates';
         const strategies: Array<{ client: string; args: string }> = [];
 
-        // Se tiver cookies configurados, começa com web (mais estável e completo)
-        if (cookieArg) {
-            let webArgs = `--extractor-args "youtube:player_client=web" ${cookieArg} ${baseSleepArgs}`;
-            if (poToken) {
-                webArgs = `--extractor-args "youtube:player_client=web;po_token=web+${poToken}" ${cookieArg} ${baseSleepArgs}`;
-            }
+        // 🟢 Estratégia [WEB + COOKIES] - Mais estável (se houver cookies)
+        if (finalCookieArg) {
+            let webArgs = `--extractor-args "youtube:player_client=web${poToken ? `;po_token=web+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs}`;
             strategies.push({ client: 'web+cookies', args: webArgs });
         }
 
-        // web_embedded: Não requer po_token - funciona bem em servidores sem conta
-        strategies.push({
-            client: 'web_embedded',
-            args: `--extractor-args "youtube:player_client=web_embedded" --no-check-certificates ${cookieArg} ${baseSleepArgs}`.trim()
-        });
+        // 🟠 Estratégia [IOS] - Melhor bypass sem cookies em 2026
+        // O cliente iOS costuma ter menos restrições para IPs de servidores
+        const iosArgs = `--extractor-args "youtube:player_client=ios${poToken ? `;po_token=ios+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"`;
+        strategies.push({ client: 'ios', args: iosArgs.trim() });
 
-        // tv_embedded: Client da Smart TV, raramente sofre bot-detection
+        // 🟡 Estratégia [TV_EMBEDDED] - Raramente bloqueado
         strategies.push({
             client: 'tv_embedded',
-            args: `--extractor-args "youtube:player_client=tv_embedded" --no-check-certificates ${cookieArg} ${baseSleepArgs}`.trim()
+            args: `--extractor-args "youtube:player_client=tv_embedded" ${finalCookieArg} ${baseSleepArgs}`.trim()
         });
 
-        // android: Bypass clássico e bem testado
-        const androidArgs = poToken
-            ? `--extractor-args "youtube:player_client=android;po_token=android+${poToken}" ${cookieArg} ${baseSleepArgs}`
-            : `--extractor-args "youtube:player_client=android" --no-check-certificates ${cookieArg} ${baseSleepArgs}`;
+        // 🔵 Estratégia [ANDROID] - Bypass clássico
+        const androidArgs = `--extractor-args "youtube:player_client=android${poToken ? `;po_token=android+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs}`;
         strategies.push({ client: 'android', args: androidArgs.trim() });
 
-        // ios: Mobile fallback
+        // ⚪ Estratégia [WEB_EMBEDDED] - Compatibilidade máxima
         strategies.push({
-            client: 'ios',
-            args: `--extractor-args "youtube:player_client=ios" --no-check-certificates ${cookieArg} ${baseSleepArgs}`.trim()
+            client: 'web_embedded',
+            args: `--extractor-args "youtube:player_client=web_embedded" ${finalCookieArg} ${baseSleepArgs}`.trim()
         });
 
         return strategies;
@@ -208,47 +207,52 @@ class MediaProcessor {
                 return null;
             }
 
-            // Função auxiliar recursiva para encontrar o objeto de mídia (que contém url, mediaKey, etc)
-            const findMediaContent = (obj: any): any => {
-                if (!obj || typeof obj !== 'object') return null;
+            /**
+             * Extração recursiva para encontrar o conteúdo de mídia real
+             * Resolve erro: "Cannot derive from empty media key" em View Once/Editados/Temporários
+             */
+            const extractMediaContainer = (msgObj: any): any => {
+                if (!msgObj || typeof msgObj !== 'object') return null;
 
-                // Se houver mediaKey, encontramos o objeto final
-                if (obj.mediaKey || obj.url || obj.directPath) return obj;
+                // Match direto: se tiver mediaKey ou directPath, é o objeto alvo
+                if (msgObj.mediaKey || msgObj.url || msgObj.directPath) return msgObj;
 
-                // Tipos conhecidos de wrappers de mensagem
-                const wrappers = [
-                    'imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage',
-                    'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension',
-                    'ephemeralMessage', 'protocolMessage', 'templateMessage', 'interactiveMessage',
-                    'message'
-                ];
+                // Procura em wrappers conhecidos
+                const wrapper = msgObj.viewOnceMessageV2?.message ||
+                    msgObj.viewOnceMessageV2Extension?.message ||
+                    msgObj.viewOnceMessage?.message ||
+                    msgObj.ephemeralMessage?.message ||
+                    msgObj.documentWithCaptionMessage?.message ||
+                    msgObj.editMessage?.message ||
+                    msgObj.message; // Caso seja o objeto raiz com a chave 'message'
 
-                for (const key of wrappers) {
-                    if (obj[key]) {
-                        const result = findMediaContent(obj[key]);
-                        if (result) return result;
-                    }
+                if (wrapper) return extractMediaContainer(wrapper);
+
+                // Busca recursiva em propriedades comuns que terminam com 'Message'
+                const knownMessages = ['imageMessage', 'videoMessage', 'stickerMessage', 'audioMessage', 'documentMessage'];
+                for (const key of knownMessages) {
+                    if (msgObj[key]) return extractMediaContainer(msgObj[key]);
                 }
 
-                // Busca genérica em propriedades que terminam com 'Message' se não encontrou nos conhecidos
-                for (const key in obj) {
-                    if (key.endsWith('Message') && obj[key] && typeof obj[key] === 'object') {
-                        const result = findMediaContent(obj[key]);
-                        if (result) return result;
+                // Busca genérica fallback
+                for (const key in msgObj) {
+                    if (key.endsWith('Message') && msgObj[key] && typeof msgObj[key] === 'object') {
+                        const res = extractMediaContainer(msgObj[key]);
+                        if (res) return res;
                     }
                 }
 
                 return null;
             };
 
-            let mediaContent = findMediaContent(message);
+            const mediaContent = extractMediaContainer(message);
 
             if (!mediaContent) {
-                this.logger?.error('❌ Não foi possível encontrar conteúdo de mídia na mensagem');
+                this.logger?.error('❌ Mídia não encontrada na estrutura da mensagem');
                 return null;
             }
 
-            // Atualiza referência
+            // A Baileys precisa do objeto final (ex: imageMessage) para decifrar a chave
             message = mediaContent;
 
             this.logger?.debug(`⬇️ Baixando mídia (mime: ${mimeType})...`);
