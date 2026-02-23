@@ -104,11 +104,12 @@ class MediaProcessor {
         }
 
         const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates';
+        const secHeaders = '--add-header "Sec-Ch-Ua: \\"Google Chrome\\";v=\\"125\\", \\"Chromium\\";v=\\"125\\", \\"Not.A/Brand\\";v=\\"24\\"" --add-header "Sec-Ch-Ua-Mobile: ?0" --add-header "Sec-Ch-Ua-Platform: \\"Windows\\""';
         const strategies: Array<{ client: string; args: string }> = [];
 
         // 🟢 Estratégia [WEB + COOKIES] - Mais estável (se houver cookies)
         if (finalCookieArg) {
-            let webArgs = `--extractor-args "youtube:player_client=web${poToken ? `;po_token=web+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs}`;
+            let webArgs = `--extractor-args "youtube:player_client=web${poToken ? `;po_token=web+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} ${secHeaders}`;
             strategies.push({ client: 'web+cookies', args: webArgs });
         }
 
