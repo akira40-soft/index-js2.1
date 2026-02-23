@@ -48,6 +48,9 @@ RUN apk add --no-cache \
     iputils \
     nikto \
     hydra \
+    rust \
+    cargo \
+    musl-dev \
     perl-net-ssleay \
     perl-libwww \
     python3-dev \
@@ -128,7 +131,7 @@ RUN gem install evil-winrm && \
 RUN cd /opt && \
     git clone https://github.com/laramies/theHarvester.git && \
     cd theHarvester && \
-    pip3 install --no-cache-dir --break-system-packages -r requirements.txt && \
+    pip3 install --no-cache-dir --break-system-packages -r requirements/base.txt && \
     ln -s /opt/theHarvester/theHarvester.py /usr/local/bin/theharvester && \
     chmod +x /opt/theHarvester/theHarvester.py
 
