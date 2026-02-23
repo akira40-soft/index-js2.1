@@ -142,6 +142,40 @@ class ConfigManager {
         this.YT_COOKIES_PATH = process.env?.YT_COOKIES_PATH || "";
         this.YT_PO_TOKEN = process.env?.YT_PO_TOKEN || "";
 
+        // 🔓 Decode de cookies via Base64 (Railway Variable)
+        if (process.env?.YT_COOKIES_BASE64 && !this.YT_COOKIES_PATH) {
+            try {
+                const cookiesDir = path.join(baseDataPath, 'cookies');
+                if (!fs.existsSync(cookiesDir)) fs.mkdirSync(cookiesDir, { recursive: true });
+                const cookiesFile = path.join(cookiesDir, 'youtube_cookies.txt');
+                const decoded = Buffer.from(process.env.YT_COOKIES_BASE64, 'base64').toString('utf-8');
+                fs.writeFileSync(cookiesFile, decoded);
+                this.YT_COOKIES_PATH = cookiesFile;
+                console.log(`✅ ConfigManager: Cookies descodificados de YT_COOKIES_BASE64 para ${cookiesFile}`);
+            } catch (err: any) {
+                console.error(`❌ ConfigManager: Erro ao descodificar YT_COOKIES_BASE64: ${err.message}`);
+            }
+        }
+
+        // 🔎 Auto-detecção de cookies se ainda não configurado
+        if (!this.YT_COOKIES_PATH) {
+            const possiblePaths = [
+                path.join(process.cwd(), 'cookies.txt'),
+                path.join(process.cwd(), 'youtube_cookies.txt'),
+                '/app/cookies.txt',
+                '/app/youtube_cookies.txt',
+                path.join(baseDataPath, 'cookies', 'youtube_cookies.txt')
+            ];
+
+            for (const p of possiblePaths) {
+                if (fs.existsSync(p)) {
+                    this.YT_COOKIES_PATH = p;
+                    console.log(`🍪 ConfigManager: Cookies detectados automaticamente em: ${p}`);
+                    break;
+                }
+            }
+        }
+
         // ═══ MÍDIA ═══
         this.STICKER_SIZE = Number(process.env?.STICKER_SIZE || 512);
         this.STICKER_MAX_ANIMATED_SECONDS = Number(process.env?.STICKER_MAX_ANIMATED_SECONDS || 30);

@@ -738,17 +738,47 @@ class CommandHandler {
     // ═══════════════════════════════════════════════════════════════════════
 
     public async _reply(m: any, text: string, options: any = {}): Promise<any> {
+        const jid = m.key?.remoteJid;
+        const errorPrefix = `🔴 [_REPLY] Para ${jid}:`;
+        
         try {
+            // FALLBACK 1: Preferir sock (mais confiável)
             if (this.sock) {
-                return await this.sock.sendMessage(m.key.remoteJid, { text, ...options }, { quoted: m });
+                try {
+                    console.log(`🟢 [_REPLY] Enviando via sock.sendMessage() para ${jid}`);
+                    const result = await this.sock.sendMessage(jid, { text, ...options }, { quoted: m });
+                    console.log(`✅ [_REPLY] Mensagem enviada com sucesso. ID:`, result?.key?.id || 'desconhecido');
+                    return result;
+                } catch (sockErr: any) {
+                    console.error(`${errorPrefix} sock.sendMessage() falhou: ${sockErr.message}`);
+                    // Não retorna aqui, tenta o fallback
+                }
+            } else {
+                console.warn(`${errorPrefix} this.sock é null/undefined`);
             }
-            // Fallback para bot.reply se sock falhar (mas sock deveria estar lá)
+            
+            // FALLBACK 2: Tentar bot.reply
             if (this.bot && typeof this.bot.reply === 'function') {
-                return await this.bot.reply(m, text, options);
+                try {
+                    console.log(`🟡 [_REPLY] Sock failed, tentando bot.reply() para ${jid}`);
+                    const result = await this.bot.reply(m, text, options);
+                    console.log(`✅ [_REPLY] Mensagem enviada via bot.reply(). ID:`, result?.key?.id || 'desconhecido');
+                    return result;
+                } catch (botErr: any) {
+                    console.error(`${errorPrefix} bot.reply() falhou: ${botErr.message}`);
+                }
+            } else {
+                console.error(`${errorPrefix} bot.reply não disponível`);
             }
-            console.error('❌ CommandHandler: Sem meio de responder (sock/bot ausente)');
-        } catch (e: any) {
-            console.error('❌ Erro no _reply:', e.message);
+            
+            // Se chegou aqui, AMBOS falharam
+            const errMsg = `FALHA crítica ao enviar resposta para ${jid}. sock=${!!this.sock}, bot.reply=${typeof this.bot?.reply}`;
+            console.error(`${errorPrefix} ${errMsg}`);
+            throw new Error(errMsg);
+            
+        } catch (error: any) {
+            console.error(`${errorPrefix} Exceção não tratada:`, error.message);
+            throw error; // Re-lança para que o caller saiba que falhou
         }
     }
 
@@ -866,7 +896,11 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
 • ${P}dado | ${P}moeda — Sorteio
 • ${P}chance [pergunta] — Probabilidade
 • ${P}gay — Medidor
-• ${P}ttt — Jogo da Velha
+• ${P}ttt | ${P}jogodavelha — Jogo da Velha
+• ${P}rps | ${P}ppt — Pedra, Papel, Tesoura
+• ${P}gridtactics | ${P}grid — Grid Tactics (4x4)
+• ${P}guess | ${P}adivinhe — Adivinhe o número
+• ${P}forca | ${P}hangman — Jogo da Forca
 • ${P}piada 🔒 — Piada aleatória
 • ${P}frases | ${P}motivar 🔒
 • ${P}fatos | ${P}curiosidade 🔒`,
