@@ -113,27 +113,21 @@ RUN cd /opt && \
     ln -s /opt/commix/commix.py /usr/local/bin/commix && \
     chmod +x /opt/commix/commix.py
 
-# IMPACKET, SHERLOCK e HOLEHE via PIP
+# IMPACKET, SHERLOCK, HOLEHE e THEHARVESTER via PIP
 RUN pip3 install --no-cache-dir --break-system-packages \
     impacket \
     sherlock-project \
-    holehe
+    holehe \
+    theHarvester && \
+    ln -s $(which theHarvester) /usr/local/bin/theharvester || true
 
-# NETEXEC via GIT (Versão estável 2026)
+# NETEXEC via GIT (Versão estável 2026 com Rust)
 RUN pip3 install --no-cache-dir --break-system-packages git+https://github.com/Pennyw0rth/NetExec && \
     ln -s $(which nxc) /usr/local/bin/nxc || true
 
 # EVIL-WINRM via GEM (Ruby)
 RUN gem install evil-winrm && \
     ln -s $(which evil-winrm) /usr/local/bin/evil-winrm || true
-
-# THEHARVESTER via GIT
-RUN cd /opt && \
-    git clone https://github.com/laramies/theHarvester.git && \
-    cd theHarvester && \
-    pip3 install --no-cache-dir --break-system-packages -r requirements/base.txt && \
-    ln -s /opt/theHarvester/theHarvester.py /usr/local/bin/theharvester && \
-    chmod +x /opt/theHarvester/theHarvester.py
 
 # ZPHISHER via GIT
 RUN cd /opt && \
