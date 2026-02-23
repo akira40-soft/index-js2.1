@@ -726,24 +726,24 @@ class GameSystem {
         }
 
         if (!game || game.type !== 'gridtactics') {
-            return { 
+            return {
                 text: `❌ Nenhum jogo ativo.\n\n` +
                     `Use *#gridtactics start* para jogar contra a IA\n` +
                     `Use *#gridtactics @user* para multiplayer\n` +
                     `Use *#gridtactics help* para ver as regras!`,
-                finished: false 
+                finished: false
             };
         }
 
         // Processar jogada
         const args = input.split(' ');
         if (args.length < 2) {
-            return { 
+            return {
                 text: `❌ Formato inválido!\n\n` +
                     `Use: *#grid <número 1-9> <posição 1-9>*\n\n` +
                     `Exemplo: *#grid 5 5*\n\n` +
                     `${this.renderGridTacticsBoard(game.board)}`,
-                finished: false 
+                finished: false
             };
         }
 
@@ -893,7 +893,7 @@ class GameSystem {
         // difficulty 1 = fácil (remove 3), 2 = médio (remove 4), 3 = difícil (remove 5)
         const cellsToRemove = 3 + difficulty;
         const positions = Array.from({ length: 9 }, (_, i) => i);
-        
+
         // Embaralha posições
         for (let i = positions.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
@@ -916,33 +916,33 @@ class GameSystem {
      */
     private renderGridTacticsBoard(board: (number | null)[]): string {
         let display = '';
-        
+
         for (let i = 0; i < 9; i++) {
             const cell = board[i];
             const cellDisplay = cell !== null ? cell.toString() : '_';
-            
+
             if (i === 0 || i === 3 || i === 6) {
                 display += '┌───┬───┬───┐\n';
             } else if (i === 1 || i === 4 || i === 7) {
                 display += '├───┼───┼───┤\n';
             }
-            
+
             const row = Math.floor(i / 3);
             const col = i % 3;
-            
+
             display += '│';
             display += ` ${cellDisplay} `;
-            
+
             if (col === 2) {
                 display += '│\n';
             }
         }
-        
+
         display += '└───┴───┴───┘\n';
-        
+
         // Adicionar números das posições abaixo
         display += '  1  2  3   4  5  6   7  8  9';
-        
+
         return display;
     }
 
@@ -997,10 +997,10 @@ class GameSystem {
             // Todos os 3 devem ser preenchidos E serem o último número jogado
             // (Na verdade, o último número jogado ganha, então verificamos se todos são iguais)
             return board[combo[0]] !== null &&
-                   board[combo[1]] !== null &&
-                   board[combo[2]] !== null &&
-                   board[combo[0]] === board[combo[1]] &&
-                   board[combo[1]] === board[combo[2]];
+                board[combo[1]] !== null &&
+                board[combo[2]] !== null &&
+                board[combo[0]] === board[combo[1]] &&
+                board[combo[1]] === board[combo[2]];
         });
     }
 
@@ -1051,11 +1051,11 @@ class GameSystem {
 
         // 4. Jogar em qualquer posição válida aleatória
         const validMoves: { number: number, position: number }[] = [];
-        
+
         for (const pos of availablePositions) {
             // Tentar números que não são o que o humano usou recentemente
             const preferredNumbers = [5, 3, 7, 1, 9, 2, 4, 6, 8];
-            
+
             for (const num of preferredNumbers) {
                 if (this.isValidSudokuMove(board, pos, num)) {
                     validMoves.push({ number: num, position: pos });

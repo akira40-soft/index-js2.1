@@ -107,7 +107,7 @@ class RegistrationSystem {
 
         this.users.push(newUser);
         this._save();
-        
+
         return { success: true, user: newUser, link: userLink };
     }
 

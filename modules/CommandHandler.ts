@@ -740,7 +740,7 @@ class CommandHandler {
     public async _reply(m: any, text: string, options: any = {}): Promise<any> {
         const jid = m.key?.remoteJid;
         const errorPrefix = `🔴 [_REPLY] Para ${jid}:`;
-        
+
         try {
             // FALLBACK 1: Preferir sock (mais confiável)
             if (this.sock) {
@@ -756,7 +756,7 @@ class CommandHandler {
             } else {
                 console.warn(`${errorPrefix} this.sock é null/undefined`);
             }
-            
+
             // FALLBACK 2: Tentar bot.reply
             if (this.bot && typeof this.bot.reply === 'function') {
                 try {
@@ -770,12 +770,12 @@ class CommandHandler {
             } else {
                 console.error(`${errorPrefix} bot.reply não disponível`);
             }
-            
+
             // Se chegou aqui, AMBOS falharam
             const errMsg = `FALHA crítica ao enviar resposta para ${jid}. sock=${!!this.sock}, bot.reply=${typeof this.bot?.reply}`;
             console.error(`${errorPrefix} ${errMsg}`);
             throw new Error(errMsg);
-            
+
         } catch (error: any) {
             console.error(`${errorPrefix} Exceção não tratada:`, error.message);
             throw error; // Re-lança para que o caller saiba que falhou
@@ -2248,9 +2248,9 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
             const warningCount = this.moderationSystem.addWarning(m.key.remoteJid, target, reason);
             const maxWarnings = 3;
             const shouldKick = warningCount >= maxWarnings;
-            
+
             await this._reply(m, `⚠️ *AVISO APLICADO* ⚠️\n\n👤 Usuário: @${target.split('@')[0]}\n📝 Motivo: ${reason}\n📊 Avisos: ${warningCount}/${maxWarnings}\n\n${shouldKick ? '❌ Usuário banido por atingir o limite!' : '⚠️ Evite violar as regras para não ser banido.'}`, { mentions: [target] });
-            
+
             if (shouldKick && this.bot?.groupRemoveMember) {
                 try {
                     await this.bot.groupRemoveMember(m.key.remoteJid, [target]);

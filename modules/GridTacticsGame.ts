@@ -40,11 +40,11 @@
 
 class GridTacticsGame {
     private games: Map<string, any>;
-    
+
     // Símbolos para os jogadores (números diferentes para cada um)
     private PLAYER_1_NUMBERS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣']; // Jogador 1
     private PLAYER_2_NUMBERS = ['①', '②', '③', '④'];   // Jogador 2 (IA ou Player 2)
-    
+
     constructor() {
         this.games = new Map();
     }
@@ -54,11 +54,11 @@ class GridTacticsGame {
      */
     public createGame(chatId: string, player1: string, player2: string | null, difficulty: string = 'medio'): any {
         const gameKey = `${chatId}_gridtactics`;
-        
+
         // Se não houver player2, é modo IA
         const isAIMode = !player2;
         const aiPlayer = isAIMode ? 'akira-ai@akira.bot' : player2;
-        
+
         const game: {
             type: string;
             board: (string | null)[];
@@ -66,11 +66,11 @@ class GridTacticsGame {
             turn: number;
             isAIMode: boolean;
             difficulty: string;
-            lastMoves: Array<{row: number; col: number; number: string; player: number}>;
+            lastMoves: Array<{ row: number; col: number; number: string; player: number }>;
             scores: { player1: number; player2: number };
             startTime: number;
             lastActivity: number;
-            moveHistory: Array<{row: number; col: number; number: string; player: number}>;
+            moveHistory: Array<{ row: number; col: number; number: string; player: number }>;
         } = {
             type: 'gridtactics',
             board: Array(16).fill(null),
@@ -84,7 +84,7 @@ class GridTacticsGame {
             lastActivity: Date.now(),
             moveHistory: []
         };
-        
+
         this.games.set(gameKey, game);
         return game;
     }
@@ -94,18 +94,18 @@ class GridTacticsGame {
      */
     public renderBoard(board: any[]): string {
         let display = '';
-        
+
         // Cabeçalho com números de coluna
         display += '    ①  ②  ③  ④\n';
         display += '  ┌────┬────┬────┬────┐\n';
-        
+
         for (let row = 0; row < 4; row++) {
             display += ` ${row + 1} │`;
-            
+
             for (let col = 0; col < 4; col++) {
                 const index = row * 4 + col;
                 const cell = board[index];
-                
+
                 if (cell === null) {
                     display += ' ⬜ │';
                 } else if (typeof cell === 'object') {
@@ -114,16 +114,16 @@ class GridTacticsGame {
                     display += ` ${cell} │`;
                 }
             }
-            
+
             display += '\n';
-            
+
             if (row < 3) {
                 display += '  ├────┼────┼────┼────┤\n';
             }
         }
-        
+
         display += '  └────┴────┴────┴────┘';
-        
+
         return display;
     }
 
@@ -133,21 +133,21 @@ class GridTacticsGame {
      */
     public validateMove(board: any[], row: number, col: number, number: string, playerIndex: number): { valid: boolean, reason: string } {
         const index = row * 4 + col;
-        
+
         // 1. Verificar se a célula está vazia
         if (board[index] !== null) {
             return { valid: false, reason: 'Célula já ocupada!' };
         }
-        
+
         // 2. Verificar se o número é válido (1-4)
         if (!['1', '2', '3', '4'].includes(number)) {
             return { valid: false, reason: 'Número inválido! Use 1, 2, 3 ou 4.' };
         }
-        
+
         // Obter símbolo do jogador
         const symbols = playerIndex === 0 ? this.PLAYER_1_NUMBERS : this.PLAYER_2_NUMBERS;
         const symbol = symbols[parseInt(number) - 1];
-        
+
         // 3. Verificar Sudoku: não repetição na LINHA
         for (let c = 0; c < 4; c++) {
             const idx = row * 4 + c;
@@ -158,7 +158,7 @@ class GridTacticsGame {
                 }
             }
         }
-        
+
         // 4. Verificar Sudoku: não repetição na COLUNA
         for (let r = 0; r < 4; r++) {
             const idx = r * 4 + col;
@@ -169,11 +169,11 @@ class GridTacticsGame {
                 }
             }
         }
-        
+
         // 5. Verificar Sudoku: não repetição no BLOCO 2x2
         const blockRow = Math.floor(row / 2) * 2;
         const blockCol = Math.floor(col / 2) * 2;
-        
+
         for (let r = blockRow; r < blockRow + 2; r++) {
             for (let c = blockCol; c < blockCol + 2; c++) {
                 const idx = r * 4 + c;
@@ -185,7 +185,7 @@ class GridTacticsGame {
                 }
             }
         }
-        
+
         return { valid: true, reason: 'Jogada válida!' };
     }
 
@@ -200,23 +200,23 @@ class GridTacticsGame {
             const result = this.checkLine(board, indices);
             if (result.winner !== null) return result;
         }
-        
+
         // Verificar colunas verticais
         for (let col = 0; col < 4; col++) {
             const indices = [col, col + 4, col + 8, col + 12];
             const result = this.checkLine(board, indices);
             if (result.winner !== null) return result;
         }
-        
+
         // Verificar diagonais
         const diag1 = [0, 5, 10, 15]; // Diagonal principal
         const result1 = this.checkLine(board, diag1);
         if (result1.winner !== null) return result1;
-        
+
         const diag2 = [3, 6, 9, 12]; // Diagonal secundária
         const result2 = this.checkLine(board, diag2);
         if (result2.winner !== null) return result2;
-        
+
         return { winner: null, pattern: '' };
     }
 
@@ -225,22 +225,22 @@ class GridTacticsGame {
      */
     private checkLine(board: any[], indices: number[]): { winner: number | null, pattern: string } {
         const values = indices.map(i => board[i]);
-        
+
         // Verificar se todas as células estão preenchidas
         if (values.some(v => v === null)) {
             return { winner: null, pattern: '' };
         }
-        
+
         // Extrair números
         const numbers = values.map(v => typeof v === 'object' ? v.number : v);
-        
+
         // Verificar se todos os números são iguais (vitória)
         if (numbers.every(n => n === numbers[0])) {
             const firstCell = values[0];
             const winner = typeof firstCell === 'object' ? firstCell.player : null;
             return { winner, pattern: 'line' };
         }
-        
+
         // Verificar progressão aritmética (estratégia adicional)
         // 1,2,3,4 ou 4,3,2,1
         const numArray = numbers.map(n => parseInt(n)).sort((a, b) => a - b);
@@ -250,7 +250,7 @@ class GridTacticsGame {
             const winner = typeof firstCell === 'object' ? firstCell.player : null;
             return { winner, pattern: 'sequence' };
         }
-        
+
         return { winner: null, pattern: '' };
     }
 
@@ -260,7 +260,7 @@ class GridTacticsGame {
     public countLines(board: any[]): { player1: number, player2: number } {
         let player1Lines = 0;
         let player2Lines = 0;
-        
+
         // Linhas horizontais
         for (let row = 0; row < 4; row++) {
             const indices = [row * 4, row * 4 + 1, row * 4 + 2, row * 4 + 3];
@@ -268,7 +268,7 @@ class GridTacticsGame {
             if (winner === 0) player1Lines++;
             else if (winner === 1) player2Lines++;
         }
-        
+
         // Colunas
         for (let col = 0; col < 4; col++) {
             const indices = [col, col + 4, col + 8, col + 12];
@@ -276,18 +276,18 @@ class GridTacticsGame {
             if (winner === 0) player1Lines++;
             else if (winner === 1) player2Lines++;
         }
-        
+
         // Diagonais
         const diag1 = [0, 5, 10, 15];
         const { winner: w1 } = this.checkLine(board, diag1);
         if (w1 === 0) player1Lines++;
         else if (w1 === 1) player2Lines++;
-        
+
         const diag2 = [3, 6, 9, 12];
         const { winner: w2 } = this.checkLine(board, diag2);
         if (w2 === 0) player1Lines++;
         else if (w2 === 1) player2Lines++;
-        
+
         return { player1: player1Lines, player2: player2Lines };
     }
 
@@ -296,19 +296,19 @@ class GridTacticsGame {
      */
     public calculateAIMove(board: any[], difficulty: string): number {
         const availableMoves: number[] = [];
-        
+
         // Encontrar todas as células vazias
         for (let i = 0; i < 16; i++) {
             if (board[i] === null) availableMoves.push(i);
         }
-        
+
         if (availableMoves.length === 0) return -1;
-        
+
         // DIFICULDADE: FÁCIL - Escolha aleatória
         if (difficulty === 'facil') {
             return availableMoves[Math.floor(Math.random() * availableMoves.length)];
         }
-        
+
         // DIFICULDADE: MÉDIO - Tenta ganhar ou bloquear
         if (difficulty === 'medio') {
             // 1. Tentar ganhar
@@ -320,7 +320,7 @@ class GridTacticsGame {
                     if (winner === 1) return move;
                 }
             }
-            
+
             // 2. Bloquear vitória do oponente
             for (const move of availableMoves) {
                 for (const num of ['1', '2', '3', '4']) {
@@ -330,47 +330,47 @@ class GridTacticsGame {
                     if (winner === 0) return move;
                 }
             }
-            
+
             // 3. Jogar no centro se disponível
             const centers = [5, 6, 9, 10];
             const availableCenters = centers.filter(c => board[c] === null);
             if (availableCenters.length > 0) {
                 return availableCenters[Math.floor(Math.random() * availableCenters.length)];
             }
-            
+
             return availableMoves[Math.floor(Math.random() * availableMoves.length)];
         }
-        
+
         // DIFICULDADE: DIFÍCIL - Minimax (análise completa)
         if (difficulty === 'dificil') {
             let bestScore = -Infinity;
             let bestMove = availableMoves[0];
-            
+
             for (const move of availableMoves) {
                 for (const num of ['1', '2', '3', '4']) {
                     const testBoard = [...board];
-                    
+
                     // Verificar se a jogada é válida
                     const row = Math.floor(move / 4);
                     const col = move % 4;
                     const validation = this.validateMove(board, row, col, num, 1);
-                    
+
                     if (!validation.valid) continue;
-                    
+
                     testBoard[move] = { number: num, player: 1, symbol: this.PLAYER_2_NUMBERS[parseInt(num) - 1] };
-                    
+
                     const score = this.minimax(testBoard, 4, false, -Infinity, Infinity);
-                    
+
                     if (score > bestScore) {
                         bestScore = score;
                         bestMove = move;
                     }
                 }
             }
-            
+
             return bestMove;
         }
-        
+
         // Padrão: aléatório
         return availableMoves[Math.floor(Math.random() * availableMoves.length)];
     }
@@ -380,21 +380,21 @@ class GridTacticsGame {
      */
     private minimax(board: any[], depth: number, isMaximizing: boolean, alpha: number, beta: number): number {
         const { winner } = this.checkWinner(board);
-        
+
         if (winner === 1) return 100 + depth; // IA ganha
         if (winner === 0) return -100 - depth; // Humano ganha
-        
+
         // Verificar se há mais jogadas disponíveis
         const availableMoves: number[] = [];
         for (let i = 0; i < 16; i++) {
             if (board[i] === null) availableMoves.push(i);
         }
-        
+
         if (availableMoves.length === 0 || depth <= 0) {
             const lines = this.countLines(board);
             return lines.player2 - lines.player1;
         }
-        
+
         if (isMaximizing) {
             let maxEval = -Infinity;
             for (const move of availableMoves) {
@@ -403,9 +403,9 @@ class GridTacticsGame {
                     const row = Math.floor(move / 4);
                     const col = move % 4;
                     const validation = this.validateMove(board, row, col, num, 1);
-                    
+
                     if (!validation.valid) continue;
-                    
+
                     testBoard[move] = { number: num, player: 1, symbol: this.PLAYER_2_NUMBERS[parseInt(num) - 1] };
                     const evaluation = this.minimax(testBoard, depth - 1, false, alpha, beta);
                     maxEval = Math.max(maxEval, evaluation);
@@ -422,9 +422,9 @@ class GridTacticsGame {
                     const row = Math.floor(move / 4);
                     const col = move % 4;
                     const validation = this.validateMove(board, row, col, num, 0);
-                    
+
                     if (!validation.valid) continue;
-                    
+
                     testBoard[move] = { number: num, player: 0, symbol: this.PLAYER_1_NUMBERS[parseInt(num) - 1] };
                     const evaluation = this.minimax(testBoard, depth - 1, true, alpha, beta);
                     minEval = Math.min(minEval, evaluation);
@@ -499,12 +499,12 @@ Números em sequência (1-2-3-4) dão ponto extra!
      */
     public async handleGridTactics(chatJid: string, userId: string, action: string, args: string[]): Promise<{ text: string }> {
         const gameKey = `${chatJid}_gridtactics`;
-        
+
         // Iniciar novo jogo
         if (action === 'start' || !this.games.has(gameKey)) {
             const difficulty = args[0] || 'medio';
             const game = this.createGame(chatJid, userId, null, difficulty);
-            
+
             return {
                 text: `🎮 *GRID TACTICS - NOVO JOGO!*\n\n` +
                     `Você começará contra a IA (Dificuldade: ${difficulty.toUpperCase()})\n\n` +
