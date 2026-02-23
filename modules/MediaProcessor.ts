@@ -111,29 +111,32 @@ class MediaProcessor {
         }
 
         const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates';
-        const secHeaders = '--add-header "Sec-Ch-Ua: \\"Google Chrome\\";v=\\"125\\", \\"Chromium\\";v=\\"125\\", \\"Not.A/Brand\\";v=\\"24\\"" --add-header "Sec-Ch-Ua-Mobile: ?0" --add-header "Sec-Ch-Ua-Platform: \\"Windows\\""';
+
+        // 📱 User-Agents Modernos (Bypass 2026.7)
+        const ua_iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+        const ua_android = 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UD1A.230805.019; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.6422.165 Mobile Safari/537.36';
+
+        const secHeaders = '--add-header "Sec-Ch-Ua: \\"Google Chrome\\";v=\\"125\\", \\"Chromium\\";v=\\"125\\", \\"Not.A/Brand\\";v=\\"24\\"" --add-header "Sec-Ch-Ua-Mobile: ?1" --add-header "Sec-Ch-Ua-Platform: \\"iOS\\""';
+
         const strategies: Array<{ client: string; args: string }> = [];
 
-        // 🟢 Estratégia [WEB + COOKIES] - Mais estável (se houver cookies)
+        // 🟢 Estratégia [WEB + COOKIES + UA IPHONE] - Alta fidelidade
         if (finalCookieArg) {
-            let webArgs = `--extractor-args "youtube:player_client=web${poToken ? `;po_token=web+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} ${secHeaders}`;
-            strategies.push({ client: 'web+cookies', args: webArgs });
+            let webArgs = `--extractor-args "youtube:player_client=web${poToken ? `;po_token=web+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} ${secHeaders} --user-agent "${ua_iphone}"`;
+            strategies.push({ client: 'web+cookies+iphone', args: webArgs });
         }
 
-        // 🟠 Estratégia [IOS] - Melhor bypass sem cookies em 2026
-        // O cliente iOS costuma ter menos restrições para IPs de servidores
-        const iosArgs = `--extractor-args "youtube:player_client=ios${poToken ? `;po_token=ios+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"`;
-        strategies.push({ client: 'ios', args: iosArgs.trim() });
+        // 🔴 Estratégia [ANDROID + UA PIXEL] - Muito resistente
+        let androidArgs = `--extractor-args "youtube:player_client=android${poToken ? `;po_token=android+${poToken}` : ''}" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_android}"`;
+        strategies.push({ client: 'android+bypass', args: androidArgs });
 
-        // 🟡 Estratégia [TV_EMBEDDED] - Raramente bloqueado
-        strategies.push({
-            client: 'tv_embedded',
-            args: `--extractor-args "youtube:player_client=tv_embedded" ${finalCookieArg} ${baseSleepArgs}`.trim()
-        });
+        // 🔘 Estratégia [TV EMBEDDED] - Fallback clássico
+        let tvArgs = `--extractor-args "youtube:player_client=tv_embedded" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        strategies.push({ client: 'tv_embedded', args: tvArgs });
 
-        // 🔵 Estratégia [ANDROID] - Bypass clássico
-        const androidArgs = `--extractor-args "youtube:player_client=android${poToken ? `;po_token=android+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs}`;
-        strategies.push({ client: 'android', args: androidArgs.trim() });
+        // 🌐 Estratégia [IOS]
+        let iosArgs = `--extractor-args "youtube:player_client=ios${poToken ? `;po_token=ios+${poToken}` : ''}" ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        strategies.push({ client: 'ios', args: iosArgs });
 
         // ⚪ Estratégia [WEB_EMBEDDED] - Compatibilidade máxima
         strategies.push({
@@ -284,17 +287,28 @@ class MediaProcessor {
                 return null;
             }
 
+            // ✅ NORMALIZAÇÃO DE MIMETYPE (Crucial para Baileys Decryption)
+            // Se mimeType for genérico ('image', 'audio'), tentamos inferir do objeto encontrado
+            let finalMimeType = mimeType;
+            if (mediaContent.mimetype && (mimeType === 'image' || mimeType === 'video' || mimeType === 'audio')) {
+                // Baileys usa as chaves do objeto para decidir o tipo de decifração.
+                // Passar o 'mimeType' correto (ex: 'image') é essencial.
+                if (mediaContent.mimetype.includes('image')) finalMimeType = 'image';
+                else if (mediaContent.mimetype.includes('video')) finalMimeType = 'video';
+                else if (mediaContent.mimetype.includes('audio')) finalMimeType = 'audio';
+            }
+
             // Diagnostic log para 'Empty Media Key'
-            if (!mediaContent.mediaKey || !mediaContent.directPath) {
+            if (!mediaContent.mediaKey || (!mediaContent.directPath && !mediaContent.url)) {
                 this.logger?.warn('⚠️ Mídia encontrada mas incompleta (Empty Media Key):');
                 this.logger?.debug('📋 Conteúdo extraído:', JSON.stringify(mediaContent, null, 2));
                 this.logger?.debug('📋 Mensagem original:', JSON.stringify(message, null, 2).slice(0, 1000));
             }
 
             // A Baileys precisa do objeto final (ex: imageMessage) para decifrar a chave
-            message = mediaContent;
+            const targetMessage = mediaContent;
 
-            this.logger?.debug(`⬇️ Baixando mídia (mime: ${mimeType})...`);
+            this.logger?.debug(`⬇️ Baixando mídia (tipo inferido: ${finalMimeType}, original: ${mimeType})...`);
             this.logger?.debug(`📋 Tipo de mensagem: ${typeof message}`);
 
             // Timeout de 30 segundos para download
@@ -305,7 +319,7 @@ class MediaProcessor {
 
             for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
-                    const downloadPromise = downloadContentFromMessage(message, mimeType as any);
+                    const downloadPromise = downloadContentFromMessage(targetMessage, finalMimeType as any);
                     const timeoutPromise = new Promise((_, reject) =>
                         setTimeout(() => reject(new Error('Timeout ao baixar mídia (30s)')), 30000)
                     );
