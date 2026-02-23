@@ -106,10 +106,17 @@ RUN mkdir -p /tmp/masscan_build && \
     chmod +x /usr/local/bin/masscan || true) && \
     cd - && \
     rm -rf /tmp/masscan_build || true
+# SEARCHSPLOIT - Exploit Database
+RUN cd /opt && \
+    git clone --depth 1 https://github.com/offensive-security/exploitdb.git exploitdb && \
+    ln -s /opt/exploitdb/searchsploit /usr/local/bin/searchsploit && \
+    chmod +x /opt/exploitdb/searchsploit
+
 # COMMIX - Command Injection Scanner
 RUN cd /opt && \
-    git clone https://github.com/commixproject/commix.git || true && \
-    ([ -f /opt/commix/commix.py ] && ln -s /opt/commix/commix.py /usr/local/bin/commix && chmod +x /opt/commix/commix.py || true)
+    git clone https://github.com/commixproject/commix.git commix && \
+    ln -s /opt/commix/commix.py /usr/local/bin/commix && \
+    chmod +x /opt/commix/commix.py
 
 # IMPACKET, SHERLOCK, HOLEHE e THEHARVESTER via PIP
 RUN pip3 install --no-cache-dir --break-system-packages \
@@ -117,15 +124,53 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     sherlock-project \
     holehe \
     theHarvester && \
-    ln -s $(which theHarvester) /usr/local/bin/theharvester || true
+        FOUND=$(which $cmd 2>/dev/null); \
+        if [ ! -z "$FOUND" ] && [ ! -L /usr/local/bin/$cmd ]; then \
+            ln -s "$FOUND" /usr/local/bin/$cmd 2>/dev/null || true; \
+        fi; \
+    done
 
 # NETEXEC via GIT (Versão estável 2026 com Rust)
 RUN pip3 install --no-cache-dir --break-system-packages git+https://github.com/Pennyw0rth/NetExec && \
     ln -s $(which nxc) /usr/local/bin/nxc || true
 
+# FIXAR SYMLINKS PARA FERRAMENTAS PIP
+RUN bash -c '\
+    for bin in theHarvester sherlock holehe impacket-psexec impacket-secretsdump; do\
+        paths=(\
+            "/usr/local/bin/$bin"\
+            "/usr/bin/$bin"\
+            "/root/.local/bin/$bin"\
+            "/opt/*/$bin"\
+        );\
+        found=false;\
+        for path in "${paths[@]}"; do\
+            if [ -x "$path" ] 2>/dev/null; then\
+                if [ ! -L /usr/local/bin/$bin ]; then\
+                    ln -sf "$path" /usr/local/bin/$bin 2>/dev/null;\
+                fi;\
+                found=true;\
+                break;\
+            fi;\
+        done;\
+        if ! $found; then\
+            EXEC=$(find /usr -name "$bin" -type f 2>/dev/null | head -1);\
+            if [ -n "$EXEC" ] && [ ! -L /usr/local/bin/$bin ]; then\
+                ln -sf "$EXEC" /usr/local/bin/$bin 2>/dev/null;\
+            fi;\
+        fi;\
+    done\
+'
+
 # EVIL-WINRM via GEM (Ruby)
 RUN gem install evil-winrm && \
     ln -s $(which evil-winrm) /usr/local/bin/evil-winrm || true
+
+# SEARCHSPLOIT - Exploit Database
+RUN mkdir -p /opt && \
+    cd /opt && \
+    git clone https://github.com/offensive-security/exploitdb.git || true && \
+    ([ -f /opt/exploitdb/searchsploit ] && chmod +x /opt/exploitdb/searchsploit && ln -s /opt/exploitdb/searchsploit /usr/local/bin/searchsploit || true)
 
 # ZPHISHER via GIT
 RUN cd /opt && \
@@ -202,6 +247,11 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     (python3 /opt/sqlmap/sqlmap.py --version | head -1 || echo "sqlmap instalado") && \
     (nuclei -version 2>/dev/null | head -1 || echo "nuclei instalado") && \
     (masscan --version 2>/dev/null | head -1 || echo "masscan instalado") && \
+    (which searchsploit >/dev/null 2>&1 && echo "✅ searchsploit encontrado" || echo "⚠️ searchsploit aguardando clone") && \
+    (which theHarvester >/dev/null 2>&1 && echo "✅ theHarvester encontrado" || echo "⚠️ theHarvester aguardando link") && \
+    (which sherlock >/dev/null 2>&1 && echo "✅ sherlock encontrado" || echo "⚠️ sherlock aguardando link") && \
+    (which holehe >/dev/null 2>&1 && echo "✅ holehe encontrado" || echo "⚠️ holehe aguardando link") && \
+    (which impacket-psexec >/dev/null 2>&1 && echo "✅ impacket encontrado" || echo "⚠️ impacket aguardando link") && \
     echo "✅ Todas as ferramentas verificadas com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
 
