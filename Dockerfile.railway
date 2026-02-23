@@ -111,7 +111,7 @@ RUN cd /opt && \
     chmod +x /opt/commix/commix.py
 
 # SHERLOCK, HOLEHE, THEHARVESTER e outros via PIP
-RUN pip3 install --no-cache-dir \
+RUN pip3 install --no-cache-dir --break-system-packages \
     sherlock-project \
     holehe \
     netexec \
@@ -130,7 +130,7 @@ RUN cd /opt && \
 RUN cd /opt && \
     git clone https://github.com/UndeadSec/SocialFish.git && \
     cd SocialFish && \
-    pip3 install -r requirements.txt || true && \
+    pip3 install --break-system-packages -r requirements.txt || true && \
     ln -s /opt/SocialFish/SocialFish.py /usr/local/bin/socialfish && \
     chmod +x /opt/SocialFish/SocialFish.py
 
