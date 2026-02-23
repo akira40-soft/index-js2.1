@@ -75,9 +75,8 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 # SQLMAP - SQL Injection Testing
 RUN mkdir -p /opt && \
     cd /opt && \
-    git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git && \
-    chmod +x /opt/sqlmap/sqlmap.py && \
-    ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
+    git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git || true && \
+    ([ -f /opt/sqlmap/sqlmap.py ] && chmod +x /opt/sqlmap/sqlmap.py && ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap || true)
 
 # NUCLEI - Vulnerability Scanning
 RUN ARCH=$(uname -m) && \
@@ -100,18 +99,17 @@ RUN ARCH=$(uname -m) && \
 # MASSCAN - Fast Port Scanner
 RUN mkdir -p /tmp/masscan_build && \
     cd /tmp/masscan_build && \
-    git clone https://github.com/robertdavidgraham/masscan.git && \
+    (git clone https://github.com/robertdavidgraham/masscan.git && \
     cd masscan && \
     make -j4 && \
     cp bin/masscan /usr/local/bin/ && \
-    chmod +x /usr/local/bin/masscan && \
+    chmod +x /usr/local/bin/masscan || true) && \
     cd - && \
-    rm -rf /tmp/masscan_build
+    rm -rf /tmp/masscan_build || true
 # COMMIX - Command Injection Scanner
 RUN cd /opt && \
-    git clone https://github.com/commixproject/commix.git && \
-    ln -s /opt/commix/commix.py /usr/local/bin/commix && \
-    chmod +x /opt/commix/commix.py
+    git clone https://github.com/commixproject/commix.git || true && \
+    ([ -f /opt/commix/commix.py ] && ln -s /opt/commix/commix.py /usr/local/bin/commix && chmod +x /opt/commix/commix.py || true)
 
 # IMPACKET, SHERLOCK, HOLEHE e THEHARVESTER via PIP
 RUN pip3 install --no-cache-dir --break-system-packages \
@@ -131,29 +129,26 @@ RUN gem install evil-winrm && \
 
 # ZPHISHER via GIT
 RUN cd /opt && \
-    git clone https://github.com/htr-tech/zphisher.git && \
-    ln -s /opt/zphisher/zphisher.sh /usr/local/bin/zphisher && \
-    chmod +x /opt/zphisher/zphisher.sh
+    git clone https://github.com/htr-tech/zphisher.git || true && \
+    ([ -f /opt/zphisher/zphisher.sh ] && ln -s /opt/zphisher/zphisher.sh /usr/local/bin/zphisher && chmod +x /opt/zphisher/zphisher.sh || true)
 
 # NIKTO (GitHub version pois apk é limitado)
 RUN cd /opt && \
-    git clone https://github.com/sullo/nikto.git && \
-    ln -s /opt/nikto/program/nikto.pl /usr/local/bin/nikto && \
-    chmod +x /opt/nikto/program/nikto.pl
+    git clone https://github.com/sullo/nikto.git || true && \
+    ([ -f /opt/nikto/program/nikto.pl ] && ln -s /opt/nikto/program/nikto.pl /usr/local/bin/nikto && chmod +x /opt/nikto/program/nikto.pl || true)
 
 # SOCIALFISH
 RUN cd /opt && \
-    git clone https://github.com/UndeadSec/SocialFish.git && \
-    cd SocialFish && \
+    git clone https://github.com/UndeadSec/SocialFish.git || true && \
+    ([ -f /opt/SocialFish/SocialFish.py ] && cd SocialFish && \
     pip3 install --break-system-packages -r requirements.txt || true && \
     ln -s /opt/SocialFish/SocialFish.py /usr/local/bin/socialfish && \
-    chmod +x /opt/SocialFish/SocialFish.py
+    chmod +x /opt/SocialFish/SocialFish.py || true)
 
 # BLACKEYE
 RUN cd /opt && \
-    git clone https://github.com/An0nUD4Y/blackeye.git && \
-    ln -s /opt/blackeye/blackeye.sh /usr/local/bin/blackeye && \
-    chmod +x /opt/blackeye/blackeye.sh
+    git clone https://github.com/An0nUD4Y/blackeye.git || true && \
+    ([ -f /opt/blackeye/blackeye.sh ] && ln -s /opt/blackeye/blackeye.sh /usr/local/bin/blackeye && chmod +x /opt/blackeye/blackeye.sh || true)
 
 # ═══════════════════════════════════════════════════════════════════════
 # CONFIGURAÇÃO DE DIRETÓRIOS PARA RAILWAY
