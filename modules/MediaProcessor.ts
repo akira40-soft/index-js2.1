@@ -122,26 +122,26 @@ class MediaProcessor {
 
         // 🟢 Estratégia [WEB + COOKIES + UA IPHONE] - Alta fidelidade
         if (finalCookieArg) {
-            let webArgs = `--extractor-args "youtube:player_client=web${poToken ? `;po_token=web+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} ${secHeaders} --user-agent "${ua_iphone}"`;
+            let webArgs = `--extractor-args "youtube:player_client=web${poToken ? `;po_token=web+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} ${secHeaders} --user-agent "${ua_iphone}" --ignore-config --no-cache-dir`;
             strategies.push({ client: 'web+cookies+iphone', args: webArgs });
         }
 
         // 🔴 Estratégia [ANDROID + UA PIXEL] - Muito resistente
-        let androidArgs = `--extractor-args "youtube:player_client=android${poToken ? `;po_token=android+${poToken}` : ''}" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_android}"`;
+        let androidArgs = `--extractor-args "youtube:player_client=android${poToken ? `;po_token=android+${poToken}` : ''}" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_android}" --ignore-config --no-cache-dir`;
         strategies.push({ client: 'android+bypass', args: androidArgs });
 
         // 🔘 Estratégia [TV EMBEDDED] - Fallback clássico
-        let tvArgs = `--extractor-args "youtube:player_client=tv_embedded" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        let tvArgs = `--extractor-args "youtube:player_client=tv_embedded" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_iphone}" --ignore-config --no-cache-dir`;
         strategies.push({ client: 'tv_embedded', args: tvArgs });
 
         // 🌐 Estratégia [IOS]
-        let iosArgs = `--extractor-args "youtube:player_client=ios${poToken ? `;po_token=ios+${poToken}` : ''}" ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        let iosArgs = `--extractor-args "youtube:player_client=ios${poToken ? `;po_token=ios+${poToken}` : ''}" ${baseSleepArgs} --user-agent "${ua_iphone}" --ignore-config --no-cache-dir`;
         strategies.push({ client: 'ios', args: iosArgs });
 
         // ⚪ Estratégia [WEB_EMBEDDED] - Compatibilidade máxima
         strategies.push({
             client: 'web_embedded',
-            args: `--extractor-args "youtube:player_client=web_embedded" ${finalCookieArg} ${baseSleepArgs}`.trim()
+            args: `--extractor-args "youtube:player_client=web_embedded" ${finalCookieArg} ${baseSleepArgs} --ignore-config --no-cache-dir`.trim()
         });
 
         return strategies;
@@ -162,6 +162,9 @@ class MediaProcessor {
         for (const strategy of strategies) {
             this.logger?.info(`🔄 Tentando strategy: [${strategy.client}]`);
             const command = buildCommand(strategy.args);
+            
+            // Log do comando EXATO para diagnóstico
+            this.logger?.info(`📝 Comando: ${command.slice(0, 200)}...`);
 
             const result = await new Promise<{ sucesso: boolean; output?: string; error?: string }>((resolve) => {
                 exec(command, { timeout: this.config?.YT_TIMEOUT_MS || 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -184,6 +187,7 @@ class MediaProcessor {
                     // Detecta bloqueio real de bot-detection
                     if (errMsg.includes('Sign in') || errMsg.includes('bot') || errMsg.includes('403') || errMsg.includes('Requested format is not available')) {
                         this.logger?.warn(`⛔ [${strategy.client}] Bloqueado ou formato indisponível, tentando próximo...`);
+                        this.logger?.info(`🔍 Erro detectado: ${errMsg.slice(0, 100)}`);
                     } else if (errMsg.includes('Video unavailable') || errMsg.includes('Private video')) {
                         return resolve({ sucesso: false, error: 'Vídeo indisponível ou privado' });
                     } else {
@@ -891,6 +895,7 @@ class MediaProcessor {
             const buildCommand = (bypassArgs: string) => {
                 const ytdlpTool = this.findYtDlp();
                 const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
+                // Sem -f: deixa --extract-audio selecionar automaticamente o melhor áudio
                 return `${cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
             };
 
@@ -1167,7 +1172,15 @@ class MediaProcessor {
 
             const buildCommand = (bypassArgs: string) => {
                 const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
-                return `${cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --merge-output-format mp4 --no-warnings "${url}"`;
+                /**
+                 * Formato Resiliente 2026:
+                 * 1. Vídeo 720p MP4 + Áudio M4A
+                 * 2. Vídeo 720p (qualquer) + Áudio (qualquer)
+                 * 3. Melhor formato único <= 720p
+                 * 4. Fallback absoluto para 'best' se tudo falhar (ex: lives)
+                 */
+                const formatResiliente = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best";
+                return `${cmd} ${bypassArgs} -f "${formatResiliente}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --merge-output-format mp4 --no-warnings "${url}"`;
             };
 
             // Usa o mesmo sistema de fallback progressivo do áudio

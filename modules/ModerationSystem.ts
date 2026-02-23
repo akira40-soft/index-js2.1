@@ -809,23 +809,6 @@ class ModerationSystem {
         }
     }
 
-    public async getBlacklistReport(): Promise<any> {
-        const list = this.loadBlacklistDataSync();
-        if (!Array.isArray(list) || list.length === 0) {
-            return { total: 0, entries: [] };
-        }
-
-        const entries = list.map(entry => ({
-            name: entry.name || 'Desconhecido',
-            number: entry.number || 'N/A',
-            reason: entry.reason || 'indefinida',
-            severity: entry.severity || 'NORMAL',
-            addedAt: new Date(entry.addedAt).toLocaleString('pt-BR'),
-            expiresAt: entry.expiresAt === 'PERMANENT' ? 'PERMANENTE' : new Date(Number(entry.expiresAt)).toLocaleString('pt-BR')
-        }));
-
-        return { total: entries.length, entries };
-    }
 
     public getStats(): any {
         const blacklist = this.loadBlacklistDataSync();
@@ -847,6 +830,56 @@ class ModerationSystem {
         this.spamCache?.clear();
         this.userRateLimit?.clear();
         this.logger?.info('🔄 Sistema de moderação resetado');
+    }
+    /**
+    * Retorna um relatório formatado da blacklist
+    */
+    public getBlacklistReport(): string {
+        const list = this.loadBlacklistDataSync();
+        if (!Array.isArray(list) || list.length === 0) {
+            return '🕳️ *A Blacklist está vazia.*';
+        }
+
+        let report = `🚫 *RELATÓRIO DE BLACKLIST (${list.length})*\n\n`;
+        list.slice(0, 15).forEach((entry, i) => {
+            const date = new Date(entry.addedAt).toLocaleDateString('pt-BR');
+            const expires = entry.expiresAt === 'PERMANENT' ? 'Permanente' : new Date(entry.expiresAt).toLocaleDateString('pt-BR');
+            report += `${i + 1}. *${entry.name}* (${entry.number})\n`;
+            report += `   └ Razão: ${entry.reason} | Expira: ${expires}\n`;
+        });
+
+        if (list.length > 15) {
+            report += `\n_...e mais ${list.length - 15} registros._`;
+        }
+
+        return report;
+    }
+
+    /**
+    * Retorna um relatório formatado de usuários silenciados (mute)
+    */
+    public getMutedReport(currentGroupJid: string): string {
+        const now = Date.now();
+        const groupMutes: any[] = [];
+
+        this.mutedUsers.forEach((data, key) => {
+            const [groupId, userId] = key.split('_');
+            if (groupId === currentGroupJid && data.expires > now) {
+                groupMutes.push({ userId, ...data });
+            }
+        });
+
+        if (groupMutes.length === 0) {
+            return '🔊 *Ninguém está silenciado neste grupo.*';
+        }
+
+        let report = `🔇 *USUÁRIOS SILENCIADOS NESTE GRUPO (${groupMutes.length})*\n\n`;
+        groupMutes.forEach((m, i) => {
+            const timeLeft = Math.ceil((m.expires - now) / 60000);
+            report += `${i + 1}. @${m.userId.split('@')[0]} — ${timeLeft} min restantes\n`;
+        });
+
+        return report;
     }
 }
 

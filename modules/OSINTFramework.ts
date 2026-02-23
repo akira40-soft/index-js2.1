@@ -181,7 +181,59 @@ class OSINTFramework {
         };
 
         if (commands[command]) {
-            await commands[command]();
+            const result = await commands[command]();
+            if (result && !result.error) {
+                let text = '';
+                switch (command) {
+                    case 'dork':
+                        text = `🔍 **RESULTADO DORK**\n\n📌 ${result.description}\n🔗 ${result.url}`;
+                        break;
+                    case 'email':
+                        text = `📧 **CHECK DE EMAIL: ${args[0]}**\n\n`;
+                        if (result.breached) {
+                            text += `⚠️ **ENCONTRADO EM ${result.count} VAZAMENTOS!**\n\n`;
+                            result.breaches.slice(0, 5).forEach((b: any) => text += `- ${b.name} (${b.date})\n`);
+                            if (result.count > 5) text += `\n... e mais ${result.count - 5} vistorias.`;
+                        } else {
+                            text += `✅ Nenhum vazamento público encontrado para este email.`;
+                        }
+                        break;
+                    case 'phone':
+                        if (!result.valid) {
+                            text = '❌ Número inválido ou não encontrado.';
+                        } else {
+                            text = `📱 **LOOKUP DE TELEFONE**\n\n` +
+                                `🏁 País: ${result.country}\n` +
+                                `📍 Local: ${result.location}\n` +
+                                `🏎️ Operadora: ${result.carrier}\n` +
+                                `ℹ️ Tipo: ${result.line_type}`;
+                        }
+                        break;
+                    case 'username':
+                        if (!result.exists) {
+                            text = `❌ Usuário não encontrado no ${result.platform}.`;
+                        } else {
+                            text = `👤 **CHECK DE USERNAME: ${args[0]}**\n\n` +
+                                `🏢 Plataforma: ${result.platform}\n` +
+                                `📛 Nome: ${result.name || 'N/A'}\n` +
+                                `📝 Bio: ${result.bio || 'N/A'}\n` +
+                                `🔗 Perfil: ${result.url}`;
+                        }
+                        break;
+                    case 'geo':
+                        text = `📍 *GEOIP LOCATOR*\n` +
+                            `IP: ${result.ip}\n` +
+                            `País: ${result.country}\n` +
+                            `Estado: ${result.region}\n` +
+                            `Cidade: ${result.city}\n` +
+                            `ISP: ${result.isp}\n` +
+                            `Org: ${result.org}`;
+                        break;
+                }
+                if (text) await this.sock.sendMessage(m.key.remoteJid, { text }, { quoted: m });
+            } else if (result && result.error) {
+                await this.sock.sendMessage(m.key.remoteJid, { text: `❌ Erro: ${result.error}` }, { quoted: m });
+            }
             return true;
         }
 

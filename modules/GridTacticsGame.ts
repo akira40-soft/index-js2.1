@@ -541,35 +541,85 @@ Números em sequência (1-2-3-4) dão ponto extra!
 
         // Processar jogada
         if (!isNaN(parseInt(action))) {
-            const number = parseInt(action);
+            const number = action; // É string no validateMove
             const position = parseInt(args[0] || '0');
 
-            if (number < 1 || number > 4 || position < 1 || position > 16) {
+            if (parseInt(number) < 1 || parseInt(number) > 4 || position < 1 || position > 16) {
                 return {
                     text: '❌ Número deve ser 1-4 e posição 1-16!\n\n' + this.renderBoard(game.board)
                 };
             }
 
             const cellIndex = position - 1;
-            if (game.board[cellIndex] !== null) {
+            const row = Math.floor(cellIndex / 4);
+            const col = cellIndex % 4;
+
+            // 1. Validar jogada do jogador
+            const validation = this.validateMove(game.board, row, col, number, 0);
+            if (!validation.valid) {
+                return { text: `❌ Jogada inválida: ${validation.reason}\n\n${this.renderBoard(game.board)}` };
+            }
+
+            // 2. Executar jogada do jogador
+            game.board[cellIndex] = {
+                number,
+                player: 0,
+                symbol: this.PLAYER_1_NUMBERS[parseInt(number) - 1]
+            };
+            game.lastActivity = Date.now();
+            game.turn++;
+
+            // 3. Verificar se o jogador ganhou
+            let winCheck = this.checkWinner(game.board);
+            if (winCheck.winner !== null) {
+                this.deleteGame(chatJid);
                 return {
-                    text: '❌ Essa célula já está ocupada!\n\n' + this.renderBoard(game.board)
+                    text: `🎉 *VITÓRIA EXPLOSIVA!* 🏆\n\n${this.renderBoard(game.board)}\n\nParabéns! Você venceu a IA com um padrão de ${winCheck.pattern === 'line' ? 'Linha' : 'Sequência'}!`
                 };
             }
 
-            // Colocar número (placeholder enquanto não temos lógica completa)
-            game.board[cellIndex] = `${number}P1`;
+            // 4. Turno da IA
+            if (game.isAIMode) {
+                const aiMoveIndex = this.calculateAIMove(game.board, game.difficulty);
+                if (aiMoveIndex !== -1) {
+                    // Escolher um número válido para a IA naquela posição
+                    let aiNumber = '1';
+                    for (let n of ['1', '2', '3', '4']) {
+                        const aiVal = this.validateMove(game.board, Math.floor(aiMoveIndex / 4), aiMoveIndex % 4, n, 1);
+                        if (aiVal.valid) {
+                            aiNumber = n;
+                            break;
+                        }
+                    }
 
-            // Ganho simplificado: se preencheu 5+ células
-            if (game.board.filter((c: any) => c !== null).length >= 5) {
+                    game.board[aiMoveIndex] = {
+                        number: aiNumber,
+                        player: 1,
+                        symbol: this.PLAYER_2_NUMBERS[parseInt(aiNumber) - 1]
+                    };
+                    game.turn++;
+
+                    // Verificar se a IA ganhou
+                    winCheck = this.checkWinner(game.board);
+                    if (winCheck.winner !== null) {
+                        this.deleteGame(chatJid);
+                        return {
+                            text: `🤖 *VITÓRIA DA IA!* 💻\n\n${this.renderBoard(game.board)}\n\nA Akira-AI venceu desta vez com um padrão ${winCheck.pattern}. Tente novamente!`
+                        };
+                    }
+                }
+            }
+
+            // 5. Verificar empate (tabuleiro cheio)
+            if (game.board.every((c: any) => c !== null)) {
                 this.deleteGame(chatJid);
                 return {
-                    text: `🎉 *VITÓRIA!*\n\n${this.renderBoard(game.board)}\n\nVocê venceu a partida! 🏆`
+                    text: `🤝 *EMPATE!* \n\n${this.renderBoard(game.board)}\n\nO tabuleiro está cheio e ninguém conseguiu 4 em linha.`
                 };
             }
 
             return {
-                text: `✅ Você jogou ${number} na posição ${position}!\n\n${this.renderBoard(game.board)}\n\nAguarde o turno da IA...`
+                text: `✅ Jogada registrada!\n\n${this.renderBoard(game.board)}\n\nSeu turno novamente!`
             };
         }
 

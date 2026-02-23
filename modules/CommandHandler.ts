@@ -476,6 +476,8 @@ class CommandHandler {
                 case 'comprar':
                     return await this._handlePaymentCommand(m, args);
 
+                case 'shodan':
+                case 'cve':
                 case 'nmap':
                 case 'sqlmap':
                 case 'hydra':
@@ -501,33 +503,30 @@ class CommandHandler {
                     }
                     return await this.cybersecurityToolkit.handleCommand(m, command, args);
 
+                case 'setoolkit':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this._handleSetoolkit(m, fullArgs);
+
+                case 'metasploit':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this._handleMetasploit(m, fullArgs);
+
                 case 'dork':
-                    if (!isOwner) {
-                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
-                        return true;
-                    }
-                    return await this._handleDork(m, args);
-
                 case 'email':
-                    if (!isOwner) {
-                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
-                        return true;
-                    }
-                    return await this._handleEmailCheck(m, args);
-
                 case 'phone':
-                    if (!isOwner) {
-                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
-                        return true;
-                    }
-                    return await this._handlePhoneLookup(m, args);
-
                 case 'username':
                     if (!isOwner) {
                         await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
                         return true;
                     }
-                    return await this._handleUsernameCheck(m, args);
+                    // Unificando via handleCommand do OSINTFramework
+                    return await this.osintFramework.handleCommand(m, command, args);
 
                 case 'mute':
                 case 'desmute':
@@ -602,6 +601,26 @@ class CommandHandler {
                         return true;
                     }
                     return await this.groupManagement.handleCommand(m, 'setfoto', args);
+
+                case 'blacklist':
+                    if (!isOwner) return false;
+                    const blReport = this.moderationSystem.getBlacklistReport();
+                    return await this._reply(m, blReport);
+
+                case 'mutelist':
+                case 'silenciados':
+                    if (!isOwner && !isAdminUsers) return false;
+                    const mlReport = this.moderationSystem.getMutedReport(chatJid);
+                    return await this._reply(m, mlReport);
+
+                case 'antispam':
+                    if (!isOwner && !isAdminUsers) {
+                        await this.bot.reply(m, '🚫 Apenas admins podem alterar essa configuração.');
+                        return true;
+                    }
+                    const esOn = args[0] === 'on' || args[0] === '1';
+                    await this._reply(m, `✅ Anti-Spam ${esOn ? 'ATIVADO' : 'DESATIVADO'} para este grupo.`);
+                    return true;
 
                 // INFO DO GRUPO — QUALQUER MEMBRO REGISTRADO
                 case 'groupinfo':
@@ -798,14 +817,16 @@ class CommandHandler {
 
 📂 *CATEGORIAS — use ${P}menu [categoria]*
 
-  1️⃣  ${P}menu conta     — Registo, nível, economia
-  2️⃣  ${P}menu media      — Música, vídeo, stickers
-  3️⃣  ${P}menu audio      — Efeitos de áudio & TTS
-  4️⃣  ${P}menu imagem     — Efeitos de imagem
-  5️⃣  ${P}menu grupos     — Administração de grupos
-  6️⃣  ${P}menu diversao   — Jogos e diversaões
-  7️⃣  ${P}menu cyber      — Cybersecurity (dono)
-  8️⃣  ${P}menu premium    — Planos VIP
+  1️⃣  ${P}menu info       — Informações gerais
+  2️⃣  ${P}menu conta      — Registo, nível, economia
+  3️⃣  ${P}menu media      — Música, vídeo, stickers
+  4️⃣  ${P}menu audio      — Efeitos de áudio & TTS
+  5️⃣  ${P}menu imagem     — Efeitos de imagem
+  6️⃣  ${P}menu grupos     — Administração de grupos
+  7️⃣  ${P}menu diversao   — Jogos e diversaões
+  8️⃣  ${P}menu cyber      — Cybersecurity (dono)
+  9️⃣  ${P}menu osint      — OSINT & Inteligência
+  🔟  ${P}menu premium    — Planos VIP
 
 🔑 *Legenda:* 🔒 Requer registo • 👑 Admin/Dono
 
@@ -829,7 +850,10 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
 💰 *ECONOMIA*
 • ${P}daily 🔒 — Recompensa diária
 • ${P}atm 🔒 — Ver saldo
-• ${P}transfer @user valor 🔒 — Transferir`,
+• ${P}transfer @user valor 🔒 — Transferir
+• ${P}deposit [valor|all] 🔒 — Depositar no banco
+• ${P}withdraw [valor|all] 🔒 — Sacar do banco
+• ${P}transactions | ${P}transacoes 🔒 — Ver histórico`,
 
             media:
                 `🎨 *MÍDIA & CRIAÇÃO*
@@ -886,6 +910,8 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
 • ${P}welcome on/off 👑
 • ${P}antilink on/off 👑
 • ${P}antispam on/off 👑
+• ${P}blacklist 👑 — Relatório de banidos
+• ${P}mutelist | ${P}silenciados 👑
 • ${P}warn | ${P}unwarn @user 👑`,
 
             diversao:
@@ -908,13 +934,40 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
             cyber:
                 `🛡️ *CYBERSECURITY (DONO)*
 ────────────────────────────
-• ${P}nmap [alvo] 👑 — Port scan
-• ${P}sqlmap [url] 👑 — SQL injection
-• ${P}nuclei [alvo] 👑 — Vuln scan
+• ${P}nmap [alvo] 👑 — Port scanning
+• ${P}sqlmap [url] 👑 — SQL injection test
+• ${P}nuclei [alvo] 👑 — Vulnerability scanning
 • ${P}hydra [alvo] 👑 — Brute force
+• ${P}masscan [alvo] 👑 — Ultra-fast port scan
+• ${P}nikto [url] 👑 — Web server scanner
+• ${P}commix [url] 👑 — Command injection
+• ${P}searchsploit [vuln] 👑 — Exploit database
 • ${P}whois | ${P}dns | ${P}geo [ip] 👑
-• ${P}setoolkit 👑 — Social Engineering
-• ${P}metasploit 👑 — Framework`,
+• ${P}setoolkit 👑 — Social Engineering Toolkit
+• ${P}metasploit 👑 — Metasploit Framework
+
+${P}menu osint — Comandos OSINT avançados`,
+
+            osint:
+                `🔍 *OSINT & INTELIGÊNCIA*
+────────────────────────────
+• ${P}dork [query] 👑 — Google Dorking
+• ${P}email [email] 👑 — Verificar vazamentos
+• ${P}phone [numero] 👑 — Pesquisar número
+• ${P}username [user] 👑 — Buscar username
+• ${P}sherlock [user] 👑 — Social media search
+• ${P}holehe [email] 👑 — Email reconnaissance
+• ${P}theharvester [domain] 👑 — Email/DNS harvesting
+• ${P}netexec [alvo] 👑 — Network execution`,
+
+            info:
+                `ℹ️ *INFORMAÇÕES*
+────────────────────────────
+• ${P}dono | ${P}owner — Contato do bot
+• ${P}ping — Latência e status
+• ${P}perfil — Ver seu perfil
+• ${P}premium — Status VIP
+• ${P}report [bug] — Reportar erro`,
 
             premium:
                 `💎 *PLANOS VIP*
@@ -941,8 +994,10 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
             img: 'imagem', foto: 'imagem', image: 'imagem',
             grupo: 'grupos', admin: 'grupos', moderacao: 'grupos',
             fun: 'diversao', jogos: 'diversao', game: 'diversao',
-            sec: 'cyber', hacking: 'cyber', security: 'cyber', osint: 'cyber',
-            vip: 'premium', planos: 'premium', buy: 'premium'
+            sec: 'cyber', hacking: 'cyber', security: 'cyber', pentest: 'cyber',
+            vip: 'premium', planos: 'premium', buy: 'premium',
+            osint: 'osint', inteligencia: 'osint', reconnaissance: 'osint',
+            info: 'info', informações: 'info', about: 'info'
         };
 
         const key = alias[sub] || sub;
@@ -1373,44 +1428,6 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
         return true;
     }
 
-    public async _handleImageEffect(m: any, command: string, args: string[]): Promise<boolean> {
-        const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        const targetMessage = quoted || m.message;
-
-        if (!targetMessage) {
-            await this._reply(m, '❌ Responda a uma imagem para aplicar o efeito.');
-            return true;
-        }
-
-        await this._reply(m, `🎨 Aplicando efeito *${command}*...`);
-        try {
-            const buf = await this.mediaProcessor.downloadMedia(targetMessage, 'image');
-            if (!buf) throw new Error('Falha ao baixar imagem.');
-
-            // Tratamento de argumentos para addbg/gradient
-            let options: any = {};
-            if (['addbg', 'adicionarfundo'].includes(command)) {
-                options.color = args[0];
-            }
-            if (['gradient', 'fundogradiente'].includes(command)) {
-                options.color1 = args[0];
-                options.color2 = args[1];
-            }
-
-            const res = await this.imageEffects.processImage(buf, command, options);
-
-            if (res.success && res.buffer) {
-                // Envia como imagem (usuário pode converter pra sticker com *sticker se quiser)
-                await this.sock.sendMessage(m.key.remoteJid, { image: res.buffer, caption: `✅ Efeito ${command} aplicado` }, { quoted: m });
-            } else {
-                await this._reply(m, `❌ Erro: ${res.error || 'Falha desconhecida'}`);
-            }
-        } catch (e: any) {
-            await this._reply(m, '❌ Erro ao processar imagem.');
-            console.error(e);
-        }
-        return true;
-    }
 
     public async _handlePaymentCommand(m: any, args: string[]): Promise<boolean> {
         // Se usuario quer ver info
@@ -1826,20 +1843,6 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
             return true;
         }
     }
-
-    // ═════════════════════════════════════════════════════════════════
-    // SISTEMA DE LEVEL (V21)
-    // ═════════════════════════════════════════════════════════════════
-
-    /**
-     * Comando #level - Ver nível do usuário
-     */
-
-
-
-    // ═════════════════════════════════════════════════════════════════
-    // SISTEMA DE LEVEL (V21)
-    // ═════════════════════════════════════════════════════════════════
 
     /**
      * Comando #level - Ver nível do usuário
@@ -2372,39 +2375,6 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
         return true;
     }
 
-    public async _handleTagAll(m: any, text: string, hide: boolean = false): Promise<boolean> {
-        if (!this.sock) return true;
-        try {
-            const groupMetadata = await this.sock.groupMetadata(m.key.remoteJid);
-            const participants = groupMetadata.participants.map((p: any) => p.id);
-
-            if (hide) {
-                const msgText = text || '📢 Chamando todos...';
-                await this.sock.sendMessage(m.key.remoteJid, {
-                    text: msgText,
-                    mentions: participants
-                }, { quoted: m });
-            } else {
-                let msg = `📢 *Tagueando Todos* 📢\n\n`;
-                if (text) msg += `📝 *Mensagem:* ${text}\n\n`;
-
-                for (const part of groupMetadata.participants) {
-                    msg += `• @${part.id.split('@')[0]}\n`;
-                }
-
-                await this.sock.sendMessage(m.key.remoteJid, {
-                    text: msg,
-                    mentions: participants
-                }, { quoted: m });
-            }
-        } catch (e: any) {
-            await this._reply(m, `❌ Erro ao taguear: ${e.message}`);
-        }
-        return true;
-    }
-    // ═══════════════════════════════════════════════════════════════════════
-    // NOVO: ENQUETE NATIVA DO WHATSAPP
-    // ═══════════════════════════════════════════════════════════════════════
 
     public async _handlePoll(m: any, fullArgs: string): Promise<boolean> {
         try {
@@ -2442,9 +2412,36 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // NOVO: SORTEIO DE MEMBRO
-    // ═══════════════════════════════════════════════════════════════════════
+    public async _handleTagAll(m: any, text: string, hide: boolean = false): Promise<boolean> {
+        if (!this.sock) return true;
+        try {
+            const groupMetadata = await this.sock.groupMetadata(m.key.remoteJid);
+            const participants = groupMetadata.participants.map((p: any) => p.id);
+
+            if (hide) {
+                const msgText = text || '📢 Chamando todos...';
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    text: msgText,
+                    mentions: participants
+                }, { quoted: m });
+            } else {
+                let msg = `📢 *Tagueando Todos* 📢\n\n`;
+                if (text) msg += `📝 *Mensagem:* ${text}\n\n`;
+
+                for (const part of groupMetadata.participants) {
+                    msg += `• @${part.id.split('@')[0]}\n`;
+                }
+
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    text: msg,
+                    mentions: participants
+                }, { quoted: m });
+            }
+        } catch (e: any) {
+            await this._reply(m, `❌ Erro ao taguear: ${e.message}`);
+        }
+        return true;
+    }
 
     public async _handleRaffle(m: any, chatJid: string, args: string[]): Promise<boolean> {
         try {
@@ -2605,57 +2602,105 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
     /**
      * Handlers OSINT (Proxy para OSINTFramework)
      */
-    public async _handleDork(m: any, args: string[]): Promise<boolean> {
-        if (!args[0]) return await this._reply(m, '❌ Uso: #dork <query>');
-        const res = await this.osintFramework.googleDork(args.join(' '));
-        if (res.error) return await this._reply(m, `❌ Erro: ${res.error}`);
-        return await this._reply(m, `🔍 **RESULTADO DORK**\n\n📌 ${res.description}\n🔗 ${res.url}`);
-    }
 
-    public async _handleEmailCheck(m: any, args: string[]): Promise<boolean> {
-        if (!args[0]) return await this._reply(m, '❌ Uso: #email <email>');
-        const res = await this.osintFramework.checkEmail(args[0]);
-        if (res.error) return await this._reply(m, `❌ Erro: ${res.error}`);
+    public async _handleSetoolkit(m: any, fullArgs: string): Promise<boolean> {
+        try {
+            const info = `🛡️ *SOCIAL ENGINEERING TOOLKIT (SET)*\n\n` +
+                `Ferramenta poderosa para testes de segurança.\n\n` +
+                `📋 *Opções disponíveis:*\n` +
+                `1. Phishing\n` +
+                `2. Credential Harvester\n` +
+                `3. Tabnabbing\n` +
+                `4. Man-in-the-Middle (MITM)\n\n` +
+                `⚠️ *AVISO LEGAL:* Use apenas em ambientes autorizados para teste de segurança.\n\n` +
+                `💡 Acesse: https://github.com/trustedsec/social-engineer-toolkit`;
 
-        let text = `📧 **CHECK DE EMAIL: ${args[0]}**\n\n`;
-        if (res.breached) {
-            text += `⚠️ **ENCONTRADO EM ${res.count} VAZAMENTOS!**\n\n`;
-            res.breaches.slice(0, 5).forEach((b: any) => text += `- ${b.name} (${b.date})\n`);
-            if (res.count > 5) text += `\n... e mais ${res.count - 5} vistorias.`;
-        } else {
-            text += `✅ Nenhum vazamento público encontrado para este email.`;
+            await this._reply(m, info);
+            return true;
+        } catch (error: any) {
+            await this._reply(m, `❌ Erro ao processar comando setoolkit: ${error.message}`);
+            return true;
         }
-        return await this._reply(m, text);
     }
 
-    public async _handlePhoneLookup(m: any, args: string[]): Promise<boolean> {
-        if (!args[0]) return await this._reply(m, '❌ Uso: #phone <número>');
-        const res = await this.osintFramework.lookupPhone(args[0]);
-        if (res.error) return await this._reply(m, `❌ Erro: ${res.error}`);
+    public async _handleMetasploit(m: any, fullArgs: string): Promise<boolean> {
+        try {
+            const info = `⚔️ *METASPLOIT FRAMEWORK*\n\n` +
+                `Framework de penetration testing mais poderoso do mundo.\n\n` +
+                `🎯 *Funcionalidades principais:*\n` +
+                `• Exploit Development\n` +
+                `• Vulnerability Assessment\n` +
+                `• Payload Generation\n` +
+                `• Post-Exploitation\n` +
+                `• Persistence & Lateral Movement\n\n` +
+                `⚠️ *AVISO LEGAL:* Use apenas em ambientes autorizados.\n\n` +
+                `📖 Documentação: https://metasploit.help/\n` +
+                `💻 Repositório: https://github.com/rapid7/metasploit-framework`;
 
-        if (!res.valid) return await this._reply(m, '❌ Número inválido.');
-
-        const text = `📱 **LOOKUP DE TELEFONE**\n\n` +
-            `🏁 País: ${res.country}\n` +
-            `📍 Local: ${res.location}\n` +
-            `🏎️ Operadora: ${res.carrier}\n` +
-            `ℹ️ Tipo: ${res.line_type}`;
-        return await this._reply(m, text);
+            await this._reply(m, info);
+            return true;
+        } catch (error: any) {
+            await this._reply(m, `❌ Erro ao processar comando metasploit: ${error.message}`);
+            return true;
+        }
     }
 
-    public async _handleUsernameCheck(m: any, args: string[]): Promise<boolean> {
-        if (!args[0]) return await this._reply(m, '❌ Uso: #username <user>');
-        const res = await this.osintFramework.checkUsername(args[0]);
-        if (res.error) return await this._reply(m, `❌ Erro: ${res.error}`);
+    /**
+     * Processa comandos de efeitos de imagem
+     */
+    public async _handleImageEffect(m: any, effect: string, args: string[]): Promise<boolean> {
+        try {
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const targetMessage = quoted || m.message;
 
-        if (!res.exists) return await this._reply(m, `❌ Usuário não encontrado no ${res.platform}.`);
+            const hasImage = !!(targetMessage?.imageMessage ||
+                targetMessage?.viewOnceMessage?.message?.imageMessage ||
+                targetMessage?.viewOnceMessageV2?.message?.imageMessage);
 
-        const text = `👤 **CHECK DE USERNAME: ${args[0]}**\n\n` +
-            `🏢 Plataforma: ${res.platform}\n` +
-            `📛 Nome: ${res.name || 'N/A'}\n` +
-            `📝 Bio: ${res.bio || 'N/A'}\n` +
-            `🔗 Perfil: ${res.url}`;
-        return await this._reply(m, text);
+            if (!hasImage) {
+                await this.bot.reply(m, `💡 Responda a uma imagem com *#${effect}* para aplicar o efeito.`);
+                return true;
+            }
+
+            await this._reply(m, `⏳ Aplicando efeito *${effect}*... Aguarde.`);
+
+            // Download da imagem
+            const imageBuffer = await this.mediaProcessor.downloadMedia(targetMessage, 'image');
+
+            if (!imageBuffer || imageBuffer.length === 0) {
+                await this._reply(m, '❌ Não consegui baixar a imagem. Tente novamente.');
+                return true;
+            }
+
+            // Módulo de efeitos
+            if (!this.imageEffects) {
+                await this._reply(m, '❌ Módulo de efeitos de imagem não inicializado.');
+                return true;
+            }
+
+            // Processamento
+            const options: any = {};
+            if (args.length > 0) options.color = args[0];
+
+            const result = await this.imageEffects.processImage(imageBuffer, effect, options);
+
+            if (!result.success) {
+                await this._reply(m, `❌ Erro ao processar imagem: ${result.error || 'falha desconhecida'}`);
+                return true;
+            }
+
+            // Envio do resultado
+            await this.sock.sendMessage(m.key.remoteJid, {
+                image: result.buffer,
+                caption: `✅ Efeito *${effect}* aplicado com sucesso! \n_Akira Bot V21_`
+            }, { quoted: m });
+
+            return true;
+        } catch (error: any) {
+            console.error(`Erro no efeito de imagem ${effect}:`, error);
+            await this._reply(m, `❌ Erro crítico ao processar efeito: ${error.message}`);
+            return true;
+        }
     }
 }
 
