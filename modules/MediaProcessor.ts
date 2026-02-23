@@ -96,11 +96,18 @@ class MediaProcessor {
         if (!finalCookieArg) {
             for (const p of possibleCookiePaths) {
                 if (fs.existsSync(p)) {
-                    this.logger?.info(`🍪 Cookies detetados automaticamente em: ${p}`);
+                    const stats = fs.statSync(p);
+                    this.logger?.info(`🍪 Cookies detetados automaticamente em: ${p} (${stats.size} bytes)`);
                     finalCookieArg = `--cookies "${p}"`;
                     break;
                 }
             }
+        }
+
+        if (finalCookieArg) {
+            this.logger?.info(`🎥 YouTube Bypass: Usando cookies via argumento: ${finalCookieArg}`);
+        } else {
+            this.logger?.warn(`⚠️ YouTube Bypass: Nenhum ficheiro de cookies detetado! Esperados em: ${possibleCookiePaths.join(', ')}`);
         }
 
         const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates';

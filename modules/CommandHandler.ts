@@ -2211,9 +2211,18 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
         if (this.bot?.handleWarning) {
             await this.bot.handleWarning(m, reason);
         } else if (this.moderationSystem) {
-            const res = this.moderationSystem.addWarning(m.key.remoteJid, target, reason, 'Manual');
-            if (res.sucesso) {
-                await this._reply(m, `⚠️ *AVISO APLICADO* ⚠️\n\n👤 Usuário: @${target.split('@')[0]}\n📝 Motivo: ${reason}\n📊 Avisos: ${res.warnings}/3\n\n${res.action === 'kick' ? '❌ Usuário banido por atingir o limite.' : '⚠️ Evite violar as regras para não ser banido.'}`, { mentions: [target] });
+            const warningCount = this.moderationSystem.addWarning(m.key.remoteJid, target, reason);
+            const maxWarnings = 3;
+            const shouldKick = warningCount >= maxWarnings;
+            
+            await this._reply(m, `⚠️ *AVISO APLICADO* ⚠️\n\n👤 Usuário: @${target.split('@')[0]}\n📝 Motivo: ${reason}\n📊 Avisos: ${warningCount}/${maxWarnings}\n\n${shouldKick ? '❌ Usuário banido por atingir o limite!' : '⚠️ Evite violar as regras para não ser banido.'}`, { mentions: [target] });
+            
+            if (shouldKick && this.bot?.groupRemoveMember) {
+                try {
+                    await this.bot.groupRemoveMember(m.key.remoteJid, [target]);
+                } catch (e) {
+                    console.error('Erro ao remover membro:', e);
+                }
             }
         }
         return true;

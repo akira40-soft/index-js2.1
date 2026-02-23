@@ -493,6 +493,90 @@ Números em sequência (1-2-3-4) dão ponto extra!
     public deleteGame(chatId: string): boolean {
         return this.games.delete(`${chatId}_gridtactics`);
     }
+
+    /**
+     * Handler principal para GridTactics (compatível com CommandHandler)
+     */
+    public async handleGridTactics(chatJid: string, userId: string, action: string, args: string[]): Promise<{ text: string }> {
+        const gameKey = `${chatJid}_gridtactics`;
+        
+        // Iniciar novo jogo
+        if (action === 'start' || !this.games.has(gameKey)) {
+            const difficulty = args[0] || 'medio';
+            const game = this.createGame(chatJid, userId, null, difficulty);
+            
+            return {
+                text: `🎮 *GRID TACTICS - NOVO JOGO!*\n\n` +
+                    `Você começará contra a IA (Dificuldade: ${difficulty.toUpperCase()})\n\n` +
+                    `${this.renderBoard(game.board)}\n\n` +
+                    `Digite um número de 1-4 e a posição (ex: *#gridtactics 1 1*)\n` +
+                    `Ou use: *#gridtactics ajuda* para ver as regras`
+            };
+        }
+
+        const game = this.games.get(gameKey);
+        if (!game || game.type !== 'gridtactics') {
+            return {
+                text: '❌ Nenhum jogo ativo. Use *#gridtactics start* para começar!'
+            };
+        }
+
+        // Comando "ajuda"
+        if (action === 'ajuda' || action === 'help') {
+            return {
+                text: `📋 *REGRAS DO GRID TACTICS*\n\n` +
+                    `🎯 OBJETIVO:\n` +
+                    `Formar 4 em linha (horizontal, vertical ou diagonal)\n\n` +
+                    `🎮 COMO JOGAR:\n` +
+                    `1. Escolha um número (1-4)\n` +
+                    `2. Escolha uma posição (1-16)\n` +
+                    `Exemplo: *#gridtactics 3 5*\n\n` +
+                    `⚙️ RESTRIÇÕES:\n` +
+                    `- Sem números repetidos na mesma linha\n` +
+                    `- Sem números repetidos na mesma coluna\n` +
+                    `- Sem números repetidos no mesmo bloco 2x2\n\n` +
+                    `${this.renderBoard(game.board)}`
+            };
+        }
+
+        // Processar jogada
+        if (!isNaN(parseInt(action))) {
+            const number = parseInt(action);
+            const position = parseInt(args[0] || '0');
+
+            if (number < 1 || number > 4 || position < 1 || position > 16) {
+                return {
+                    text: '❌ Número deve ser 1-4 e posição 1-16!\n\n' + this.renderBoard(game.board)
+                };
+            }
+
+            const cellIndex = position - 1;
+            if (game.board[cellIndex] !== null) {
+                return {
+                    text: '❌ Essa célula já está ocupada!\n\n' + this.renderBoard(game.board)
+                };
+            }
+
+            // Colocar número (placeholder enquanto não temos lógica completa)
+            game.board[cellIndex] = `${number}P1`;
+
+            // Ganho simplificado: se preencheu 5+ células
+            if (game.board.filter((c: any) => c !== null).length >= 5) {
+                this.deleteGame(chatJid);
+                return {
+                    text: `🎉 *VITÓRIA!*\n\n${this.renderBoard(game.board)}\n\nVocê venceu a partida! 🏆`
+                };
+            }
+
+            return {
+                text: `✅ Você jogou ${number} na posição ${position}!\n\n${this.renderBoard(game.board)}\n\nAguarde o turno da IA...`
+            };
+        }
+
+        return {
+            text: `❌ Comando inválido!\n\nUse: *#gridtactics start*, *#gridtactics <número> <posição>* ou *#gridtactics ajuda*`
+        };
+    }
 }
 
 export default new GridTacticsGame();
