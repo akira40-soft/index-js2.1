@@ -26,33 +26,36 @@ mkdir -p /tmp/akira_data/logs
 mkdir -p /tmp/akira_data/subscriptions
 
 # ═══════════════════════════════════════════════════════
-# FIXAR SYMLINKS DAS FERRAMENTAS
+# FIXAR SYMLINKS DAS FERRAMENTAS (Runtime Fallback)
 # ═══════════════════════════════════════════════════════
 echo "🔧 Corrigindo symlinks de ferramentas..."
 
-# Lista de ferramentas pip e seus possíveis locais
-for tool in theHarvester sherlock holehe impacket-psexec impacket-secretsdump searchsploit; do
-    # Verifica se o symlink já existe
-    if [ ! -L "/usr/local/bin/$tool" ] 2>/dev/null; then
-        # Procura pela ferramenta em múltiplos locais
-        FOUND=$(find /usr /opt /root -name "$tool" -type f 2>/dev/null | head -1)
+# Ferramentas pip mais agressivas
+for tool in theHarvester theharvester sherlock holehe impacket-psexec impacket-secretsdump; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        # Procurar em múltiplos locais com find
+        FOUND=$(find / -name "$tool" -type f 2>/dev/null | grep -v "\.git" | head -1)
         if [ -n "$FOUND" ] && [ -x "$FOUND" ]; then
+            mkdir -p /usr/local/bin
             ln -sf "$FOUND" "/usr/local/bin/$tool" 2>/dev/null || true
-            echo "✅ $tool: linked"
+            echo "✅ $tool: linked from $FOUND"
         fi
     fi
 done
 
-# Garante que comandos alternativos pip também estejam symlinked
-for tool in theharvester netexec evil-winrm; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        FOUND=$(find /usr -name "$tool" -type f 2>/dev/null | head -1)
-        if [ -n "$FOUND" ] && [ -x "$FOUND" ]; then
-            ln -sf "$FOUND" "/usr/local/bin/$tool" 2>/dev/null || true
-            echo "✅ $tool: linked"
-        fi
-    fi
-done
+# Verificar searchsploit especificamente
+if [ -f /opt/exploitdb/searchsploit ] && ! command -v searchsploit >/dev/null 2>&1; then
+    chmod +x /opt/exploitdb/searchsploit
+    ln -sf /opt/exploitdb/searchsploit /usr/local/bin/searchsploit 2>/dev/null || true
+    echo "✅ searchsploit: linked"
+fi
+
+# Verificar blackeye especificamente
+if [ -f /opt/blackeye/blackeye.sh ] && ! command -v blackeye >/dev/null 2>&1; then
+    chmod +x /opt/blackeye/blackeye.sh
+    ln -sf /opt/blackeye/blackeye.sh /usr/local/bin/blackeye 2>/dev/null || true
+    echo "✅ blackeye: linked"
+fi
 
 echo "✅ Symlinks corrigidos com sucesso"
 
