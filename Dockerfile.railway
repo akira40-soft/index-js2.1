@@ -45,7 +45,18 @@ RUN apk add --no-cache \
     whois \
     bind-tools \
     nmap \
-    iputils
+    iputils \
+    nikto \
+    hydra \
+    perl-net-ssleay \
+    perl-libwww \
+    python3-dev \
+    py3-pip \
+    py3-setuptools \
+    libxml2-dev \
+    libxslt-dev \
+    ruby-dev \
+    ruby-full
 
 # ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO MANUAL DO YT-DLP (LATEST) - REQUISITO DEPLOY
@@ -93,6 +104,41 @@ RUN mkdir -p /tmp/masscan_build && \
     chmod +x /usr/local/bin/masscan && \
     cd - && \
     rm -rf /tmp/masscan_build
+# COMMIX - Command Injection Scanner
+RUN cd /opt && \
+    git clone https://github.com/commixproject/commix.git && \
+    ln -s /opt/commix/commix.py /usr/local/bin/commix && \
+    chmod +x /opt/commix/commix.py
+
+# SHERLOCK, HOLEHE, THEHARVESTER e outros via PIP
+RUN pip3 install --no-cache-dir \
+    sherlock-project \
+    holehe \
+    netexec \
+    evil-winrm \
+    impacket \
+    zphisher \
+    theharvester
+
+# NIKTO (GitHub version pois apk é limitado)
+RUN cd /opt && \
+    git clone https://github.com/sullo/nikto.git && \
+    ln -s /opt/nikto/program/nikto.pl /usr/local/bin/nikto && \
+    chmod +x /opt/nikto/program/nikto.pl
+
+# SOCIALFISH
+RUN cd /opt && \
+    git clone https://github.com/UndeadSec/SocialFish.git && \
+    cd SocialFish && \
+    pip3 install -r requirements.txt || true && \
+    ln -s /opt/SocialFish/SocialFish.py /usr/local/bin/socialfish && \
+    chmod +x /opt/SocialFish/SocialFish.py
+
+# BLACKEYE
+RUN cd /opt && \
+    git clone https://github.com/An0nUD4Y/blackeye.git && \
+    ln -s /opt/blackeye/blackeye.sh /usr/local/bin/blackeye && \
+    chmod +x /opt/blackeye/blackeye.sh
 
 # ═══════════════════════════════════════════════════════════════════════
 # CONFIGURAÇÃO DE DIRETÓRIOS PARA RAILWAY
