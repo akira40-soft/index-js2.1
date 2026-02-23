@@ -125,46 +125,31 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     sherlock-project \
     holehe \
     theHarvester && \
-    for cmd in theHarvester sherlock holehe impacket-psexec; do \
-        FOUND=$(which "$cmd" 2>/dev/null); \
-        if [ -n "$FOUND" ] && [ ! -L "/usr/local/bin/$cmd" ]; then \
-            ln -s "$FOUND" "/usr/local/bin/$cmd" 2>/dev/null || true; \
-        fi; \
-    done
+    ln -sf $(which theHarvester) /usr/local/bin/theharvester || true && \
+    ln -sf $(which sherlock) /usr/local/bin/sherlock || true && \
+    ln -sf $(which holehe) /usr/local/bin/holehe || true && \
+    ln -sf $(which impacket-psexec) /usr/local/bin/impacket-psexec || true
 
-# NETEXEC via GIT (Versão estável 2026 com Rust)
+# NETEXEC via PIP (específico)
 RUN pip3 install --no-cache-dir --break-system-packages git+https://github.com/Pennyw0rth/NetExec && \
-    ln -s $(which nxc) /usr/local/bin/nxc || true
+    ln -sf $(which nxc) /usr/local/bin/nxc || true
 
 # EVIL-WINRM via GEM (Ruby)
 RUN gem install evil-winrm && \
-    ln -s $(which evil-winrm) /usr/local/bin/evil-winrm || true
+    ln -sf $(which evil-winrm) /usr/local/bin/evil-winrm || true
 
 # ZPHISHER via GIT
 RUN cd /opt && \
     git clone https://github.com/htr-tech/zphisher.git || true && \
-    ([ -f /opt/zphisher/zphisher.sh ] && ln -s /opt/zphisher/zphisher.sh /usr/local/bin/zphisher && chmod +x /opt/zphisher/zphisher.sh || true)
+    ([ -f /opt/zphisher/zphisher.sh ] && ln -sf /opt/zphisher/zphisher.sh /usr/local/bin/zphisher && chmod +x /opt/zphisher/zphisher.sh || true)
 
 # NIKTO (GitHub version pois apk é limitado)
 RUN cd /opt && \
     git clone https://github.com/sullo/nikto.git || true && \
-    ([ -f /opt/nikto/program/nikto.pl ] && ln -s /opt/nikto/program/nikto.pl /usr/local/bin/nikto && chmod +x /opt/nikto/program/nikto.pl || true)
-
-# SOCIALFISH
-RUN cd /opt && \
-    git clone https://github.com/UndeadSec/SocialFish.git || true && \
-    ([ -f /opt/SocialFish/SocialFish.py ] && cd SocialFish && \
-    pip3 install --break-system-packages -r requirements.txt || true && \
-    ln -s /opt/SocialFish/SocialFish.py /usr/local/bin/socialfish && \
-    chmod +x /opt/SocialFish/SocialFish.py || true)
-
-# BLACKEYE
-RUN cd /opt && \
-    git clone https://github.com/An0nUD4Y/blackeye.git || true && \
-    ([ -f /opt/blackeye/blackeye.sh ] && ln -s /opt/blackeye/blackeye.sh /usr/local/bin/blackeye && chmod +x /opt/blackeye/blackeye.sh || true)
+    ([ -f /opt/nikto/program/nikto.pl ] && ln -sf /opt/nikto/program/nikto.pl /usr/local/bin/nikto && chmod +x /opt/nikto/program/nikto.pl || true)
 
 # ═══════════════════════════════════════════════════════════════════════
-# CONFIGURAÇÃO DE DIRETÓRIOS PARA RAILWAY
+# DIRETÓRIOS DE DADOS E PERMISSÕES
 # ═══════════════════════════════════════════════════════════════════════
 
 RUN mkdir -p /app/data && \
