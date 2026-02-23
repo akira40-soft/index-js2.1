@@ -20,6 +20,7 @@ import MessageProcessor from './MessageProcessor.js';
 import ModerationSystem from './ModerationSystem.js';
 import LevelSystem from './LevelSystem.js';
 import RegistrationSystem from './RegistrationSystem.js';
+import EconomySystem from './EconomySystem.js';
 import PaymentManager from './PaymentManager.js';
 import CommandHandler from './CommandHandler.js';
 import HFCorrections from './HFCorrections.js';
@@ -61,6 +62,7 @@ class BotCore {
     public subscriptionManager: any;
     public commandHandler: any;
     public presenceSimulator: any;
+    public economySystem: any;
     public userProfile: any;
     public botProfile: any;
     public groupManagement: any;
@@ -104,6 +106,7 @@ class BotCore {
         this.subscriptionManager = null;
         this.commandHandler = null;
         this.presenceSimulator = null;
+        this.economySystem = null;
 
         // Event listeners externos
         this.eventListeners = {
@@ -127,7 +130,7 @@ class BotCore {
             this.config.validate();
 
             // Inicializa componentes
-            this.initializeComponents();
+            await this.initializeComponents();
 
             return true;
         } catch (error: any) {
@@ -147,7 +150,7 @@ class BotCore {
     /**
     * Inicializa módulos auxiliares
     */
-    initializeComponents() {
+    async initializeComponents() {
         try {
             this.logger.debug('🔧 Inicializando componentes..');
 
@@ -174,9 +177,16 @@ class BotCore {
             // Inicializa PresenceSimulator
             this.presenceSimulator = new PresenceSimulator(this.sock || null);
 
+            // Inicializa EconomySystem
+            this.economySystem = new EconomySystem(this.logger);
+
             // CommandHandler pode falhar no Hugging Face, tratar separadamente
             try {
                 this.commandHandler = new CommandHandler(this.sock, this.config, this, this.messageProcessor);
+                // Injeta sistemas explicitamente se necessário (embora já passe 'this' como BotContext)
+                this.commandHandler.economySystem = this.economySystem;
+                this.commandHandler.gameSystem = (await import('./GameSystem.js')).default;
+
                 this.logger.debug('✅ CommandHandler inicializado com injeção de dependência e componentes');
             } catch (commandError) {
                 this.logger.warn(`⚠️ CommandHandler falhou: ${commandError.message}`);
@@ -489,7 +499,7 @@ class BotCore {
                     // Se falhar a verificação, assume que não é admin
                     isAdmin = false;
                 }
-                
+
                 // Se não for admin, verifica se tem link
                 if (!isAdmin && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
                     await this.handleAntiLinkViolation(m, nome);

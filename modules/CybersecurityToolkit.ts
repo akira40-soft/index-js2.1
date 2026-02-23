@@ -59,9 +59,13 @@ class CybersecurityToolkit {
             // Substitutos do SEToolkit
             'socialfish': () => this.pt.socialFishHelp(),
             'blackeye': () => this.pt.blackEyeHelp(),
-            // Comandos legados (retornam mensagem de substituição)
-            'setoolkit': (t: string) => this.pt.setoolkitHelp(t),
-            'metasploit': (t: string) => this.pt.metasploitCheck(t),
+            // Novas Ferramentas 2026
+            'theharvester': (t: string) => this.pt.theHarvester(t),
+            'sherlock': (t: string) => this.pt.sherlock(t),
+            'holehe': (t: string) => this.pt.holehe(t),
+            'netexec': (t: string) => this.pt.netexec(t),
+            'winrm': (t: string, u: string, p: string) => this.pt.evilWinRM(t, u, p),
+            'impacket': (tool: string, t: string) => this.pt.impacketHelper(tool, t),
             'shodan': this.shodanSearch,
             'cve': this.cveSearch
         };
@@ -84,13 +88,20 @@ class CybersecurityToolkit {
                 await this.sock.sendMessage(m.key.remoteJid, { text: `🛡️ Executando ${command}...` }, { quoted: m });
 
                 const target = args[0];
-                if (!target && command !== 'cve' && command !== 'socialfish' && command !== 'blackeye') {
+                if (!target && !['cve', 'socialfish', 'blackeye', 'zphisher'].includes(command)) {
                     await this.sock.sendMessage(m.key.remoteJid, { text: `❌ Uso: #${command} <alvo>` }, { quoted: m });
                     return true;
                 }
 
-                // Executa a ferramenta
-                const result = await handler(target || args[0]);
+                // Executa a ferramenta com argumentos variáveis
+                let result;
+                if (command === 'winrm') {
+                    result = await handler(args[0], args[1], args[2]);
+                } else if (command === 'impacket') {
+                    result = await handler(args[0], args[1]);
+                } else {
+                    result = await handler(target || args[0]);
+                }
 
                 // Formata resultado
                 const textResult = typeof result === 'string' ? result : JSON.stringify(result, null, 2);

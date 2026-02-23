@@ -37,6 +37,7 @@ import RegistrationSystem from './RegistrationSystem.js';
 import LevelSystem from './LevelSystem.js';
 import EconomySystem from './EconomySystem.js';
 import GameSystem from './GameSystem.js';
+import GridTacticsGame from './GridTacticsGame.js';
 
 // Sistema de rate limiting para features premium (1x a cada 3 meses para users)
 const premiumFeatureUsage = new Map();
@@ -61,12 +62,15 @@ class CommandHandler {
     public osintFramework: any;
     public subscriptionManager: any;
     public securityLogger: any;
+    public moderationSystem: any;
+    public gameSystem: any;
     public groupManagement: any;
     public userProfile: any;
     public botProfile: any;
     public imageEffects: any;
     public presenceSimulator: any;
     public logger: any;
+    public gridTacticsGame: any;
 
     constructor(sock: any, config: any, bot: any = null, messageProcessor: any = null) {
         this.sock = sock;
@@ -74,32 +78,46 @@ class CommandHandler {
         this.bot = bot;
         this.messageProcessor = messageProcessor || bot?.messageProcessor;
 
-        // Inicializa sistemas de permissões e registo
-        this.permissionManager = new PermissionManager();
-        this.registrationSystem = new RegistrationSystem();
-        this.levelSystem = new LevelSystem();
-        this.economySystem = new EconomySystem();
+        // Inicializa sistemas - prefere injeção do BotCore
+        this.permissionManager = bot?.permissionManager || new PermissionManager();
+        this.registrationSystem = bot?.registrationSystem || new RegistrationSystem();
+        this.levelSystem = bot?.levelSystem || new LevelSystem();
+        this.economySystem = bot?.economySystem || new EconomySystem(bot?.logger);
 
-        // Inicializa handlers de mídia (sempre, independente do sock)
-        this.mediaProcessor = new MediaProcessor();
+        // Handlers de mídia
+        this.mediaProcessor = bot?.mediaProcessor || new MediaProcessor();
 
-        // Inicializa ferramentas enterprise
-        this.cybersecurityToolkit = new CybersecurityToolkit(this.config);
-        this.osintFramework = new OSINTFramework(this.config, sock);
-        this.subscriptionManager = new SubscriptionManager(this.config);
-        this.securityLogger = new SecurityLogger(this.config);
+        // Ferramentas Enterprise
+        this.cybersecurityToolkit = bot?.cybersecurityToolkit || new CybersecurityToolkit(this.config);
+        this.osintFramework = bot?.osintFramework || new OSINTFramework(this.config, sock);
+        this.subscriptionManager = bot?.subscriptionManager || new SubscriptionManager(this.config);
+        this.moderationSystem = bot?.moderationSystem || null;
+        this.gameSystem = bot?.gameSystem || null;
 
         // Inicializa módulos dependentes de sock
         if (sock) {
-            this.stickerHandler = new StickerViewOnceHandler(sock, this.config);
-            this.groupManagement = new GroupManagement(sock, this.config);
-            this.userProfile = new UserProfile(sock, this.config);
-            this.botProfile = new BotProfile(sock, this.config);
-            this.imageEffects = new ImageEffects(this.config);
-            this.presenceSimulator = new PresenceSimulator(sock);
+            this.stickerHandler = bot?.stickerViewOnceHandler || new StickerViewOnceHandler(sock, this.config);
+            this.groupManagement = bot?.groupManagement || new GroupManagement(sock, this.config);
+            this.userProfile = bot?.userProfile || new UserProfile(sock, this.config);
+            this.botProfile = bot?.botProfile || new BotProfile(sock, this.config);
+            this.imageEffects = bot?.imageEffects || new ImageEffects(this.config);
+            this.presenceSimulator = bot?.presenceSimulator || new PresenceSimulator(sock);
         }
 
-        this.logger = config?.logger || console;
+        this.gridTacticsGame = GridTacticsGame;
+        this.logger = config?.logger || bot?.logger || console;
+
+        // Carregamento tardio se necessário
+        if (!this.gameSystem) this._initGameSystem();
+    }
+
+    private async _initGameSystem() {
+        try {
+            const { default: gs } = await import('./GameSystem.js');
+            this.gameSystem = gs;
+        } catch (e) {
+            console.error('Falha ao carregar GameSystem no CommandHandler:', e);
+        }
     }
 
     public setSocket(sock: any): void {
@@ -256,11 +274,23 @@ class CommandHandler {
                 case 'pagar':
                     return await this._handleTransfer(m, userId, args, fullArgs);
 
+                case 'deposit':
+                case 'depositar':
+                    return await this._handleDeposit(m, userId, args);
+
+                case 'withdraw':
+                case 'sacar':
+                    return await this._handleWithdraw(m, userId, args);
+
+                case 'transacoes':
+                case 'transactions':
+                    return await this._handleTransactions(m, userId);
+
                 case 'menu':
                 case 'help':
                 case 'ajuda':
                 case 'comandos':
-                    return await this._showMenu(m);
+                    return await this._showMenu(m, args[0]);
 
                 case 'pinterest':
                 case 'pin':
@@ -284,7 +314,8 @@ class CommandHandler {
                 case 'jogodavelha': {
                     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
                     // Modo IA: se não mencionar ninguém, joga contra a IA
-                    const gameRes = await GameSystem.handleTicTacToe(chatJid, userId, args[0] || 'start', mentioned);
+                    const gs = this.gameSystem || (await import('./GameSystem.js')).default;
+                    const gameRes = await gs.handleTicTacToe(chatJid, userId, args[0] || 'start', mentioned);
                     return await this._reply(m, gameRes.text, { mentions: [userId, ...(mentioned ? [mentioned] : [])] });
                 }
 
@@ -292,7 +323,8 @@ class CommandHandler {
                 case 'ppt':
                 case 'pedrapapeltesoura': {
                     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
-                    const gameRes = await GameSystem.handleGame(chatJid, userId, 'rps', args, mentioned);
+                    const gs = this.gameSystem || (await import('./GameSystem.js')).default;
+                    const gameRes = await gs.handleGame(chatJid, userId, 'rps', args, mentioned);
                     return await this._reply(m, gameRes.text, { mentions: [userId, ...(mentioned ? [mentioned] : [])] });
                 }
 
@@ -311,7 +343,7 @@ class CommandHandler {
 
                 case 'gridtactics':
                 case 'grid': {
-                    const gameRes = await GameSystem.handleGridTactics(chatJid, userId, args[0] || 'start', args.slice(1));
+                    const gameRes = await this.gridTacticsGame.handleGridTactics(chatJid, userId, args[0] || 'start', args.slice(1));
                     return await this._reply(m, gameRes.text);
                 }
 
@@ -363,6 +395,7 @@ class CommandHandler {
                 case 'mission':
                 case 'angola':
                 case 'addbg':
+                case 'gay':
                     return await this._handleImageEffect(m, command, args);
 
                 case 'sticker':
@@ -447,16 +480,54 @@ class CommandHandler {
                 case 'sqlmap':
                 case 'hydra':
                 case 'nuclei':
+                case 'nikto':
+                case 'masscan':
                 case 'whois':
                 case 'dns':
                 case 'geo':
-                case 'setoolkit':
-                case 'metasploit':
+                case 'commix':
+                case 'searchsploit':
+                case 'socialfish':
+                case 'blackeye':
+                case 'theharvester':
+                case 'sherlock':
+                case 'holehe':
+                case 'netexec':
+                case 'winrm':
+                case 'impacket':
                     if (!isOwner) {
                         await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
                         return true;
                     }
                     return await this.cybersecurityToolkit.handleCommand(m, command, args);
+
+                case 'dork':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this._handleDork(m, args);
+
+                case 'email':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this._handleEmailCheck(m, args);
+
+                case 'phone':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this._handlePhoneLookup(m, args);
+
+                case 'username':
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
+                        return true;
+                    }
+                    return await this._handleUsernameCheck(m, args);
 
                 case 'mute':
                 case 'desmute':
@@ -681,10 +752,9 @@ class CommandHandler {
         }
     }
 
-    public async _showMenu(m: any): Promise<boolean> {
-        const args = m._parsedArgs || [];
-        const sub = (args[0] || '').toLowerCase().trim();
+    public async _showMenu(m: any, subArg?: string): Promise<boolean> {
         const P = this.config.PREFIXO;
+        const sub = (subArg || '').toLowerCase().trim();
 
         // ── Menu principal (sem argumento) ──
         if (!sub) {
@@ -1925,6 +1995,79 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
         }
     }
 
+    /**
+     * Comando #deposit - Depositar no banco
+     */
+    public async _handleDeposit(m: any, userId: string, args: string[]): Promise<boolean> {
+        try {
+            const amount = args[0] === 'all' ? this.economySystem.getBalance(userId).wallet : parseInt(args[0]);
+            if (isNaN(amount) || amount <= 0) {
+                await this.bot.reply(m, '❌ Valor inválido para depósito.');
+                return true;
+            }
+
+            const result = this.economySystem.deposit(userId, amount);
+            if (result.success) {
+                await this.bot.reply(m, `✅ Depósito de ${amount} realizado!\n💰 Carteira: ${result.wallet}\n🏦 Banco: ${result.bank}`);
+            } else {
+                await this.bot.reply(m, `❌ ${result.error}`);
+            }
+            return true;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    /**
+     * Comando #withdraw - Sacar do banco
+     */
+    public async _handleWithdraw(m: any, userId: string, args: string[]): Promise<boolean> {
+        try {
+            const amount = args[0] === 'all' ? this.economySystem.getBalance(userId).bank : parseInt(args[0]);
+            if (isNaN(amount) || amount <= 0) {
+                await this.bot.reply(m, '❌ Valor inválido para saque.');
+                return true;
+            }
+
+            const result = this.economySystem.withdraw(userId, amount);
+            if (result.success) {
+                await this.bot.reply(m, `✅ Saque de ${amount} realizado!\n💰 Carteira: ${result.wallet}\n🏦 Banco: ${result.bank}`);
+            } else {
+                await this.bot.reply(m, `❌ ${result.error}`);
+            }
+            return true;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    /**
+     * Comando #transactions - Ver histórico
+     */
+    public async _handleTransactions(m: any, userId: string): Promise<boolean> {
+        try {
+            const txs = this.economySystem.getTransactions(userId);
+            if (!txs || txs.length === 0) {
+                await this.bot.reply(m, '📭 Nenhuma transação encontrada.');
+                return true;
+            }
+
+            let text = '🧾 **SUAS ÚLTIMAS TRANSAÇÕES**\n\n';
+            txs.forEach((tx: any, i: number) => {
+                const date = new Date(tx.timestamp).toLocaleString('pt-BR');
+                const type = tx.type === 'daily' ? '🎁 Daily' :
+                    tx.type === 'transfer_in' ? '📩 Recebido' :
+                        tx.type === 'transfer_out' ? '📤 Enviado' : tx.type;
+                text += `${i + 1}. [${date}] ${type}: ${tx.amount} moedas\n`;
+            });
+
+            await this.bot.reply(m, text);
+            return true;
+        } catch (e) {
+            return true;
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════
     // EFEITOS DE ÁUDIO
     // ═════════════════════════════════════════════════════════════════
@@ -2033,23 +2176,23 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
         const enable = args[0] === 'on' || args[0] === '1';
         const actionStr = enable ? 'ATIVADO' : 'DESATIVADO';
 
-        if (!this.bot.moderationSystem) return true;
+        if (!this.moderationSystem) return true;
 
         switch (command) {
             case 'antilink':
-                this.bot.moderationSystem.toggleAntiLink(jid, enable);
+                this.moderationSystem.toggleAntiLink(jid, enable);
                 await this._reply(m, `✅ Anti-Link ${actionStr} para este grupo.`);
                 break;
             case 'antifake':
-                this.bot.moderationSystem.toggleAntiFake(jid, enable);
+                this.moderationSystem.toggleAntiFake(jid, enable);
                 await this._reply(m, `✅ Anti-Fake (+244) ${actionStr} para este grupo.`);
                 break;
             case 'antiimage':
-                this.bot.moderationSystem.toggleAntiImage(jid, enable);
+                this.moderationSystem.toggleAntiImage(jid, enable);
                 await this._reply(m, `✅ Anti-Imagem ${actionStr} para este grupo.`);
                 break;
             case 'antisticker':
-                this.bot.moderationSystem.toggleAntiSticker(jid, enable);
+                this.moderationSystem.toggleAntiSticker(jid, enable);
                 await this._reply(m, `✅ Anti-Sticker ${actionStr} para este grupo.`);
                 break;
         }
@@ -2065,10 +2208,10 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
 
         const reason = args.join(' ') || 'Sem motivo especificado';
 
-        if (this.bot.handleWarning) {
+        if (this.bot?.handleWarning) {
             await this.bot.handleWarning(m, reason);
-        } else if (this.bot.moderationSystem) {
-            const res = this.bot.moderationSystem.addWarning(m.key.remoteJid, target, reason, 'Manual');
+        } else if (this.moderationSystem) {
+            const res = this.moderationSystem.addWarning(m.key.remoteJid, target, reason, 'Manual');
             if (res.sucesso) {
                 await this._reply(m, `⚠️ *AVISO APLICADO* ⚠️\n\n👤 Usuário: @${target.split('@')[0]}\n📝 Motivo: ${reason}\n📊 Avisos: ${res.warnings}/3\n\n${res.action === 'kick' ? '❌ Usuário banido por atingir o limite.' : '⚠️ Evite violar as regras para não ser banido.'}`, { mentions: [target] });
             }
@@ -2083,8 +2226,8 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
             return true;
         }
 
-        if (this.bot.moderationSystem) {
-            this.bot.moderationSystem.resetWarnings(m.key.remoteJid, target);
+        if (this.moderationSystem) {
+            this.moderationSystem.resetWarnings(m.key.remoteJid, target);
             await this._reply(m, `✅ Avisos resetados para o usuário.`);
         }
         return true;
@@ -2415,6 +2558,61 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
             await this._reply(m, `❌ Erro no TTS: ${e.message}`);
             return true;
         }
+    }
+    /**
+     * Handlers OSINT (Proxy para OSINTFramework)
+     */
+    public async _handleDork(m: any, args: string[]): Promise<boolean> {
+        if (!args[0]) return await this._reply(m, '❌ Uso: #dork <query>');
+        const res = await this.osintFramework.googleDork(args.join(' '));
+        if (res.error) return await this._reply(m, `❌ Erro: ${res.error}`);
+        return await this._reply(m, `🔍 **RESULTADO DORK**\n\n📌 ${res.description}\n🔗 ${res.url}`);
+    }
+
+    public async _handleEmailCheck(m: any, args: string[]): Promise<boolean> {
+        if (!args[0]) return await this._reply(m, '❌ Uso: #email <email>');
+        const res = await this.osintFramework.checkEmail(args[0]);
+        if (res.error) return await this._reply(m, `❌ Erro: ${res.error}`);
+
+        let text = `📧 **CHECK DE EMAIL: ${args[0]}**\n\n`;
+        if (res.breached) {
+            text += `⚠️ **ENCONTRADO EM ${res.count} VAZAMENTOS!**\n\n`;
+            res.breaches.slice(0, 5).forEach((b: any) => text += `- ${b.name} (${b.date})\n`);
+            if (res.count > 5) text += `\n... e mais ${res.count - 5} vistorias.`;
+        } else {
+            text += `✅ Nenhum vazamento público encontrado para este email.`;
+        }
+        return await this._reply(m, text);
+    }
+
+    public async _handlePhoneLookup(m: any, args: string[]): Promise<boolean> {
+        if (!args[0]) return await this._reply(m, '❌ Uso: #phone <número>');
+        const res = await this.osintFramework.lookupPhone(args[0]);
+        if (res.error) return await this._reply(m, `❌ Erro: ${res.error}`);
+
+        if (!res.valid) return await this._reply(m, '❌ Número inválido.');
+
+        const text = `📱 **LOOKUP DE TELEFONE**\n\n` +
+            `🏁 País: ${res.country}\n` +
+            `📍 Local: ${res.location}\n` +
+            `🏎️ Operadora: ${res.carrier}\n` +
+            `ℹ️ Tipo: ${res.line_type}`;
+        return await this._reply(m, text);
+    }
+
+    public async _handleUsernameCheck(m: any, args: string[]): Promise<boolean> {
+        if (!args[0]) return await this._reply(m, '❌ Uso: #username <user>');
+        const res = await this.osintFramework.checkUsername(args[0]);
+        if (res.error) return await this._reply(m, `❌ Erro: ${res.error}`);
+
+        if (!res.exists) return await this._reply(m, `❌ Usuário não encontrado no ${res.platform}.`);
+
+        const text = `👤 **CHECK DE USERNAME: ${args[0]}**\n\n` +
+            `🏢 Plataforma: ${res.platform}\n` +
+            `📛 Nome: ${res.name || 'N/A'}\n` +
+            `📝 Bio: ${res.bio || 'N/A'}\n` +
+            `🔗 Perfil: ${res.url}`;
+        return await this._reply(m, text);
     }
 }
 

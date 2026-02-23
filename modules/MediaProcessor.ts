@@ -86,8 +86,21 @@ class MediaProcessor {
 
         // Fallback para cookies em local padrão do Railway se não definido
         let finalCookieArg = cookieArg;
-        if (!finalCookieArg && fs.existsSync('/tmp/akira_data/cookies/youtube_cookies.txt')) {
-            finalCookieArg = '--cookies "/tmp/akira_data/cookies/youtube_cookies.txt"';
+        const possibleCookiePaths = [
+            '/app/cookies.txt',
+            './cookies.txt',
+            '/tmp/akira_data/cookies/youtube_cookies.txt',
+            './youtube_cookies.txt'
+        ];
+
+        if (!finalCookieArg) {
+            for (const p of possibleCookiePaths) {
+                if (fs.existsSync(p)) {
+                    this.logger?.info(`🍪 Cookies detetados automaticamente em: ${p}`);
+                    finalCookieArg = `--cookies "${p}"`;
+                    break;
+                }
+            }
         }
 
         const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates';
@@ -141,6 +154,10 @@ class MediaProcessor {
 
             const result = await new Promise<{ sucesso: boolean; output?: string; error?: string }>((resolve) => {
                 exec(command, { timeout: this.config?.YT_TIMEOUT_MS || 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
+                    // Log detalhado para diagnóstico em produção (Bypass 2026)
+                    if (stdout) this.logger?.debug(`[${strategy.client}] STDOUT (parcial): ${stdout.slice(0, 200)}`);
+                    if (stderr) this.logger?.debug(`[${strategy.client}] STDERR: ${stderr.slice(0, 500)}`);
+
                     // Se esperamos um arquivo, verificamos a existência
                     if (expectedOutputPath && fs.existsSync(expectedOutputPath)) {
                         return resolve({ sucesso: true, output: stdout });
@@ -226,16 +243,14 @@ class MediaProcessor {
                 // Match direto: se tiver mediaKey ou directPath, é o objeto alvo
                 if (msgObj.mediaKey || msgObj.url || msgObj.directPath) return msgObj;
 
-                // Procura em wrappers conhecidos
-                const wrapper = msgObj.viewOnceMessageV2?.message ||
-                    msgObj.viewOnceMessageV2Extension?.message ||
-                    msgObj.viewOnceMessage?.message ||
-                    msgObj.ephemeralMessage?.message ||
-                    msgObj.documentWithCaptionMessage?.message ||
-                    msgObj.editMessage?.message ||
-                    msgObj.message; // Caso seja o objeto raiz com a chave 'message'
-
-                if (wrapper) return extractMediaContainer(wrapper);
+                if (msgObj.viewOnceMessageV2?.message) return extractMediaContainer(msgObj.viewOnceMessageV2.message);
+                if (msgObj.viewOnceMessageV2Extension?.message) return extractMediaContainer(msgObj.viewOnceMessageV2Extension.message);
+                if (msgObj.viewOnceMessage?.message) return extractMediaContainer(msgObj.viewOnceMessage.message);
+                if (msgObj.ephemeralMessage?.message) return extractMediaContainer(msgObj.ephemeralMessage.message);
+                if (msgObj.documentWithCaptionMessage?.message) return extractMediaContainer(msgObj.documentWithCaptionMessage.message);
+                if (msgObj.editMessage?.message) return extractMediaContainer(msgObj.editMessage.message);
+                if (msgObj.protocolMessage?.editedMessage) return extractMediaContainer(msgObj.protocolMessage.editedMessage);
+                if (msgObj.message) return extractMediaContainer(msgObj.message);
 
                 // Busca recursiva em propriedades comuns que terminam com 'Message'
                 const knownMessages = ['imageMessage', 'videoMessage', 'stickerMessage', 'audioMessage', 'documentMessage'];
@@ -259,6 +274,13 @@ class MediaProcessor {
             if (!mediaContent) {
                 this.logger?.error('❌ Mídia não encontrada na estrutura da mensagem');
                 return null;
+            }
+
+            // Diagnostic log para 'Empty Media Key'
+            if (!mediaContent.mediaKey || !mediaContent.directPath) {
+                this.logger?.warn('⚠️ Mídia encontrada mas incompleta (Empty Media Key):');
+                this.logger?.debug('📋 Conteúdo extraído:', JSON.stringify(mediaContent, null, 2));
+                this.logger?.debug('📋 Mensagem original:', JSON.stringify(message, null, 2).slice(0, 1000));
             }
 
             // A Baileys precisa do objeto final (ex: imageMessage) para decifrar a chave
