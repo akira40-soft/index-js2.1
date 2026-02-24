@@ -147,7 +147,8 @@ class MediaProcessor {
 
         // 🟠 5. IOS (mobile fallback, User-Agent only)
         let iosArgs = `${baseSleepArgs} --user-agent "${ua_iphone}"`;
-        strategies.push({ client: 'ios_flex', args: iosArgs });
+        // Priorizar iOS client para contornar detecção de bot em alguns vídeos
+        strategies.unshift({ client: 'ios_flex', args: iosArgs });
 
         return strategies;
     }
