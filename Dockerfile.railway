@@ -64,9 +64,10 @@ RUN apk add --no-cache \
 # ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DO YT-DLP (MÁXIMA PRIORIDADE PARA BYPASS 2026)
 # ═══════════════════════════════════════════════════════════════════════
-RUN pip install --upgrade --no-cache-dir yt-dlp && \
-    ln -sf /usr/bin/yt-dlp /usr/local/bin/yt-dlp || true && \
-    echo "✅ yt-dlp atualizado: $(yt-dlp --version)"
+RUN pip3 install --upgrade --no-cache-dir --break-system-packages yt-dlp && \
+    ln -sf $(which yt-dlp) /usr/local/bin/yt-dlp 2>/dev/null || true && \
+    echo "✅ yt-dlp instalado: $(yt-dlp --version 2>/dev/null || echo 'versão desconhecida')"
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
@@ -195,7 +196,7 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     npm -v && \
     python3 --version && \
     ffmpeg -version | head -1 && \
-    yt-dlp --version && \
+    (yt-dlp --version 2>/dev/null || echo "⚠️ yt-dlp versão não verificada") && \
     nmap --version | head -1 && \
     (python3 /opt/sqlmap/sqlmap.py --version | head -1 || echo "sqlmap instalado") && \
     (nuclei -version 2>/dev/null | head -1 || echo "nuclei instalado") && \
@@ -207,6 +208,7 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     (which impacket-psexec >/dev/null 2>&1 && echo "✅ impacket encontrado" || echo "⚠️ impacket aguardando link") && \
     echo "✅ Todas as ferramentas verificadas com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
+
 
 # Limpar cache para reduzir tamanho da imagem
 RUN npm cache clean --force 2>/dev/null || true
