@@ -110,39 +110,27 @@ class MediaProcessor {
             this.logger?.warn(`⚠️ YouTube Bypass: Nenhum ficheiro de cookies detetado! Esperados em: ${possibleCookiePaths.join(', ')}`);
         }
 
-        const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates';
+        const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates --ignore-config --no-cache-dir';
 
         // 📱 User-Agents Modernos (Bypass 2026.7)
         const ua_iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
         const ua_android = 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UD1A.230805.019; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.6422.165 Mobile Safari/537.36';
 
-        const secHeaders = '--add-header "Sec-Ch-Ua: \\"Google Chrome\\";v=\\"125\\", \\"Chromium\\";v=\\"125\\", \\"Not.A/Brand\\";v=\\"24\\"" --add-header "Sec-Ch-Ua-Mobile: ?1" --add-header "Sec-Ch-Ua-Platform: \\"iOS\\""';
-
         const strategies: Array<{ client: string; args: string }> = [];
 
-        // 🟢 Estratégia [WEB + COOKIES + UA IPHONE] - Alta fidelidade
+        // 🟢 Estratégia 1: COM COOKIES (mais eficaz que player_client complexos)
         if (finalCookieArg) {
-            let webArgs = `--extractor-args "youtube:player_client=web${poToken ? `;po_token=web+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} ${secHeaders} --user-agent "${ua_iphone}" --ignore-config --no-cache-dir`;
-            strategies.push({ client: 'web+cookies+iphone', args: webArgs });
+            let cookieArgs = `${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+            strategies.push({ client: 'cookies+iphone', args: cookieArgs });
         }
 
-        // 🔴 Estratégia [ANDROID + UA PIXEL] - Muito resistente
-        let androidArgs = `--extractor-args "youtube:player_client=android${poToken ? `;po_token=android+${poToken}` : ''}" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_android}" --ignore-config --no-cache-dir`;
-        strategies.push({ client: 'android+bypass', args: androidArgs });
+        // 🔴 Estratégia 2: ANDROID UA (fallback se cookies falhar)
+        let androidArgs = `${baseSleepArgs} --user-agent "${ua_android}"`;
+        strategies.push({ client: 'android-ua', args: androidArgs });
 
-        // 🔘 Estratégia [TV EMBEDDED] - Fallback clássico
-        let tvArgs = `--extractor-args "youtube:player_client=tv_embedded" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_iphone}" --ignore-config --no-cache-dir`;
-        strategies.push({ client: 'tv_embedded', args: tvArgs });
-
-        // 🌐 Estratégia [IOS]
-        let iosArgs = `--extractor-args "youtube:player_client=ios${poToken ? `;po_token=ios+${poToken}` : ''}" ${baseSleepArgs} --user-agent "${ua_iphone}" --ignore-config --no-cache-dir`;
-        strategies.push({ client: 'ios', args: iosArgs });
-
-        // ⚪ Estratégia [WEB_EMBEDDED] - Compatibilidade máxima
-        strategies.push({
-            client: 'web_embedded',
-            args: `--extractor-args "youtube:player_client=web_embedded" ${finalCookieArg} ${baseSleepArgs} --ignore-config --no-cache-dir`.trim()
-        });
+        // 🔘 Estratégia 3: IPHONE UA (último recurso)
+        let iosArgs = `${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        strategies.push({ client: 'iphone-ua', args: iosArgs });
 
         return strategies;
     }
@@ -162,7 +150,7 @@ class MediaProcessor {
         for (const strategy of strategies) {
             this.logger?.info(`🔄 Tentando strategy: [${strategy.client}]`);
             const command = buildCommand(strategy.args);
-            
+
             // Log do comando EXATO para diagnóstico
             this.logger?.info(`📝 Comando: ${command.slice(0, 200)}...`);
 
@@ -1172,15 +1160,9 @@ class MediaProcessor {
 
             const buildCommand = (bypassArgs: string) => {
                 const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
-                /**
-                 * Formato Resiliente 2026:
-                 * 1. Vídeo 720p MP4 + Áudio M4A
-                 * 2. Vídeo 720p (qualquer) + Áudio (qualquer)
-                 * 3. Melhor formato único <= 720p
-                 * 4. Fallback absoluto para 'best' se tudo falhar (ex: lives)
-                 */
-                const formatResiliente = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best";
-                return `${cmd} ${bypassArgs} -f "${formatResiliente}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --merge-output-format mp4 --no-warnings "${url}"`;
+                // MÁXIMA COMPATIBILIDADE: 'best' resolver TODOS os casos sem filtros
+                // Se tiver mp4 disponível, pega. Se não, pega o que tiver (webm, mkv, etc)
+                return `${cmd} ${bypassArgs} -f best -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
             };
 
             // Usa o mesmo sistema de fallback progressivo do áudio
