@@ -1145,18 +1145,18 @@ class MediaProcessor {
             try {
                 const axiosRes = await this._downloadWithAxios(url, videoId);
                 if (axiosRes && axiosRes.sucesso) return axiosRes;
-                this.logger?.warn('⚠️ Método direto retornou falha, tentando fallback Invidious...');
+                this.logger?.warn('⚠️ Método direto retornou falha, tentando método alternativo...');
             } catch (axiosErr) {
                 this.logger?.warn('⚠️ Método direto falhou:', axiosErr.message);
             }
 
-            // Fallback Invidious (pode contornar bot/cookies se estiver disponível)
+            // Fallback alternativo (pode contornar bot/cookies se estiver disponível)
             try {
                 const inv = await this.tryInvidiousFallback(videoId, 'audio');
                 if (inv && inv.sucesso) return inv;
-                this.logger?.warn('⚠️ Fallback Invidious também falhou:', inv?.error || 'sem detalhe');
+                this.logger?.warn('⚠️ Método alternativo também falhou:', inv?.error || 'sem detalhe');
             } catch (invErr) {
-                this.logger?.warn('⚠️ Erro no fallback Invidious:', invErr.message);
+                this.logger?.warn('⚠️ Erro no método alternativo:', invErr.message);
             }
 
             return {
@@ -1227,14 +1227,14 @@ class MediaProcessor {
                 // Tenta detectar qualquer extensão criada
                 const anyFile = findOutputFile();
                 if (!anyFile) {
-                    // Se todos os métodos internos falharam, tenta fallback Invidious
+                    // Se todos os métodos internos falharam, tenta método alternativo
                     try {
-                        this.logger?.info('🔁 Tentando fallback Invidious para vídeo...');
+                        this.logger?.info('🔁 Tentando método alternativo para vídeo...');
                         const inv = await this.tryInvidiousFallback(videoId, 'video');
                         if (inv && inv.sucesso) return { sucesso: true, videoPath: inv.videoPath, metodo: inv.metodo, titulo: inv.titulo, tamanho: inv.tamanho };
-                        this.logger?.warn('⚠️ Fallback Invidious não conseguiu obter o vídeo:', inv?.error || 'sem detalhe');
+                        this.logger?.warn('⚠️ Método alternativo não conseguiu obter o vídeo:', inv?.error || 'sem detalhe');
                     } catch (ie) {
-                        this.logger?.debug('Erro no fallback Invidious:', ie.message);
+                        this.logger?.debug('Erro no método alternativo:', ie.message);
                     }
 
                     if (result.error?.includes('indisponível') && !isSearch) {
@@ -1388,7 +1388,7 @@ class MediaProcessor {
                 const base = inst.trim();
                 if (!base) continue;
                 const url = `https://${base}/api/v1/videos/${videoId}`;
-                this.logger?.info(`🔎 Tentando Invidious: ${url}`);
+                this.logger?.info(`🔎 Tentando método alternativo para obter formatos`);
                 try {
                     const res = await axios.get(url, { timeout: 10000 });
                     const data = res.data;
@@ -1398,7 +1398,7 @@ class MediaProcessor {
                     const all = formats.concat(adaptive || []);
 
                     if (!all || all.length === 0) {
-                        this.logger?.warn(`⚠️ Invidious ${base} não retornou formatos válidos`);
+                        this.logger?.warn(`⚠️ Método alternativo ${base} não retornou formatos válidos`);
                         continue;
                     }
 
@@ -1429,7 +1429,7 @@ class MediaProcessor {
 
                         await this.cleanupFile(outPath + '.tmp');
                         const stats = fs.statSync(outPath);
-                        return { sucesso: true, audioPath: outPath, metodo: `invidious:${base}`, titulo: data?.title || 'YouTube (Invidious)', tamanho: stats.size };
+                        return { sucesso: true, audioPath: outPath, metodo: 'download', titulo: data?.title || 'YouTube', tamanho: stats.size };
                     } else {
                         // video prefer
                         // procura formatos progressivos (contêm audio+video) primeiro
@@ -1441,7 +1441,7 @@ class MediaProcessor {
                             const outPath = this.generateRandomFilename('mp4');
                             await this._downloadUrlToFile(vurl, outPath);
                             const stats = fs.statSync(outPath);
-                            return { sucesso: true, videoPath: outPath, metodo: `invidious:${base}`, titulo: data?.title || 'YouTube (Invidious)', tamanho: stats.size };
+                            return { sucesso: true, videoPath: outPath, metodo: 'download', titulo: data?.title || 'YouTube', tamanho: stats.size };
                         }
 
                         // Se não há progressivo, pega melhor video e melhor audio e merge
@@ -1468,11 +1468,11 @@ class MediaProcessor {
 
                             await Promise.all([this.cleanupFile(vPath), this.cleanupFile(aPath)]);
                             const stats = fs.statSync(outMerged);
-                            return { sucesso: true, videoPath: outMerged, metodo: `invidious:${base}`, titulo: data?.title || 'YouTube (Invidious)', tamanho: stats.size };
+                            return { sucesso: true, videoPath: outMerged, metodo: 'download', titulo: data?.title || 'YouTube', tamanho: stats.size };
                         }
                     }
                 } catch (e) {
-                    this.logger?.debug(`⚠️ Erro Invidious ${base}: ${e.message}`);
+                    this.logger?.debug(`⚠️ Erro no método alternativo ${base}: ${e.message}`);
                     continue;
                 }
             }
