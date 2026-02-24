@@ -53,7 +53,10 @@ class EconomySystem {
 
     _save() {
         try {
-            fs.writeFileSync(this.dbPath, JSON.stringify(this.users, null, 2));
+            // async save to avoid blocking main thread
+            fs.promises.writeFile(this.dbPath, JSON.stringify(this.users, null, 2)).catch((err) => {
+                this.logger?.error('EconomySystem: erro ao salvar (async):', err.message);
+            });
         } catch (e: any) {
             this.logger.error('EconomySystem: erro ao salvar:', e.message);
         }

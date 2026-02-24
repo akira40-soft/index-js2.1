@@ -60,13 +60,18 @@ class PermissionManager {
             'info': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
             'registrar': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
             'register': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
+            // aliases and synonyms
+            'lvl': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
+            'nivel': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
+            'ranking': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
+            'top': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
 
             // Comandos PÚBLICOS (requerem registro se grupo configurado)
             'donate': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 0.5 },
             'perfil': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
             'profile': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
-            'level': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
-            'rank': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'level': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
+            'rank': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 1 },
             'sticker': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
             's': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
             'gif': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2.5 },

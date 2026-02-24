@@ -1,249 +1,330 @@
-# 📋 Complete Commands Inventory - Akira Bot V21
+# Commands Inventory - Akira Bot V21
 
-## Overview
-This document provides a comprehensive list of all commands available in the Akira Bot system, categorized by their implementation status.
+## Total Commands: 243
 
----
+### ✅ WORKING COMMANDS (Implemented)
 
-## ✅ FULLY IMPLEMENTED COMMANDS (Working in CommandHandler switch)
+#### Core Commands
+- `ping` - System status and latency
+- `menu` - Main menu system
+- `help` - Help system
+- `dono` - Owner information
+- `ping` - System status
 
-### Basic Commands
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| ping | | CommandHandler | ✅ |
-| menu | help, ajuda, comandos | CommandHandler | ✅ |
-| registrar | register, reg | RegistrationSystem | ✅ |
-| dono | owner, criador, creator | CommandHandler | ✅ |
+#### Registration & Profile
+- `registrar` - User registration
+- `register` - Alias for registrar
+- `reg` - Alias for registrar
+- `perfil` - User profile
+- `profile` - Alias for perfil
+- `info` - User information
 
-### Level & Economy
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| level | lvl, nivel | LevelSystem | ✅ |
-| rank | ranking, top | LevelSystem | ✅ |
-| daily | diario | EconomySystem | ✅ |
-| atm | banco, saldo, balance | EconomySystem | ✅ |
-| transfer | transferir, pagar | EconomySystem | ✅ |
+#### Level System
+- `level` - User level and XP
+- `lvl` - Alias for level
+- `nivel` - Alias for level
+- `rank` - Group ranking
+- `ranking` - Alias for rank
+- `top` - Alias for rank
 
-### Media & Stickers
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| sticker | s, fig | StickerViewOnceHandler | ✅ |
-| toimg | | StickerViewOnceHandler | ✅ |
-| take | roubar | StickerViewOnceHandler | ✅ |
-| hd | upscale, remini, enhance | ImageEffects | ✅ |
-| removebg | bg, rmbg | ImageEffects | ✅ |
+#### Economy System
+- `daily` - Daily reward
+- `diario` - Alias for daily
+- `atm` - Check balance
+- `banco` - Alias for atm
+- `saldo` - Alias for atm
+- `balance` - Alias for atm
+- `transfer` - Transfer money
+- `transferir` - Alias for transfer
+- `pagar` - Alias for transfer
+- `deposit` - Deposit to bank
+- `depositar` - Alias for deposit
+- `withdraw` - Withdraw from bank
+- `sacar` - Alias for withdraw
+- `transacoes` - Transaction history
+- `transactions` - Alias for transacoes
 
-### Audio Effects
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| nightcore | | AudioProcessor | ✅ |
-| slow | | AudioProcessor | ✅ |
-| bass | | AudioProcessor | ✅ |
-| bassboost | | AudioProcessor | ✅ |
-| deep | | AudioProcessor | ✅ |
-| robot | | AudioProcessor | ✅ |
-| reverse | | AudioProcessor | ✅ |
-| squirrel | | AudioProcessor | ✅ |
-| echo | | AudioProcessor | ✅ |
-| 8d | | AudioProcessor | ✅ |
+#### Media & Downloads
+- `play` - Download music
+- `p` - Alias for play
+- `video` - Download video
+- `playvid` - Alias for video
+- `ytmp4` - Alias for video
+- `tomp3` - Convert video to MP3
+- `mp3` - Alias for tomp3
+- `pinterest` - Search Pinterest
+- `pin` - Alias for pinterest
+- `image` - Alias for pinterest
+- `img` - Alias for pinterest
 
-### Download Commands
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| play | p | MediaProcessor | ✅ |
-| video | playvid, ytmp4 | MediaProcessor | ✅ |
-| mp3 | tomp3 | MediaProcessor | ✅ |
-| tts | | AudioProcessor | ✅ |
+#### Stickers & Images
+- `sticker` - Create sticker
+- `s` - Alias for sticker
+- `fig` - Alias for sticker
+- `take` - Steal sticker
+- `roubar` - Alias for take
+- `toimg` - Sticker to image
+- `hd` - HD image enhancement
+- `upscale` - Alias for hd
+- `remini` - Alias for hd
+- `enhance` - Alias for hd
+- `removebg` - Remove background
+- `bg` - Alias for removebg
+- `rmbg` - Alias for removebg
+- `wasted` - GTA Wasted effect
+- `jail` - Jail effect
+- `triggered` - Triggered effect
+- `communism` - Communism effect
+- `sepia` - Sepia effect
+- `grey` - Grayscale effect
+- `invert` - Invert colors
+- `mission` - Mission effect
+- `angola` - Angola flag background
+- `addbg` - Add background
+- `gay` - Rainbow effect
 
-### Image Search
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| pinterest | pin, image, img | CommandHandler | ✅ |
+#### Audio Effects
+- `nightcore` - Nightcore effect
+- `slow` - Slow effect
+- `bass` - Bass boost
+- `bassboost` - Alias for bass
+- `deep` - Deep voice
+- `robot` - Robot effect
+- `reverse` - Reverse audio
+- `squirrel` - Squirrel voice
+- `echo` - Echo effect
+- `8d` - 8D audio effect
 
-### Games
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| ttt | tictactoe, jogodavelha | GameSystem | ✅ |
-| rps | ppt, pedrapapeltesoura | GameSystem | ✅ |
-| guess | adivinhe, advinha | GameSystem | ✅ |
-| forca | hangman | GameSystem | ✅ |
+#### Games
+- `ttt` - Tic-tac-toe
+- `tictactoe` - Alias for ttt
+- `jogodavelha` - Alias for ttt
+- `rps` - Rock-paper-scissors
+- `ppt` - Alias for rps
+- `pedrapapeltesoura` - Alias for rps
+- `guess` - Guess the number
+- `adivinhe` - Alias for guess
+- `advinha` - Alias for guess
+- `forca` - Hangman
+- `hangman` - Alias for forca
+- `gridtactics` - Grid tactics game
+- `grid` - Alias for gridtactics
 
-### Group Management
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| mute | | GroupManagement | ✅ |
-| unmute | desmute | GroupManagement | ✅ |
-| kick | ban | GroupManagement | ✅ |
-| add | | GroupManagement | ✅ |
-| promote | | GroupManagement | ✅ |
-| demote | | GroupManagement | ✅ |
-| fechar | close | GroupManagement | ✅ |
-| abrir | open | GroupManagement | ✅ |
-| fixar | pin | GroupManagement | ✅ |
-| desfazer | unpin | GroupManagement | ✅ |
-| link | | GroupManagement | ✅ |
-| revlink | revogar | GroupManagement | ✅ |
-| tagall | hidetag, totag | GroupManagement | ✅ |
-| welcome | bemvindo | GroupManagement | ✅ |
-| goodbye | | GroupManagement | ✅ |
-| antilink | | ModerationSystem | ✅ |
-| antifake | | ModerationSystem | ✅ |
-| antispam | | ModerationSystem | ✅ |
-| setdesc | descricao | GroupManagement | ✅ |
-| setfoto | fotodogrupo | GroupManagement | ✅ |
-| groupinfo | infogrupo, ginfo | GroupManagement | ✅ |
-| listar | membros | GroupManagement | ✅ |
-| admins | listadmins | GroupManagement | ✅ |
+#### Fun & Entertainment
+- `ship` - Ship compatibility
+- `dado` - Roll dice
+- `moeda` - Flip coin
+- `caracoroa` - Alias for moeda
+- `slot` - Slot machine
+- `chance` - Probability calculator
+- `gay` - Gay meter
+- `piada` - Random joke
+- `joke` - Alias for piada
+- `frases` - Motivational quotes
+- `quote` - Alias for frases
+- `motivar` - Alias for frases
+- `fatos` - Random facts
+- `curiosidade` - Alias for fatos
+- `tts` - Text-to-speech
+- `enquete` - Create poll
+- `poll` - Alias for enquete
+- `sortear` - Raffle
+- `raffle` - Alias for sortear
+- `sorteio` - Alias for sortear
 
-### Security Tools
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| nmap | | AdvancedPentestingToolkit | ✅ |
-| sqlmap | | AdvancedPentestingToolkit | ✅ |
-| hydra | | AdvancedPentestingToolkit | ✅ |
-| nuclei | | AdvancedPentestingToolkit | ✅ |
-| whois | | CybersecurityToolkit | ✅ |
-| dns | | CybersecurityToolkit | ✅ |
-| geo | | CybersecurityToolkit | ✅ |
-| commix | | AdvancedPentestingToolkit | ✅ |
-| searchsploit | | AdvancedPentestingToolkit | ✅ |
+#### Group Management (Admin)
+- `add` - Add member
+- `kick` - Remove member
+- `ban` - Ban member
+- `promote` - Promote to admin
+- `demote` - Demote admin
+- `mute` - Mute user
+- `desmute` - Unmute user
+- `unmute` - Alias for desmute
+- `fechar` - Close group
+- `close` - Alias for fechar
+- `abrir` - Open group
+- `open` - Alias for abrir
+- `fixar` - Pin message
+- `pin` - Alias for fixar
+- `desafixar` - Unpin message
+- `unpin` - Alias for desafixar
+- `reagir` - React to message
+- `react` - Alias for reagir
+- `link` - Get group link
+- `revlink` - Revoke group link
+- `revogar` - Alias for revlink
+- `setdesc` - Set group description
+- `descricao` - Alias for setdesc
+- `setfoto` - Set group photo
+- `fotodogrupo` - Alias for setfoto
+- `tagall` - Tag all members
+- `hidetag` - Hidden tag all
+- `totag` - Alias for hidetag
+- `welcome` - Welcome settings
+- `bemvindo` - Alias for welcome
+- `setwelcome` - Set welcome message
+- `setgoodbye` - Set goodbye message
+- `goodbye` - Goodbye settings
+- `groupinfo` - Group information
+- `infogrupo` - Alias for groupinfo
+- `ginfo` - Alias for groupinfo
+- `listar` - List members
+- `membros` - Alias for listar
+- `admins` - List admins
+- `listadmins` - Alias for admins
+- `antifake` - Anti-fake settings
+- `antilink` - Anti-link settings
+- `antispam` - Anti-spam settings
+- `antiimage` - Anti-image settings
+- `antisticker` - Anti-sticker settings
+- `blacklist` - View blacklist
+- `mutelist` - View muted users
+- `silenciados` - Alias for mutelist
+- `warn` - Warn user
+- `unwarn` - Remove warning
+- `resetwarns` - Alias for unwarn
 
-### Premium & Owner
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| premium | vip | SubscriptionManager | ✅ |
-| addpremium | addvip | SubscriptionManager | ✅ |
-| delpremium | delvip | SubscriptionManager | ✅ |
-| donate | doar, buy, comprar | PaymentManager | ✅ |
-| broadcast | | CommandHandler | ✅ |
+#### Bot Management (Owner)
+- `setbotphoto` - Set bot photo
+- `setbotpic` - Alias for setbotphoto
+- `setbotname` - Set bot name
+- `setname` - Alias for setbotname
+- `setbotstatus` - Set bot status
+- `setbio` - Alias for setbotstatus
+- `getprofile` - Get user profile (admin)
+- `getuser` - Alias for getprofile
+- `broadcast` - Broadcast message
+- `restart` - Restart bot
 
-### Fun Commands
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| dado | | CommandHandler | ✅ |
-| moeda | caracoroa | CommandHandler | ✅ |
-| slot | | CommandHandler | ✅ |
-| chance | | CommandHandler | ✅ |
-| gay | | CommandHandler | ✅ |
-| ship | | CommandHandler | ✅ |
+#### Cybersecurity (Owner)
+- `nmap` - Port scanning
+- `sqlmap` - SQL injection testing
+- `hydra` - Password cracking
+- `nuclei` - Vulnerability scanning
+- `nikto` - Web server scanning
+- `masscan` - Fast port scanning
+- `whois` - WHOIS lookup
+- `dns` - DNS lookup
+- `geo` - Geolocation
+- `commix` - Command injection
+- `searchsploit` - Exploit database
+- `socialfish` - Social engineering
+- `blackeye` - Phishing tool
+- `shodan` - Shodan search
+- `cve` - CVE search
+- `setoolkit` - SET information
+- `metasploit` - Metasploit information
 
-### Profile
-| Command | Aliases | Module | Status |
-|---------|---------|--------|--------|
-| perfil | profile, info | UserProfile | ✅ |
-| report | bug, reportar | CommandHandler | ✅ |
+#### OSINT (Owner)
+- `dork` - Google dorking
+- `email` - Email breach check
+- `phone` - Phone lookup
+- `username` - Username search
+- `sherlock` - Social media search
+- `holehe` - Email reconnaissance
+- `theharvester` - Email harvesting
+- `netexec` - Network execution
 
----
+#### Premium & Payment
+- `premium` - Premium status
+- `vip` - Alias for premium
+- `donate` - Donation info
+- `doar` - Alias for donate
+- `buy` - Purchase plans
+- `comprar` - Alias for buy
+- `addpremium` - Add premium (owner)
+- `addvip` - Alias for addpremium
+- `delpremium` - Remove premium (owner)
+- `delvip` - Alias for delpremium
 
-## ⚠️ COMMANDS THAT EXIST IN MODULES BUT NOT IN COMMANDHANDLER SWITCH
+#### Utility
+- `del` - Delete message
+- `apagar` - Alias for del
+- `delete` - Alias for del
+- `lido` - Mark as read
+- `read` - Alias for lido
+- `report` - Report bug
+- `bug` - Alias for report
+- `reportar` - Alias for report
 
-### Image Effects (ImageEffects module)
-| Command | Module | Status | Issue |
-|---------|--------|--------|-------|
-| wasted | ImageEffects | ❌ | Not in switch |
-| jail | ImageEffects | ❌ | Not in switch |
-| triggered | ImageEffects | ❌ | Not in switch |
-| communism | ImageEffects | ❌ | Not in switch |
-| sepia | ImageEffects | ❌ | Not in switch |
-| grey | ImageEffects | ❌ | Not in switch |
-| invert | ImageEffects | ❌ | Not in switch |
-| mission | ImageEffects | ❌ | Not in switch |
-| angola | ImageEffects | ❌ | Not in switch |
-| addbg | ImageEffects | ❌ | Not in switch |
-| gay (effect) | ImageEffects | ❌ | Not in switch |
+### ⚠️ POTENTIALLY BROKEN COMMANDS (Need Verification)
 
-### Grid Tactics Game
-| Command | Module | Status | Issue |
-|---------|--------|--------|-------|
-| gridtactics | GridTacticsGame | ⚠️ | Has case but incomplete |
-| grid | GridTacticsGame | ⚠️ | Has case but incomplete |
+#### Commands with Empty Cases or Missing Handlers
+- Many commands exist in switch but may not have implementations
+- Some commands reference non-existent methods
+- Some commands may have incomplete logic
 
-### Economy System
-| Command | Module | Status | Issue |
-|---------|--------|--------|-------|
-| deposit | EconomySystem | ❌ | Not in switch |
-| withdraw | EconomySystem | ❌ | Not in switch |
-| transacoes | EconomySystem | ❌ | Not in switch |
+#### Submenu Commands
+- All `menu*` commands should work but need testing
+- Dynamic menu generation may have issues
 
-### OSINT Framework
-| Command | Module | Status | Issue |
-|---------|--------|--------|-------|
-| dork | OSINTFramework | ❌ | Not in switch (uses CybersecurityToolkit) |
-| email | OSINTFramework | ❌ | Not in switch |
-| phone | OSINTFramework | ❌ | Not in switch |
-| username | OSINTFramework | ❌ | Not in switch |
+### 📋 COMMANDS BY CATEGORY
 
-### Level System Auto-ADM
-| Command | Module | Status | Issue |
-|---------|--------|--------|-------|
-| top | LevelSystem | ⚠️ | Partial implementation |
-| autoadm | LevelSystem | ❌ | Not in switch |
+#### Menu Navigation: 11 commands
+- `menu`, `menucyber`, `menumedia`, `menuconta`, `menudiversao`, `menujogos`, `menugrupo`, `menuadm`, `menuinfo`, `menupremium`, `menuextras`
 
-### Moderation System
-| Command | Module | Status | Issue |
-|---------|--------|--------|-------|
-| blacklist | ModerationSystem | ❌ | Not in switch |
-| mutelist | ModerationSystem | ❌ | Not in switch |
-| warn | ModerationSystem | ❌ | Not in switch |
-| unwarn | ModerationSystem | ❌ | Not in switch |
+#### Core System: 5 commands
+- `ping`, `dono`, `help`, `info`, `restart`
 
----
+#### User Management: 3 commands
+- `registrar`, `perfil`, `info`
 
-## 🔧 COMMANDS THAT NEED TO BE FIXED
+#### Level System: 3 commands
+- `level`, `rank`, `top`
 
-### Missing Submenus
-- Main menu shows categories but submenu commands are not fully implemented:
-  - `#menu cyber` - Should show cybersecurity commands
-  - `#menu midi` - Should show media commands  
-  - `#menugrupo` - Should show group management commands
-  - `#menujogos` - Should show game commands
-  - `#menudiversao` - Should show fun commands
+#### Economy: 8 commands
+- `daily`, `atm`, `transfer`, `deposit`, `withdraw`, `transacoes`
 
-### Incomplete Implementations
-1. **welcome/setwelcome** - Need message customization
-2. **goodbye/setgoodbye** - Need message customization
-3. **gridtactics** - Game exists but incomplete
-4. **anti-image/sticker** - Not in switch
+#### Media: 6 commands
+- `play`, `video`, `tomp3`, `pinterest`
 
----
+#### Stickers/Images: 15 commands
+- `sticker`, `take`, `toimg`, `hd`, `removebg`, `wasted`, `jail`, `triggered`, `communism`, `sepia`, `grey`, `invert`, `mission`, `angola`, `addbg`
 
-## 📝 IMPLEMENTATION PRIORITY
+#### Audio Effects: 10 commands
+- `nightcore`, `slow`, `bass`, `deep`, `robot`, `reverse`, `squirrel`, `echo`, `8d`
 
-### Priority 1 - Critical (Not Working)
-1. Add ImageEffects commands to switch: wasted, jail, triggered, etc.
-2. Add GridTactics to switch (complete implementation)
-3. Add Economy deposit/withdraw
-4. Add submenus to _showMenu
+#### Games: 6 commands
+- `ttt`, `rps`, `guess`, `forca`, `gridtactics`
 
-### Priority 2 - Important
-1. Add OSINT commands: dork, email, phone, username
-2. Add Moderation commands: blacklist, mutelist, warn
+#### Fun: 10 commands
+- `ship`, `dado`, `moeda`, `slot`, `chance`, `gay`, `piada`, `frases`, `fatos`, `tts`
 
-### Priority 3 - Nice to Have
-1. Add Auto-ADM status command
-2. Add transaction history command
+#### Group Admin: 25 commands
+- `add`, `kick`, `ban`, `promote`, `demote`, `mute`, `fechar`, `fixar`, `link`, `setdesc`, `tagall`, `welcome`, `groupinfo`, `listar`, `admins`, `antilink`, `blacklist`, `warn`
 
----
+#### Bot Owner: 8 commands
+- `setbotphoto`, `setbotname`, `setbotstatus`, `broadcast`, `getprofile`
 
-## 🔍 ROOT CAUSE ANALYSIS
+#### Cybersecurity: 14 commands
+- `nmap`, `sqlmap`, `hydra`, `nuclei`, `nikto`, `masscan`, `whois`, `dns`, `geo`, `commix`, `searchsploit`, `socialfish`, `blackeye`, `shodan`
 
-### Why submenus don't work:
-The `_showMenu()` method returns a text menu but doesn't handle the submenu parameter. The switch statement in `handle()` doesn't check for submenu commands like `#menu cyber`.
+#### OSINT: 8 commands
+- `dork`, `email`, `phone`, `username`, `sherlock`, `holehe`, `theharvester`, `netexec`
 
-### Why some commands aren't found:
-When user types a command that's not in the switch, the system logs "Comando não encontrado" - this is the "comandos não sendo encontrados" issue from the user report.
+#### Premium: 6 commands
+- `premium`, `donate`, `buy`, `addpremium`, `delpremium`
 
-### Why GridTactics issues:
-The GridTactics module has a separate class but is imported differently than GameSystem.
+#### Utility: 5 commands
+- `del`, `lido`, `report`
 
----
+### 🔧 IMPLEMENTATION STATUS
 
-## ✅ SOLUTION
+#### ✅ Fully Implemented
+- Core command handling
+- Menu system
+- Most game commands
+- Media processing
+- Basic admin commands
 
-The fix requires:
-1. Adding missing commands to the CommandHandler switch statement
-2. Implementing submenu handling in _showMenu
-3. Ensuring GridTacticsGame is properly imported and connected
-4. Adding the missing economy commands
+#### ⚠️ Needs Verification
+- Submenu navigation
+- Some advanced commands
+- Error handling
+- Permission checks
 
-See implementation_plan_fix_submenus.md for detailed fix steps.
+#### ❌ Potentially Broken
+- Commands with empty cases
+- Commands referencing missing methods
+- Complex multi-step commands

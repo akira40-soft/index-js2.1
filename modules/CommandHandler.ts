@@ -16,7 +16,6 @@ import path from 'path';
 import axios from 'axios';
 
 // Módulos Core
-import ConfigManager from './ConfigManager.js';
 import PresenceSimulator from './PresenceSimulator.js';
 import StickerViewOnceHandler from './StickerViewOnceHandler.js';
 import MediaProcessor from './MediaProcessor.js';
@@ -91,13 +90,14 @@ class CommandHandler {
         this.cybersecurityToolkit = bot?.cybersecurityToolkit || new CybersecurityToolkit(this.config);
         this.osintFramework = bot?.osintFramework || new OSINTFramework(this.config, sock);
         this.subscriptionManager = bot?.subscriptionManager || new SubscriptionManager(this.config);
+        this.securityLogger = bot?.securityLogger || new SecurityLogger(this.config);
         this.moderationSystem = bot?.moderationSystem || null;
         this.gameSystem = bot?.gameSystem || null;
 
         // Inicializa módulos dependentes de sock
         if (sock) {
             this.stickerHandler = bot?.stickerViewOnceHandler || new StickerViewOnceHandler(sock, this.config);
-            this.groupManagement = bot?.groupManagement || new GroupManagement(sock, this.config);
+            this.groupManagement = bot?.groupManagement || new GroupManagement(sock, this.config, this.moderationSystem);
             this.userProfile = bot?.userProfile || new UserProfile(sock, this.config);
             this.botProfile = bot?.botProfile || new BotProfile(sock, this.config);
             this.imageEffects = bot?.imageEffects || new ImageEffects(this.config);
@@ -126,7 +126,7 @@ class CommandHandler {
         // Garante inicialização dos módulos dependentes de sock
         if (!this.stickerHandler) this.stickerHandler = new StickerViewOnceHandler(sock, this.config);
         if (!this.groupManagement) {
-            this.groupManagement = new GroupManagement(sock, this.config);
+            this.groupManagement = new GroupManagement(sock, this.config, this.moderationSystem);
             this.userProfile = new UserProfile(sock, this.config);
             this.botProfile = new BotProfile(sock, this.config);
             this.imageEffects = new ImageEffects(this.config);
@@ -142,6 +142,13 @@ class CommandHandler {
         // meta: { nome, numeroReal, texto, replyInfo, ehGrupo }
         try {
             const { nome, numeroReal, texto, replyInfo, ehGrupo } = meta;
+            // make replyInfo available to downstream modules (GroupManagement etc.)
+            if (replyInfo) {
+                // attach under a private property to avoid conflict with Baileys
+                (m as any)._replyInfo = replyInfo;
+                // also expose as simple property for convenience
+                (m as any).replyInfo = replyInfo;
+            }
             // Extrai comando e argumentos
             let mp = this.messageProcessor || this.bot?.messageProcessor;
 
@@ -166,7 +173,7 @@ class CommandHandler {
             const command = parsed.comando.toLowerCase();
             const args = parsed.args;
             const fullArgs = parsed.textoCompleto;
-
+ 
             // Log de comando
             // this.logger?.debug(`[CMD] ${command} por ${nome} em ${chatJid}`);
 
@@ -185,7 +192,8 @@ class CommandHandler {
             // VERIFICAÇÃO DE REGISTRO GLOBAL - APENAS NO PV, NÃO EM GRUPOS
             // Grupos permitem usuários não registrados usarem comandos
             const isReg = this.registrationSystem.isRegistered(userId);
-            const publicCommands = ['registrar', 'register', 'reg', 'menu', 'help', 'ajuda', 'comandos', 'dono', 'owner', 'criador', 'creator', 'ping'];
+            const publicCommands = ['registrar', 'register', 'reg', 'menu', 'help', 'ajuda', 'comandos', 'dono', 'owner', 'criador', 'creator', 'ping',
+                'level', 'lvl', 'nivel', 'rank', 'ranking', 'top'];
 
             // Only require registration in private chats (PV), not in groups
             if (!isReg && !isOwner && !ehGrupo && !publicCommands.includes(command.toLowerCase())) {
@@ -223,24 +231,51 @@ class CommandHandler {
 
             switch (command) {
                 case 'ping': {
-                    const uptime = Math.floor(process.uptime());
-                    const hours = Math.floor(uptime / 3600);
-                    const minutes = Math.floor((uptime % 3600) / 60);
-                    const seconds = uptime % 60;
+                    // if user mentioned or replied to someone, show latency to that target as a mention
+                    let targetText = '';
+                    const extractTargets = (msg: any): string[] => {
+                        const mentioned: string[] = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+                        if (mentioned.length) return mentioned;
+                        const replyInfoLocal = msg.replyInfo || msg._replyInfo;
+                        if (replyInfoLocal && replyInfoLocal.quemEscreveuCitacaoJid) return [replyInfoLocal.quemEscreveuCitacaoJid];
+                        if (msg.message?.extendedTextMessage?.contextInfo?.participant) {
+                            return [msg.message.extendedTextMessage.contextInfo.participant];
+                        }
+                        return [];
+                    };
+                    const targets = extractTargets(m);
+                    if (targets.length > 0) {
+                        targetText = ` para @${targets[0].split('@')[0]}`;
+                    }
+
+                    const uptimeSeconds = Math.floor(process.uptime());
+
+                    const months = Math.floor(uptimeSeconds / (30 * 24 * 3600));
+                    const days = Math.floor((uptimeSeconds % (30 * 24 * 3600)) / (24 * 3600));
+                    const hours = Math.floor((uptimeSeconds % (24 * 3600)) / 3600);
+                    const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+                    const seconds = uptimeSeconds % 60;
+
+                    let uptimeStr = '';
+                    if (months > 0) uptimeStr += `${months}m `;
+                    if (days > 0) uptimeStr += `${days}d `;
+                    uptimeStr += `${hours}h ${minutes}m ${seconds}s`;
 
                     const stats = this.bot?.getStats?.() || { api: {}, message: {}, audio: {} };
                     const latencia = Date.now() - (m.messageTimestamp * 1000 || Date.now());
 
-                    const statusMsg = `🏓 *PONG!* \n\n` +
+                    const statusMsg = `🏓 *PONG!*${targetText} \n\n` +
                         `⚡ *Latência:* ${Math.abs(latencia)}ms\n` +
-                        `📡 *Uptime:* ${hours}h ${minutes}m ${seconds}s\n` +
+                        `📡 *Uptime:* ${uptimeStr}\n` +
                         `🤖 *Bot:* ${this.config.BOT_NAME} V${this.config.BOT_VERSION}\n` +
                         `📊 *Status:* Online e Operacional\n` +
                         `🔗 *API:* ${stats.api?.error ? '⚠️ Offline' : '✅ Conectada'}\n` +
                         `🎤 *STT/TTS:* ${stats.audio?.error ? '⚠️ Inativo' : '✅ Ativo'}\n\n` +
                         `_Sistema respondendo normalmente!_`;
 
-                    await this.bot.reply(m, statusMsg);
+                    const replyOpts: any = {};
+                    if (targets.length) replyOpts.mentions = [targets[0]];
+                    await this.bot.reply(m, statusMsg, replyOpts);
                     return true;
                 }
 
@@ -291,6 +326,44 @@ class CommandHandler {
                 case 'ajuda':
                 case 'comandos':
                     return await this._showMenu(m, args[0]);
+
+                // SUBMENU ALIASES - Fix for "submenus não estão funcionando"
+                case 'menucyber':
+                case 'menumedia':
+                case 'menuconta':
+                case 'menudiversao':
+                case 'menujogos':
+                case 'menugrupo':
+                case 'menuadm':
+                case 'menuinfo':
+                case 'menupremium':
+                case 'menuosint':
+                case 'menuaudio':
+                case 'menuimagem':
+                    // Extract submenu from command (remove "menu" prefix)
+                    const subMenu = command.substring(4).toLowerCase(); // "menucyber" -> "cyber"
+                    return await this._showMenu(m, subMenu);
+
+                case 'cyber':
+                case 'grupos':
+                case 'grupo':
+                case 'admin':
+                case 'moderacao':
+                case 'diversao':
+                case 'fun':
+                case 'jogos':
+                case 'game':
+                case 'osint':
+                case 'inteligencia':
+                case 'premium':
+                case 'vip':
+                case 'buy':
+                case 'comprar':
+                case 'info':
+                case 'informacoes':
+                case 'about':
+                case 'extras':
+                    return await this._showMenu(m, command);
 
                 case 'pinterest':
                 case 'pin':
@@ -535,12 +608,42 @@ class CommandHandler {
                 case 'ban':
                 case 'add':
                 case 'promote':
-                case 'demote':
+                case 'demote': {
                     if (!isOwner && !isAdminUsers) {
                         await this.bot.reply(m, '🚫 Apenas administradores do grupo ou o dono do bot podem gerenciar o grupo.');
                         return true;
                     }
+
+                    // Loga operação administrativa no SecurityLogger
+                    try {
+                        if (this.securityLogger) {
+                            const targetJids: string[] = this.groupManagement
+                                ? (this.groupManagement as any)._extractTargets?.(m) || []
+                                : [];
+                            const alvo = targetJids.length
+                                ? targetJids.map(j => j.split('@')[0]).join(', ')
+                                : (args[0] || 'N/A');
+
+                            this.securityLogger.logOperation({
+                                usuario: `${nome} (${senderId})`,
+                                tipo: `GROUP_${command.toUpperCase()}`,
+                                alvo,
+                                resultado: 'REQUESTED',
+                                risco: 'MÉDIO',
+                                detalhes: {
+                                    chatJid,
+                                    args,
+                                    isOwner,
+                                    isAdminUsers
+                                }
+                            });
+                        }
+                    } catch (e: any) {
+                        this.logger?.warn('SecurityLogger falhou ao registrar operação de grupo:', e.message || e);
+                    }
+
                     return await this.groupManagement.handleCommand(m, command, args);
+                }
 
                 // COMANDOS DE GRUPO — ADMIN OU DONO
                 case 'fechar':
@@ -827,12 +930,35 @@ class CommandHandler {
   8️⃣  ${P}menu cyber      — Cybersecurity (dono)
   9️⃣  ${P}menu osint      — OSINT & Inteligência
   🔟  ${P}menu premium    — Planos VIP
+    1️⃣1️⃣ ${P}menu extras     — Comandos adicionais detectados
 
 🔑 *Legenda:* 🔒 Requer registo • 👑 Admin/Dono
 
 _Akira V21 — Desenvolvido por Isaac Quarenta_`;
 
             await this._reply(m, menuText);
+
+            // Adiciona seção dinâmica com comandos detectados mas não mostrados no menu
+            try {
+                const srcPath = path.join(process.cwd(), 'modules', 'CommandHandler.ts');
+                const src = await fs.promises.readFile(srcPath, 'utf8');
+                const caseRe = /case\\s+'([^']+)'/g;
+                const menuRe = /\\$\\{P\\}\\s*([a-zA-Z0-9_\\-]+)/g;
+                const impl = new Set();
+                const men = new Set();
+                let mm;
+                while ((mm = caseRe.exec(src)) !== null) impl.add(mm[1].toLowerCase());
+                while ((mm = menuRe.exec(src)) !== null) men.add(mm[1].toLowerCase());
+                const missing = Array.from(impl).filter(c => !men.has(c));
+                if (missing.length) {
+                    const sample = missing.slice(0, 40).map(x => `• ${P}${x}`).join('\n');
+                    const extrasText = `\n🔎 *Comandos detectados mas não mostrados no menu*\n${sample}${missing.length > 40 ? `\n...e mais ${missing.length - 40} comandos` : ''}`;
+                    await this._reply(m, extrasText);
+                }
+            } catch (e) {
+                console.error('Erro ao auditar menu dinamicamente:', e);
+            }
+
             if (this.presenceSimulator) await this.presenceSimulator.markAsRead(m);
             return true;
         }
@@ -986,18 +1112,70 @@ ${P}menu osint — Comandos OSINT avançados`,
 ☕ Ko-fi: https://ko-fi.com/${this.bot?.paymentManager?.payConfig?.kofiPage || 'suporte'}`
         };
 
-        // Alias comuns
+        // Submenu adicional: comandos detectados no código mas não listados estaticamente
+        menus.extras = `🔧 *COMANDOS ADICIONAIS AGRUPADOS*
+────────────────────────────
+*Conta & Economia*
+• balance  • banco  • depositar  • diario  • lvl  • mp3  • nivel  • pagar  • profile  • ranking  • reg  • register  • sacar  • saldo  • top  • transferir
+
+*Mídia & Video*
+• image  • img  • p  • playvid  • ytmp4
+
+*Áudio & Efeitos*
+• enhance  • remini
+
+*Imagem & Efeitos*
+• addbg  • bg  • fotodogrupo  • rmbg
+
+*Grupos & Administração*
+• close  • desafixar  • fixar  • ginfo  • hidetag  • listadmins  • membros  • open  • pin  • revogar  • setbotphoto  • totag  • unmute  • unpin
+
+*Diversão & Jogos*
+• advinha  • caracoroa  • joke  • pedrapapeltesoura  • quote  • raffle  • sorteio  • tictactoe
+
+*Cybersecurity & Pentest*
+• blackeye  • cve  • impacket  • shodan  • socialfish  • winrm
+
+*Moderação & Segurança*
+• antifake  • antiimage  • antisticker  • resetwarns
+
+*Configuração & Bot*
+• creator  • criador  • setbio  • setbotname  • setbotpic  • setbotstatus  • setgoodbye  • setname  • setphoto  • setwelcome
+
+*Pagamento & Premium*
+• addpremium  • addvip  • comprar  • delpremium  • delvip  • doar  • donate  • vip
+
+*Utilitários & Admin*
+• ajuda  • apagar  • bug  • comandos  • del  • delete  • getprofile  • getuser  • help  • info  • infogrupo  • reportar  • restart
+
+*Outros*
+• bemvindo  • broadcast  • descricao  • fig  • goodbye  • poll  • react  • reagir  • roubar
+
+💡 Use *${P}menu [categoria]* para ver detalhes de cada comando.`;
+        // Alias comuns - FIX: Added missing aliases for submenu commands
         const alias: Record<string, string> = {
-            contas: 'conta', level: 'conta', nivel: 'conta', economia: 'conta',
-            musica: 'media', midia: 'media', video: 'media', sticker: 'media',
-            efeito: 'audio', tts: 'audio', voz: 'audio',
-            img: 'imagem', foto: 'imagem', image: 'imagem',
-            grupo: 'grupos', admin: 'grupos', moderacao: 'grupos',
-            fun: 'diversao', jogos: 'diversao', game: 'diversao',
-            sec: 'cyber', hacking: 'cyber', security: 'cyber', pentest: 'cyber',
-            vip: 'premium', planos: 'premium', buy: 'premium',
-            osint: 'osint', inteligencia: 'osint', reconnaissance: 'osint',
-            info: 'info', informações: 'info', about: 'info'
+            // Conta/Economia
+            contas: 'conta', conta: 'conta', level: 'conta', lvl: 'conta', nivel: 'conta', economia: 'conta',
+            // Mídia
+            musica: 'media', midia: 'media', media: 'media', video: 'media', sticker: 'media', stickers: 'media',
+            // Áudio
+            efeito: 'audio', efeitos: 'audio', audio: 'audio', tts: 'audio', voz: 'audio', som: 'audio',
+            // Imagem
+            img: 'imagem', imagem: 'imagem', foto: 'imagem', image: 'imagem', fotos: 'imagem',
+            // Grupos
+            grupo: 'grupos', grupos: 'grupos', admin: 'grupos', moderacao: 'grupos', adm: 'grupos', gerenciamento: 'grupos',
+            // Diversão
+            fun: 'diversao', jogos: 'diversao', game: 'diversao', games: 'diversao', diversao: 'diversao', entretenimento: 'diversao',
+            // Cyber
+            sec: 'cyber', hacking: 'cyber', security: 'cyber', pentest: 'cyber', cyber: 'cyber', cybersecurity: 'cyber', hack: 'cyber',
+            // Premium
+            vip: 'premium', planos: 'premium', buy: 'premium', comprar: 'premium', premium: 'premium', pagamento: 'premium', doar: 'premium',
+            // OSINT
+            osint: 'osint', inteligencia: 'osint', reconnaissance: 'osint', investigacao: 'osint', spy: 'osint',
+            // Info
+            info: 'info', informacoes: 'info', informações: 'info', about: 'info', sobre: 'info', ajuda: 'info', help: 'info',
+            // Extras
+            extras: 'extras', extra: 'extras', comandos: 'extras', commands: 'extras', todos: 'extras', all: 'extras'
         };
 
         const key = alias[sub] || sub;
@@ -1849,7 +2027,47 @@ ${P}menu osint — Comandos OSINT avançados`,
      */
     public async _handleLevel(m: any, userId: string, chatJid: string, ehGrupo: boolean): Promise<boolean> {
         try {
+            const texto = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+            const args = texto.split(' ').slice(1);
+            const subCommand = args[0]?.toLowerCase();
+
+            // Ativação/Desativação por grupo (Requer admin)
+            if (ehGrupo && (subCommand === 'on' || subCommand === 'off')) {
+                const isAdmin = await this.groupManagement.isUserAdmin(chatJid, m.key.participant);
+                const isOwner = this.config.isDono(userId);
+
+                if (!isAdmin && !isOwner) {
+                    await this.bot.reply(m, '🚫 Apenas administradores podem ativar/desativar o sistema de níveis.');
+                    return true;
+                }
+
+                return await this.groupManagement.toggleSetting(m, 'leveling', subCommand);
+            }
+
+            // allow checking other user by mention or reply
+            const extractTargets = (msg: any): string[] => {
+                const mentioned: string[] = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+                if (mentioned.length) return mentioned;
+                const replyInfoLocal = msg.replyInfo || msg._replyInfo;
+                if (replyInfoLocal && replyInfoLocal.quemEscreveuCitacaoJid) return [replyInfoLocal.quemEscreveuCitacaoJid];
+                if (msg.message?.extendedTextMessage?.contextInfo?.participant) {
+                    return [msg.message.extendedTextMessage.contextInfo.participant];
+                }
+                return [];
+            };
+            const targets = extractTargets(m);
+            if (targets.length > 0) {
+                userId = targets[0];
+            }
+
             const groupId = ehGrupo ? chatJid : 'global';
+
+            // Verifica se está ativo para o grupo
+            if (ehGrupo && !this.groupManagement.groupSettings[chatJid]?.leveling) {
+                // Se não for admin querendo ver o nível (permitir admin ver status mesmo desativado? Não, melhor avisar)
+                await this.bot.reply(m, '📊 O sistema de níveis está *DESATIVADO* neste grupo.\n\nUse: *#level on* para ativar (Apenas Admins).');
+                return true;
+            }
 
             const rec = this.levelSystem.getGroupRecord(groupId, userId, true);
             const patente = this.levelSystem.getPatente(rec.level || 0);
@@ -1880,7 +2098,7 @@ ${P}menu osint — Comandos OSINT avançados`,
     }
 
     /**
-     * Comando #rank - Top 10 do grupo
+     * Comando #rank - Top 10 do grupo (Nível ou Economia)
      */
     public async _handleRank(m: any, chatJid: string, ehGrupo: boolean): Promise<boolean> {
         try {
@@ -1889,6 +2107,33 @@ ${P}menu osint — Comandos OSINT avançados`,
                 return true;
             }
 
+            const args = m.body.split(' ').slice(1);
+            const sub = (args[0] || '').toLowerCase();
+
+            // 💰 RANKING DE ECONOMIA
+            if (sub === 'money' || sub === 'economia' || sub === 'grana' || sub === 'riqueza') {
+                const ranking = this.economySystem.getRanking(10);
+                if (ranking.length === 0) {
+                    await this.bot.reply(m, '📊 Nenhum dado de economia registrado ainda.');
+                    return true;
+                }
+
+                let texto = '💰 *TOP 10 — MAIS RICOS DO GRUPO* 💰\n\n';
+                const mentions: string[] = [];
+
+                ranking.forEach((user: any, index: number) => {
+                    const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}º`;
+                    const numero = user.userId.split('@')[0];
+                    texto += `${medal} @${numero}\n`;
+                    texto += `   💵 total: ${user.total} moedas\n\n`;
+                    mentions.push(user.userId);
+                });
+
+                await this.sock.sendMessage(chatJid, { text: texto, mentions }, { quoted: m });
+                return true;
+            }
+
+            // ⭐ RANKING DE NÍVEL (Padrão)
             const allData = this.levelSystem.data || [];
             const groupData = allData
                 .filter((r: any) => r.gid === chatJid)
@@ -2703,5 +2948,4 @@ ${P}menu osint — Comandos OSINT avançados`,
         }
     }
 }
-
 export default CommandHandler;

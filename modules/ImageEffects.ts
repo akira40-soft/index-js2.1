@@ -535,6 +535,52 @@ class ImageEffects {
     }
 
     /**
+     * Efeito "MISSION PASSED" (estilo GTA)
+     */
+    async applyMissionPassedEffect(imageBuffer: Buffer): Promise<any> {
+        try {
+            const metadata = await sharp(imageBuffer).metadata();
+            const width = metadata.width || 512;
+            const height = metadata.height || 512;
+
+            const fontSize = Math.floor(width / 12);
+            const rectHeight = Math.floor(height * 0.18);
+            const rectY = Math.floor(height * 0.15);
+
+            const missionSvg = Buffer.from(
+                `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="0" y="${rectY}" width="${width}" height="${rectHeight}" fill="black" fill-opacity="0.45"/>
+                    <text x="50%" y="${rectY + rectHeight / 2}"
+                          font-family="Impact, Arial, sans-serif"
+                          font-weight="bold"
+                          font-size="${fontSize}px"
+                          fill="#f9e300"
+                          text-anchor="middle"
+                          dominant-baseline="central"
+                          stroke="black"
+                          stroke-width="${Math.max(1, width / 300)}">
+                        MISSION PASSED!
+                    </text>
+                </svg>`
+            );
+
+            const processed = await sharp(imageBuffer)
+                .modulate({ brightness: 1.05, saturation: 1.15 })
+                .composite([{ input: missionSvg, blend: 'over' }])
+                .toBuffer();
+
+            return {
+                success: true,
+                buffer: processed,
+                effect: 'mission_passed'
+            };
+        } catch (e: any) {
+            this.logger?.error('Erro no efeito Mission Passed:', e.message);
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
      * Efeito Prisão (Jail)
      */
     async applyJailEffect(imageBuffer: Buffer): Promise<any> {
@@ -613,6 +659,10 @@ class ImageEffects {
 
             case 'wasted':
                 result = await this.applyWastedEffect(imageBuffer);
+                break;
+
+            case 'mission':
+                result = await this.applyMissionPassedEffect(imageBuffer);
                 break;
 
             case 'jail':

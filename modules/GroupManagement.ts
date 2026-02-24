@@ -18,11 +18,39 @@ class GroupManagement {
     public scheduledActionsPath: string;
     public groupSettings: any;
     public scheduledActions: any;
+    public moderationSystem: any;
 
-    constructor(sock: any, config: any = null) {
+    /**
+     * Cria uma lista de alvos a partir da mensagem, incluindo mentions e
+     * usuário citado no reply. Retorna array vazio se nenhum alvo encontrado.
+     */
+    private _extractTargets(m: any): string[] {
+        // primeiro, menções diretas
+        const mentioned: string[] = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        if (mentioned.length > 0) {
+            return mentioned;
+        }
+
+        // depois, verifica se algum replyInfo foi anexado (pelo CommandHandler)
+        const replyInfo = m.replyInfo || m._replyInfo;
+        if (replyInfo && replyInfo.quemEscreveuCitacaoJid) {
+            return [replyInfo.quemEscreveuCitacaoJid];
+        }
+
+        // fallback para a forma antiga de obter participante do contextInfo
+        const participant = m.message?.extendedTextMessage?.contextInfo?.participant;
+        if (participant) {
+            return [participant];
+        }
+
+        return [];
+    }
+
+    constructor(sock: any, config: any = null, moderationSystem: any = null) {
         this.sock = sock;
         this.config = config || ConfigManager.getInstance();
         this.logger = console;
+        this.moderationSystem = moderationSystem;
 
         // Pasta para dados de grupos
         this.groupsDataPath = path.join(this.config.DATABASE_FOLDER, 'group_settings.json');
@@ -256,8 +284,8 @@ class GroupManagement {
     // ═════════════════════════════════════════════════════════════════
 
     async muteUser(m: any, args: any[]) {
-        const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] ||
-            m.message?.extendedTextMessage?.contextInfo?.participant;
+        const targets = this._extractTargets(m);
+        const target = targets[0];
 
         if (!target) {
             if (this.sock) await this.sock.sendMessage(m.key.remoteJid, {
@@ -266,7 +294,8 @@ class GroupManagement {
             return true;
         }
 
-        // Tempo padrão: 5 minutos
+        const groupJid = m.key.remoteJid;
+        // Tempo padrão base: 5 minutos
         let duration = 5;
         if (args.length > 0) {
             const parsed = parseInt(args[0]);
@@ -275,8 +304,36 @@ class GroupManagement {
             }
         }
 
-        // Armazenar mute em memória e no banco
-        const groupJid = m.key.remoteJid;
+        // Se houver ModerationSystem, delega para ele (fonte única de verdade para enforcement)
+        if (this.moderationSystem) {
+            const muteInfo = this.moderationSystem.muteUser(groupJid, target, duration);
+
+            // Opcional: persistir expiração também em groupSettings para relatórios externos
+            if (!this.groupSettings[groupJid]) {
+                this.groupSettings[groupJid] = {};
+            }
+            if (!this.groupSettings[groupJid].mutedUsers) {
+                this.groupSettings[groupJid].mutedUsers = {};
+            }
+            this.groupSettings[groupJid].mutedUsers[target] = muteInfo.expires;
+            this.saveGroupSettings();
+
+            if (this.sock) {
+                const userName = target.split('@')[0];
+                const extra =
+                    muteInfo.muteCount && muteInfo.muteCount > 1
+                        ? `\n⚠️ Reincidência: ${muteInfo.muteCount} mute(s) hoje. Tempo ajustado automaticamente.`
+                        : '';
+                await this.sock.sendMessage(m.key.remoteJid, {
+                    text: `🔇 Usuário @${userName} silenciado por ${muteInfo.muteMinutes} minuto(s).${extra}`,
+                    mentions: [target]
+                }, { quoted: m });
+            }
+
+            return true;
+        }
+
+        // Fallback: comportamento antigo baseado apenas em groupSettings
         if (!this.groupSettings[groupJid]) {
             this.groupSettings[groupJid] = {};
         }
@@ -300,8 +357,8 @@ class GroupManagement {
     }
 
     async unmuteUser(m: any, args: any[]): Promise<boolean> {
-        const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] ||
-            m.message?.extendedTextMessage?.contextInfo?.participant;
+        const targets = this._extractTargets(m);
+        const target = targets[0];
 
         if (!target) {
             if (this.sock) await this.sock.sendMessage(m.key.remoteJid, {
@@ -311,6 +368,12 @@ class GroupManagement {
         }
 
         const groupJid = m.key.remoteJid;
+
+        // Sempre tenta desmutar no ModerationSystem se disponível
+        if (this.moderationSystem) {
+            this.moderationSystem.unmuteUser(groupJid, target);
+        }
+
         if (this.groupSettings[groupJid]?.mutedUsers?.[target]) {
             delete this.groupSettings[groupJid].mutedUsers[target];
             this.saveGroupSettings();
@@ -479,11 +542,12 @@ class GroupManagement {
 
     async kickUser(m: any, args: any[]): Promise<boolean> {
         // Validação de admin pode ser feita aqui ou no CommandHandler
-        if (!m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.length && !m.message?.extendedTextMessage?.contextInfo?.participant) {
+        const targets = this._extractTargets(m);
+        if (targets.length === 0) {
             if (this.sock) await this.sock.sendMessage(m.key.remoteJid, { text: '❌ Mencione ou responda a alguém para banir.' }, { quoted: m });
             return true;
         }
-        const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant;
+        const target = targets[0];
         if (target && this.sock) {
             try {
                 await this.sock.groupParticipantsUpdate(m.key.remoteJid, [target], 'remove');
@@ -498,6 +562,16 @@ class GroupManagement {
     }
 
     async addUser(m: any, args: any[]): Promise<boolean> {
+        // permitir reply/mention caso não haja argumento
+        if (!args[0]) {
+            const targets = this._extractTargets(m);
+            if (targets.length > 0) {
+                // use o número do JID citado
+                let cand = targets[0].split('@')[0];
+                args[0] = cand;
+            }
+        }
+
         if (!args[0]) {
             if (this.sock) await this.sock.sendMessage(m.key.remoteJid, { text: '❌ Forneça o número.' }, { quoted: m });
             return true;
@@ -517,7 +591,8 @@ class GroupManagement {
     }
 
     async promoteUser(m: any, args: any[]): Promise<boolean> {
-        const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant;
+        const targets = this._extractTargets(m);
+        const target = targets[0];
         if (!target) return true;
         if (this.sock) {
             try {
@@ -533,7 +608,8 @@ class GroupManagement {
     }
 
     async demoteUser(m: any, args: any[]): Promise<boolean> {
-        const target = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant;
+        const targets = this._extractTargets(m);
+        const target = targets[0];
         if (!target) return true;
         if (this.sock) {
             try {

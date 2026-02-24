@@ -149,9 +149,13 @@ class ConfigManager {
                 if (!fs.existsSync(cookiesDir)) fs.mkdirSync(cookiesDir, { recursive: true });
                 const cookiesFile = path.join(cookiesDir, 'youtube_cookies.txt');
                 const decoded = Buffer.from(process.env.YT_COOKIES_BASE64, 'base64').toString('utf-8');
-                fs.writeFileSync(cookiesFile, decoded);
+                // Non-blocking write; set path immediately for downstream code
+                fs.promises.writeFile(cookiesFile, decoded).then(() => {
+                    console.log(`✅ ConfigManager: Cookies descodificados de YT_COOKIES_BASE64 para ${cookiesFile}`);
+                }).catch((err) => {
+                    console.error(`❌ ConfigManager: Falha ao escrever cookies: ${err.message}`);
+                });
                 this.YT_COOKIES_PATH = cookiesFile;
-                console.log(`✅ ConfigManager: Cookies descodificados de YT_COOKIES_BASE64 para ${cookiesFile}`);
             } catch (err: any) {
                 console.error(`❌ ConfigManager: Erro ao descodificar YT_COOKIES_BASE64: ${err.message}`);
             }

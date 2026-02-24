@@ -164,7 +164,7 @@ class BotCore {
             this.subscriptionManager = new SubscriptionManager(this.config);
             this.userProfile = new UserProfile(this.sock, this.config);
             this.botProfile = new BotProfile(this.sock, this.logger);
-            this.groupManagement = new GroupManagement(this.sock, this.config);
+            this.groupManagement = new GroupManagement(this.sock, this.config, this.moderationSystem);
             this.cybersecurityToolkit = new CybersecurityToolkit(this.config);
             this.imageEffects = new ImageEffects(this.logger);
             this.permissionManager = new PermissionManager(this.logger);
@@ -785,15 +785,51 @@ class BotCore {
     async handleTextMessage(m: any, nome: string, numeroReal: string, texto: string, replyInfo: any, ehGrupo: boolean, foiAudio: boolean = false): Promise<void> {
         try {
             // Check rate limit (Spam)
-            if (!this.messageProcessor.checkRateLimit(numeroReal)) {
-                if (ehGrupo) {
-                    await this.handleWarning(m, 'Flood/Spam');
+            // Prefer ModerationSystem hourly limiter if available (more robust), fallback to MessageProcessor short-term limiter
+            let allowed = true;
+            try {
+                const isDono = typeof this.config?.isDono === 'function' ? this.config.isDono(numeroReal, nome) : false;
+                if (this.moderationSystem && typeof this.moderationSystem.checkAndLimitHourlyMessages === 'function') {
+                    const res = this.moderationSystem.checkAndLimitHourlyMessages(numeroReal, nome, numeroReal, texto, null, isDono);
+                    allowed = !!res?.allowed;
+                    if (!allowed) {
+                        // If moderation system suggests action, follow its recommended response
+                        if (ehGrupo) {
+                            await this.handleWarning(m, 'Flood/Spam');
+                        } else {
+                            const replyMsg = res?.reason === 'LIMITE_HORARIO_EXCEDIDO' ?
+                                '⏰ Você excedeu o limite de mensagens por hora. Tente novamente mais tarde.' :
+                                '⏰ Você está mandando mensagens muito rápido. Aguarde um pouco.';
+                            await this.sock.sendMessage(m.key.remoteJid, { text: replyMsg });
+                        }
+                        return;
+                    }
                 } else {
-                    await this.sock.sendMessage(m.key.remoteJid, {
-                        text: '⏰ Você está mandando mensagens muito rápido. Aguarde um pouco.'
-                    });
+                    // Fallback to short-window limiter in MessageProcessor
+                    if (!this.messageProcessor.checkRateLimit(numeroReal)) {
+                        if (ehGrupo) {
+                            await this.handleWarning(m, 'Flood/Spam');
+                        } else {
+                            await this.sock.sendMessage(m.key.remoteJid, {
+                                text: '⏰ Você está mandando mensagens muito rápido. Aguarde um pouco.'
+                            });
+                        }
+                        return;
+                    }
                 }
-                return;
+            } catch (rlErr) {
+                this.logger?.warn('Erro ao verificar rate limit:', rlErr?.message || rlErr);
+                // On error, fallback to MessageProcessor limiter
+                if (!this.messageProcessor.checkRateLimit(numeroReal)) {
+                    if (ehGrupo) {
+                        await this.handleWarning(m, 'Flood/Spam');
+                    } else {
+                        await this.sock.sendMessage(m.key.remoteJid, {
+                            text: '⏰ Você está mandando mensagens muito rápido. Aguarde um pouco.'
+                        });
+                    }
+                    return;
+                }
             }
 
             // Handle commands centrally (short-circuit if handled)
@@ -804,7 +840,7 @@ class BotCore {
                         this.logger.info(`⚡ Comando tratado: ${texto.substring(0, 30)}..`);
 
                         // Premiar XP por comando (opcional mas bom para engajamento)
-                        if (ehGrupo && this.levelSystem) {
+                        if (ehGrupo && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
                             this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
                         }
                         return;

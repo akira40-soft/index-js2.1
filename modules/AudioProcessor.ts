@@ -105,7 +105,7 @@ class AudioProcessor {
             const audioPath = this.generateRandomFilename('ogg');
             const convertedPath = this.generateRandomFilename('mp3');
 
-            fs.writeFileSync(audioPath, audioBuffer);
+            await fs.promises.writeFile(audioPath, audioBuffer);
 
             // Converte para MP3
             await new Promise((resolve, reject) => {
@@ -117,7 +117,7 @@ class AudioProcessor {
                     .save(convertedPath);
             });
 
-            const convertedBuffer = fs.readFileSync(convertedPath);
+            const convertedBuffer = await fs.promises.readFile(convertedPath);
 
             // Chama Deepgram API
             this.logger?.info('📤 Enviando para Deepgram...');
@@ -232,9 +232,9 @@ class AudioProcessor {
                 throw new Error('Audio buffer vazio');
             }
 
-            fs.writeFileSync(outputPath, audioBuffer);
+            await fs.promises.writeFile(outputPath, audioBuffer);
 
-            const stats = fs.statSync(outputPath);
+            const stats = await fs.promises.stat(outputPath);
             if (stats.size > this.config?.MAX_AUDIO_SIZE_MB * 1024 * 1024) {
                 await this.cleanupFile(outputPath);
                 return {
@@ -260,7 +260,7 @@ class AudioProcessor {
                         .save(opusPath);
                 });
 
-                const finalBuffer = fs.readFileSync(opusPath);
+                const finalBuffer = await fs.promises.readFile(opusPath);
 
                 await Promise.all([
                     this.cleanupFile(outputPath),
@@ -287,7 +287,7 @@ class AudioProcessor {
 
             } catch (opusError) {
                 this.logger?.error('⚠️ Erro na conversão para Opus, enviando MP3 original:', opusError.message);
-                const finalBuffer = fs.readFileSync(outputPath);
+                const finalBuffer = await fs.promises.readFile(outputPath);
                 await this.cleanupFile(outputPath);
                 return {
                     sucesso: true,
@@ -360,7 +360,7 @@ class AudioProcessor {
             const inputPath = this.generateRandomFilename('mp3');
             const outputPath = this.generateRandomFilename('mp3');
 
-            fs.writeFileSync(inputPath, inputBuffer);
+            await fs.promises.writeFile(inputPath, inputBuffer);
 
             this.logger?.info(`🎵 Aplicando efeito '${effectName}'...`);
 

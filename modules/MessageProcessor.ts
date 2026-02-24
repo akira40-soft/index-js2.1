@@ -242,50 +242,44 @@ class MessageProcessor {
                 tipoMidia = 'texto';
             } else if (tipo === 'imageMessage') {
                 quotedTextOriginal = quoted.imageMessage?.caption || '';
-                textoMensagemCitada = quotedTextOriginal || '[imagem]';
+                textoMensagemCitada = (quotedTextOriginal ? quotedTextOriginal + ' ' : '') + '[imagem enviada]';
                 tipoMidia = 'imagem';
             } else if (tipo === 'videoMessage') {
                 quotedTextOriginal = quoted.videoMessage?.caption || '';
-                textoMensagemCitada = quotedTextOriginal || '[vídeo]';
+                textoMensagemCitada = (quotedTextOriginal ? quotedTextOriginal + ' ' : '') + '[vídeo enviado]';
                 tipoMidia = 'video';
             } else if (tipo === 'audioMessage') {
                 quotedTextOriginal = '[áudio]';
-                textoMensagemCitada = '[áudio]';
+                textoMensagemCitada = '[mensagem de áudio]';
                 tipoMidia = 'audio';
             } else if (tipo === 'stickerMessage') {
                 quotedTextOriginal = '[figurinha]';
-                textoMensagemCitada = '[figurinha]';
+                textoMensagemCitada = '[figurinha enviada]';
                 tipoMidia = 'sticker';
             } else if (tipo === 'documentMessage') {
-                quotedTextOriginal = (quoted.documentMessage && quoted.documentMessage.caption) || '[documento]';
-                textoMensagemCitada = quotedTextOriginal;
+                quotedTextOriginal = (quoted.documentMessage && quoted.documentMessage.caption) || '';
+                textoMensagemCitada = (quotedTextOriginal ? quotedTextOriginal + ' ' : '') + '[documento enviado]';
                 tipoMidia = 'documento';
             } else {
                 quotedTextOriginal = '[conteúdo]';
-                textoMensagemCitada = '[conteúdo]';
+                textoMensagemCitada = '[conteúdo de mídia]';
                 tipoMidia = 'outro';
             }
 
             // Try to get participant from context or from quoted message key
             let participantJidCitado = context.participant || null;
 
-            // ✅ CORREÇÃO: Em PV, detecta se é reply ao bot
-            // Em conversas privadas, context.participant é null porque não existem "participants"
-            // Mas em PV só existem 2 participantes: o usuário e o bot
-            // Então, se há reply em PV, podemos inferir que é reply ao bot
+            // Em PV, não há participant. Inferimos que é reply ao bot
             if (!participantJidCitado) {
                 const messageRemoteJid = message.key?.remoteJid;
                 const isPV = !String(messageRemoteJid || '').endsWith('@g.us');
-
                 if (isPV) {
-                    // Em PV, assume que a mensagem citada é do bot
-                    // pois não há como extrair o participant em conversas privadas
                     participantJidCitado = `${this.config.BOT_NUMERO_REAL}@s.whatsapp.net`;
-                    this.logger?.debug(`🔍 [PV REPLY] Detectado reply em PV - assumindo reply ao bot`);
+                    this.logger?.debug('🔍 [PV REPLY] Detectado reply em PV - assumindo reply ao bot');
                 }
             }
 
-            // Extract author number
+            // Extract author number and name if available (name limited at API layer)
             let quotedAuthorNumero = 'desconhecido';
             if (participantJidCitado) {
                 quotedAuthorNumero = this.extractUserNumber({ key: { participant: participantJidCitado } });
@@ -294,19 +288,22 @@ class MessageProcessor {
             // Check if reply is to bot
             const ehRespostaAoBot = this.isReplyToBot(participantJidCitado);
 
-
-            // Get current message text for context hint calculation
+            // Texto atual para hints e prioridade
             const currentMessageText = this.extractText(message);
-
-            // Calculate context hint
             const contextHint = this.extractContextHint(quotedTextOriginal, currentMessageText);
-
-            // Calculate priority
             const priorityLevel = this.calculateReplyPriority(true, ehRespostaAoBot, currentMessageText);
 
+            // Construção no formato esperado por CommandHandler/GroupManagement e API
             return {
-                textoMensagemCitada,
-                tipoMidia,
+                // Compatível com GroupManagement._extractTargets
+                quemEscreveuCitacaoJid: participantJidCitado,
+
+                // Compatível com CommandHandler (uso geral)
+                textoMensagemCitada, // texto completo amigável
+                tipoMidiaCitada: tipoMidia,
+                textoCitadoResumido: quotedTextOriginal,
+
+                // Metadados
                 participantJidCitado,
                 ehRespostaAoBot,
                 quemEscreveuCitacao: quotedAuthorNumero,

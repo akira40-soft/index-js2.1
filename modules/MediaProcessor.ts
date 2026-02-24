@@ -11,8 +11,9 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
-import { exec, execFile, spawn, execSync } from 'child_process';
+import { exec, execFile, spawn } from 'child_process';
 import util from 'util';
+const execAsync = util.promisify(exec);
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
@@ -82,23 +83,25 @@ class MediaProcessor {
     private _getClientStrategies(): Array<{ client: string; args: string }> {
         const cookiesPath = this.config?.YT_COOKIES_PATH || '';
         const poToken = this.config?.YT_PO_TOKEN || '';
+
+        // 🍪 Prioridade 1: Caminho configurado no .env ou detectado pelo ConfigManager
         const cookieArg = (cookiesPath && fs.existsSync(cookiesPath)) ? `--cookies "${cookiesPath}"` : '';
 
-        // Fallback para cookies em local padrão do Railway se não definido
-        let finalCookieArg = cookieArg;
         const possibleCookiePaths = [
-            '/app/cookies.txt',
-            './cookies.txt',
-            '/tmp/akira_data/cookies/youtube_cookies.txt',
-            './youtube_cookies.txt'
+            './cookies.txt',               // Raiz local
+            '/app/cookies.txt',           // Raiz Railway
+            './youtube_cookies.txt',
+            '/tmp/akira_data/cookies/youtube_cookies.txt'
         ];
 
+        // 🍪 Fallback: Procura automática na raiz se não estiver configurado
+        let finalCookieArg = cookieArg;
         if (!finalCookieArg) {
             for (const p of possibleCookiePaths) {
                 if (fs.existsSync(p)) {
                     const stats = fs.statSync(p);
                     this.logger?.info(`🍪 Cookies detetados automaticamente em: ${p} (${stats.size} bytes)`);
-                    finalCookieArg = `--cookies "${p}"`;
+                    finalCookieArg = `--cookies "${path.resolve(p)}"`;
                     break;
                 }
             }
@@ -119,27 +122,33 @@ class MediaProcessor {
 
         const strategies: Array<{ client: string; args: string }> = [];
 
-        // 🟢 1. WEB + COOKIES (mais robusto se cookies)
+        // 🟠 1. IOS (Melhor bypass atual para 2026, evita bot-detection na maioria dos vídeos)
+        let iosArgs = `--extractor-args "youtube:player_client=ios" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        strategies.push({ client: 'ios', args: iosArgs });
+
+        // 🟢 2. WEB + COOKIES (Robusto se os cookies forem válidos)
         if (finalCookieArg) {
             let webArgs = `--extractor-args "youtube:player_client=web" ${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_chrome}"`;
             strategies.push({ client: 'web+cookies', args: webArgs });
         }
 
-        // 🔴 2. TV_EMBEDDED (raro bot-detect)
-        let tvArgs = `--extractor-args "youtube:player_client=tv_embedded" ${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        // 🔴 3. TV_EMBEDDED (Fallback clássico sem cookies para evitar erros de autenticação)
+        let tvArgs = `--extractor-args "youtube:player_client=tv_embedded" ${baseSleepArgs} --user-agent "${ua_iphone}"`;
         strategies.push({ client: 'tv_embedded', args: tvArgs });
 
-        // 🟣 3. ANDROID (classic bypass)
-        let androidArgs = `--extractor-args "youtube:player_client=android" ${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_android}"`;
+        // 🟣 4. ANDROID (Android bypass)
+        let androidArgs = `--extractor-args "youtube:player_client=android" ${baseSleepArgs} --user-agent "${ua_android}"`;
         strategies.push({ client: 'android', args: androidArgs });
 
-        // 🔵 4. WEB_EMBEDDED (no-cookies)
-        let webEmbeddedArgs = `--extractor-args "youtube:player_client=web_embedded" ${baseSleepArgs} --user-agent "${ua_chrome}"`;
-        strategies.push({ client: 'web_embedded', args: webEmbeddedArgs });
+        // 🔵 5. COOKIES FROM BROWSER (Último recurso se disponível no ambiente)
+        if (process.platform !== 'linux') { // No Linux/Docker raramente funciona sem config extra
+            strategies.push({
+                client: 'cookies_from_browser',
+                args: `--cookies-from-browser chrome,firefox,edge ${baseSleepArgs} --user-agent "${ua_chrome}"`
+            });
+        }
 
-        // 🟠 5. IOS (mobile fallback)
-        let iosArgs = `--extractor-args "youtube:player_client=ios" ${baseSleepArgs} --user-agent "${ua_iphone}"`;
-        strategies.push({ client: 'ios', args: iosArgs });
+        return strategies;
 
         return strategies;
     }
@@ -162,6 +171,30 @@ class MediaProcessor {
 
             // Log do comando EXATO para diagnóstico
             this.logger?.info(`📝 Comando: ${command.slice(0, 200)}...`);
+
+            // Quick cookie validation for cookie-based strategies to avoid starting full download
+            if (strategy.client.includes('cookies')) {
+                try {
+                    const testCmd = command + ' --skip-download --no-warnings';
+                    this.logger?.debug(`🔎 Testando cookies com: ${testCmd.slice(0, 200)}...`);
+                    const { stdout: testOut, stderr: testErr } = await execAsync(testCmd, { timeout: 20000, maxBuffer: 10 * 1024 * 1024 });
+                    const testMsg = `${testErr || ''}${testOut || ''}`;
+                    if (testMsg.includes('Sign in') || testMsg.includes('Requested format') || testMsg.includes('unable to extract') || testMsg.includes('Failed to extract any player response')) {
+                        this.logger?.warn(`⛔ [${strategy.client}] Cookie test indica problema, pulando strategy.`);
+                        this.logger?.info(`🔍 Test erro: ${testMsg.slice(0, 150)}`);
+                        lastError = testMsg;
+                        continue;
+                    }
+                } catch (e: any) {
+                    const em = (e.stderr || e.message || '').toString();
+                    if (em.includes('Sign in') || em.includes('Requested format') || em.includes('unable to extract')) {
+                        this.logger?.warn(`⛔ [${strategy.client}] Cookie test falhou: ${em.slice(0, 150)}. Pulando.`);
+                        lastError = em;
+                        continue;
+                    }
+                    // otherwise fallthrough and try full command
+                }
+            }
 
             const result = await new Promise<{ sucesso: boolean; output?: string; error?: string }>((resolve) => {
                 exec(command, { timeout: this.config?.YT_TIMEOUT_MS || 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -199,6 +232,10 @@ class MediaProcessor {
                 this.logger?.info(`✅ Strategy [${strategy.client}] funcionou!`);
                 return result;
             }
+
+            // Se o erro foi 'Requested format is not available', não adianta tentar outras estratégias
+            // com o mesmo formato, o problema é o filtro - mas aqui o buildCommand é fixo.
+            // No entanto, se o erro for 'Sign in', o problema é o bypass.
         }
 
         return { sucesso: false, error: lastError || 'Todos os métodos de bypass falharam.' };
@@ -252,29 +289,34 @@ class MediaProcessor {
             const extractMediaContainer = (msgObj: any): any => {
                 if (!msgObj || typeof msgObj !== 'object') return null;
 
-                // Match direto: se tiver mediaKey ou directPath, é o objeto alvo
-                if (msgObj.mediaKey || msgObj.url || msgObj.directPath) return msgObj;
+                // Match direto prioritário: se tiver mediaKey e (url ou directPath), é o objeto alvo final
+                if (msgObj.mediaKey && (msgObj.url || msgObj.directPath)) return msgObj;
 
-                if (msgObj.viewOnceMessageV2?.message) return extractMediaContainer(msgObj.viewOnceMessageV2.message);
-                if (msgObj.viewOnceMessageV2Extension?.message) return extractMediaContainer(msgObj.viewOnceMessageV2Extension.message);
-                if (msgObj.viewOnceMessage?.message) return extractMediaContainer(msgObj.viewOnceMessage.message);
-                if (msgObj.ephemeralMessage?.message) return extractMediaContainer(msgObj.ephemeralMessage.message);
-                if (msgObj.documentWithCaptionMessage?.message) return extractMediaContainer(msgObj.documentWithCaptionMessage.message);
-                if (msgObj.editMessage?.message) return extractMediaContainer(msgObj.editMessage.message);
-                if (msgObj.protocolMessage?.editedMessage) return extractMediaContainer(msgObj.protocolMessage.editedMessage);
-                if (msgObj.message) return extractMediaContainer(msgObj.message);
+                // Wrappers conhecidos
+                const wraps = [
+                    msgObj.viewOnceMessageV2?.message,
+                    msgObj.viewOnceMessageV2Extension?.message,
+                    msgObj.viewOnceMessage?.message,
+                    msgObj.ephemeralMessage?.message,
+                    msgObj.documentWithCaptionMessage?.message,
+                    msgObj.editMessage?.message,
+                    msgObj.protocolMessage?.editedMessage,
+                    msgObj.message
+                ];
 
-                // Busca recursiva em propriedades comuns que terminam com 'Message'
-                const knownMessages = ['imageMessage', 'videoMessage', 'stickerMessage', 'audioMessage', 'documentMessage'];
-                for (const key of knownMessages) {
-                    if (msgObj[key]) return extractMediaContainer(msgObj[key]);
+                for (const w of wraps) {
+                    if (w) {
+                        const found = extractMediaContainer(w);
+                        if (found) return found;
+                    }
                 }
 
-                // Busca genérica fallback
-                for (const key in msgObj) {
-                    if (key.endsWith('Message') && msgObj[key] && typeof msgObj[key] === 'object') {
-                        const res = extractMediaContainer(msgObj[key]);
-                        if (res) return res;
+                // Sub-mensagens típicas
+                const subKeys = ['imageMessage', 'videoMessage', 'stickerMessage', 'audioMessage', 'documentMessage'];
+                for (const k of subKeys) {
+                    if (msgObj[k]) {
+                        const found = extractMediaContainer(msgObj[k]);
+                        if (found) return found;
                     }
                 }
 
@@ -401,7 +443,7 @@ class MediaProcessor {
             tempInput = this.generateRandomFilename('webp');
             tempOutput = this.generateRandomFilename('webp');
 
-            fs.writeFileSync(tempInput, webpBuffer);
+            await fs.promises.writeFile(tempInput, webpBuffer);
 
             const img = new Webpmux.Image();
             await img.load(tempInput); // Carrega do arquivo físico para evitar erro de Buffer no node-webpmux
@@ -440,7 +482,7 @@ class MediaProcessor {
                 await img.save(tempOutput);
             }
 
-            const result = fs.readFileSync(tempOutput);
+            const result = await fs.promises.readFile(tempOutput);
 
             this.logger?.debug(`✅ Metadados EXIF inseridos via Arquivo: "${packName}" | "${author}"`);
 
@@ -476,7 +518,7 @@ class MediaProcessor {
             const inputPath = this.generateRandomFilename('jpg');
             const outputPath = this.generateRandomFilename('webp');
 
-            fs.writeFileSync(inputPath, imageBuffer);
+            await fs.promises.writeFile(inputPath, imageBuffer);
 
             const { packName = 'akira-bot', author = 'Akira-Bot' } = metadata;
 
@@ -521,7 +563,7 @@ class MediaProcessor {
                 throw new Error('Arquivo de saída não foi criado');
             }
 
-            const stickerBuffer = fs.readFileSync(outputPath);
+            const stickerBuffer = await fs.promises.readFile(outputPath);
 
             // Validação: verificar dimensões (se possível)
             if (stickerBuffer.length === 0) {
@@ -576,7 +618,7 @@ class MediaProcessor {
             const inputPath = this.generateRandomFilename('mp4');
             const outputPath = this.generateRandomFilename('webp');
 
-            fs.writeFileSync(inputPath, videoBuffer);
+            await fs.promises.writeFile(inputPath, videoBuffer);
 
             // Check input duration and log/trim if necessary
             let inputDuration = 0;
@@ -635,7 +677,7 @@ class MediaProcessor {
                 throw new Error('Arquivo de saída não foi criado');
             }
 
-            let stickerBuffer = fs.readFileSync(outputPath);
+            let stickerBuffer = await fs.promises.readFile(outputPath);
 
             // Validação de tamanho
             if (stickerBuffer.length === 0) {
@@ -669,7 +711,7 @@ class MediaProcessor {
                         .save(outputPath);
                 });
 
-                stickerBuffer = fs.readFileSync(outputPath);
+                stickerBuffer = await fs.promises.readFile(outputPath);
 
                 if (stickerBuffer.length > 500 * 1024) {
                     await Promise.all([
@@ -719,7 +761,7 @@ class MediaProcessor {
             const inputPath = this.generateRandomFilename('mp4');
             const outputPath = this.generateRandomFilename('mp3');
 
-            fs.writeFileSync(inputPath, videoBuffer);
+            await fs.promises.writeFile(inputPath, videoBuffer);
 
             await new Promise((resolve, reject) => {
                 ffmpeg(inputPath)
@@ -730,7 +772,7 @@ class MediaProcessor {
                     .save(outputPath);
             });
 
-            const audioBuffer = fs.readFileSync(outputPath);
+            const audioBuffer = await fs.promises.readFile(outputPath);
 
             // Cleanup
             this.cleanupFile(inputPath);
@@ -752,7 +794,7 @@ class MediaProcessor {
             const inputPath = this.generateRandomFilename('webp');
             const outputPath = this.generateRandomFilename('png');
 
-            fs.writeFileSync(inputPath, stickerBuffer);
+            await fs.promises.writeFile(inputPath, stickerBuffer);
 
             await new Promise((resolve, reject) => {
                 ffmpeg(inputPath)
@@ -772,7 +814,7 @@ class MediaProcessor {
                 throw new Error('Arquivo de saída não foi criado');
             }
 
-            const imageBuffer = fs.readFileSync(outputPath);
+            const imageBuffer = await fs.promises.readFile(outputPath);
 
             await Promise.all([
                 this.cleanupFile(inputPath),
@@ -868,13 +910,14 @@ class MediaProcessor {
                 return { modo: 'exe', cmd: localPath };
             }
 
-            // Tenta no PATH
-            try {
-                execSync(`${binName} --version`, { stdio: 'pipe', shell: true } as any);
-                return { modo: 'exe', cmd: binName };
-            } catch (_) { }
+            // Verifica locais comuns sem bloquear (existência via sync é rápida)
+            const commonPaths = ['/usr/bin/yt-dlp', '/usr/local/bin/yt-dlp', '/bin/yt-dlp'];
+            for (const p of commonPaths) {
+                if (fs.existsSync(p)) return { modo: 'exe', cmd: p };
+            }
 
-            return null;
+            // Não encontrou binário em locais comuns — assume que está no PATH (retornar binName otimista)
+            return { modo: 'exe', cmd: binName };
         } catch (e) {
             return null;
         }
@@ -892,13 +935,21 @@ class MediaProcessor {
             const buildCommand = (bypassArgs: string) => {
                 const ytdlpTool = this.findYtDlp();
                 const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
-                // Sem -f: deixa --extract-audio selecionar automaticamente o melhor áudio
-                return `${cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
+                // Usa seleção de formato mais tolerante para evitar "Requested format is not available"
+                // Preferência: melhor áudio disponível, depois melhor geral
+                const formatSelector = '-f "bestaudio/best"';
+                return `${cmd} ${bypassArgs} ${formatSelector} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
             };
 
             const result = await this._runYtDlpWithFallback(buildCommand, expectedPath);
 
             if (!result.sucesso) {
+                // Erros típicos de formato indisponível ou necessidade de login → delegar para ytdl-core
+                const err = (result.error || '').toString();
+                if (err.includes('Requested format is not available') || err.includes('Sign in to confirm you’re not a bot') || err.includes('Sign in to confirm you\'re not a bot')) {
+                    this.logger?.warn('⚠️ yt-dlp encontrou limitação de formato/login, delegando para ytdl-core fallback.');
+                    return { sucesso: false, error: err, delegateToYtdl: true };
+                }
                 return { sucesso: false, error: result.error };
             }
 
@@ -1006,39 +1057,56 @@ class MediaProcessor {
     }
 
     /**
-     * Extrai Video ID do YouTube de várias formas
+     * Download de vídeo com ytdl-core (audio+video combinado)
      */
-    extractYouTubeVideoId(url: string): string | null {
-        // Formato padrão: https://www.youtube.com/watch?v=VIDEO_ID
-        let match = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-        if (match) return match[1];
-
-        // Formato curto: https://youtu.be/VIDEO_ID
-        match = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
-        if (match) return match[1];
-
-        // Formato embed: https://www.youtube.com/embed/VIDEO_ID
-        match = url.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
-        if (match) return match[1];
-
-        // Formato shorts: https://www.youtube.com/shorts/VIDEO_ID
-        match = url.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/);
-        if (match) return match[1];
-
-        // Se a URL já é apenas o ID (11 caracteres)
-        // Fix: Evita colisão com palavras comuns de 11 letras (ex: "darkacademy") exigindo pelo menos um número ou símbolo
-        if (url.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(url) && /[\d_-]/.test(url)) {
-            return url;
+    async _downloadVideoWithYtdlCore(url: string, videoId: string): Promise<any> {
+        try {
+            const outputPath = this.generateRandomFilename('mp4');
+            this.logger?.info('🔄 Obtendo informações do vídeo para ytdl-core...');
+            const info = await ytdl.getInfo(videoId, {
+                requestOptions: { headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' } }
+            });
+            const format = ytdl.chooseFormat(info.formats, { quality: 'highest', filter: 'audioandvideo' });
+            if (!format || !format.url) {
+                return { sucesso: false, error: 'Nenhum formato combinado disponível' };
+            }
+            this.logger?.info(`📦 Formato ytdl-core: ${format.container} ${format.qualityLabel || ''}`);
+            const writeStream = fs.createWriteStream(outputPath);
+            const stream = ytdl.downloadFromInfo(info, { format });
+            await new Promise((resolve, reject) => {
+                stream.pipe(writeStream);
+                writeStream.on('finish', () => resolve(true));
+                writeStream.on('error', reject);
+                stream.on('error', reject);
+            });
+            if (!fs.existsSync(outputPath)) {
+                throw new Error(`Arquivo não encontrado após download (ENOENT): ${outputPath}`);
+            }
+            const stats = fs.statSync(outputPath);
+            if (stats.size === 0) {
+                await this.cleanupFile(outputPath);
+                throw new Error('Arquivo baixado está vazio');
+            }
+            this.logger?.info(`✅ Download ytdl-core vídeo completo: ${(stats.size / 1024 / 1024).toFixed(2)}MB`);
+            return {
+                sucesso: true,
+                videoPath: outputPath,
+                titulo: info?.videoDetails?.title || 'Vídeo do YouTube',
+                tamanho: stats.size,
+                metodo: 'ytdl-core'
+            };
+        } catch (e) {
+            this.logger?.debug('ytdl-core video error:', e.message);
+            return { sucesso: false, error: e.message };
         }
-
-        return null;
     }
 
+    /**
+    * Download de ÁUDIO do YouTube
+    */
     async downloadYouTubeAudio(input: string): Promise<any> {
         try {
-            this.logger?.info('🎵 Iniciando download de áudio do YouTube...');
             let url = input;
-
             // Extrair video ID
             let videoId = this.extractYouTubeVideoId(url);
 
@@ -1088,10 +1156,16 @@ class MediaProcessor {
                     if (result.sucesso) {
                         return { ...result, ...metadata, titulo: 'Áudio do YouTube', metodo: 'yt-dlp' };
                     }
-                } catch (ytErr) {
-                    this.logger?.warn('⚠️ yt-dlp falhou:', ytErr.message);
+
+                    if (result.delegateToYtdl) {
+                        this.logger?.info('⚠️ yt-dlp indicou delegateToYtdl, pulando direto para ytdl-core.');
+                    } else {
+                        this.logger?.warn('⚠️ yt-dlp falhou, caindo para ytdl-core fallback.');
+                    }
+                } catch (ytErr: any) {
+                    this.logger?.warn('⚠️ yt-dlp falhou com exceção, tentando ytdl-core:', ytErr.message);
                 }
-                this.logger?.info('⚠️ yt-dlp falhou, tentando ytdl-core...');
+                this.logger?.info('⚠️ yt-dlp finalizado, tentando ytdl-core...');
             }
 
             // Fallback para ytdl-core
@@ -1102,7 +1176,7 @@ class MediaProcessor {
                     if (res.sucesso) {
                         return { ...res, ...metadata };
                     }
-                } catch (ytErr) {
+                } catch (ytErr: any) {
                     this.logger?.warn('⚠️ ytdl-core falhou:', ytErr.message);
                 }
             }
@@ -1110,17 +1184,28 @@ class MediaProcessor {
             // Fallback para axios direto (método 3)
             this.logger?.info('🔧 Tentando método direto com axios (método 3)');
             try {
-                return await this._downloadWithAxios(url, videoId);
-            } catch (axiosErr) {
+                const axiosRes = await this._downloadWithAxios(url, videoId);
+                if (axiosRes && axiosRes.sucesso) return axiosRes;
+                this.logger?.warn('⚠️ Método direto retornou falha, tentando método alternativo...');
+            } catch (axiosErr: any) {
                 this.logger?.warn('⚠️ Método direto falhou:', axiosErr.message);
+            }
+
+            // Fallback alternativo (pode contornar bot/cookies se estiver disponível)
+            try {
+                const inv = await this.tryInvidiousFallback(videoId, 'audio');
+                if (inv && inv.sucesso) return inv;
+                this.logger?.warn('⚠️ Método alternativo também falhou:', inv?.error || 'sem detalhe');
+            } catch (invErr: any) {
+                this.logger?.warn('⚠️ Erro no método alternativo:', invErr.message);
             }
 
             return {
                 sucesso: false,
-                error: 'Nenhum método de download funcionou. Verifique:\n1. yt-dlp está instalado\n2. A URL do vídeo é válida'
+                error: 'Nenhum método de download funcionou para ÁUDIO. Verifique se o vídeo não é restrito ou se os cookies expiraram.'
             };
 
-        } catch (error) {
+        } catch (error: any) {
             this.logger?.error('❌ Erro geral no download:', error.message);
             return { sucesso: false, error: error.message };
         }
@@ -1156,7 +1241,6 @@ class MediaProcessor {
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 2048;
-            const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
 
             // Detecta extensão real após download (pode ser mp4, webm, mkv)
             const findOutputFile = () => {
@@ -1169,9 +1253,10 @@ class MediaProcessor {
 
             const buildCommand = (bypassArgs: string) => {
                 const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
-                // MÁXIMA COMPATIBILIDADE: 'best' resolver TODOS os casos sem filtros
-                // Se tiver mp4 disponível, pega. Se não, pega o que tiver (webm, mkv, etc)
-                return `${cmd} ${bypassArgs} -f best -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
+                // Formato ultra-resiliente 2026: 
+                // Prioriza Mp4 até 720p para compatibilidade mobile, mas aceita QUALQUER coisa se falhar
+                const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/bestvideo+bestaudio/best";
+                return `${cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
             };
 
             // Usa o mesmo sistema de fallback progressivo do áudio
@@ -1179,13 +1264,35 @@ class MediaProcessor {
             const result = await this._runYtDlpWithFallback(buildCommand, expectedPath);
 
             if (!result.sucesso) {
-                // Tenta detectar qualquer extensão criada
+                // detecta qualquer arquivo gerado
                 const anyFile = findOutputFile();
                 if (!anyFile) {
-                    if (result.error?.includes('indisponível') && !isSearch) {
-                        return { fallbackToSearch: true };
+                    // SE O FALHA foi 'Requested format', tenta UMA ÚLTIMA VEZ com formato absoluto 'best'
+                    if (result.error && result.error.includes('Requested format')) {
+                        this.logger?.info('🔁 Formato indisponível, tentando última cartada: -f best');
+                        const simpleRes = await this._runYtDlpWithFallback((args) => {
+                            const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
+                            return `${cmd} ${args} -f "best" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
+                        }, expectedPath);
+
+                        const lastTry = findOutputFile();
+                        if (lastTry) return { sucesso: true, videoPath: lastTry, tamanho: fs.statSync(lastTry).size, metodo: 'yt-dlp (best)' };
                     }
-                    return { sucesso: false, error: result.error };
+
+                    // Fallbacks externos (Ytdl-core / Invidious) se yt-dlp falhou miseravelmente
+                    if (ytdl) {
+                        try {
+                            const ytdlRes = await this._downloadVideoWithYtdlCore(url, videoId);
+                            if (ytdlRes.sucesso) return ytdlRes;
+                        } catch (e) { }
+                    }
+
+                    try {
+                        const inv = await this.tryInvidiousFallback(videoId, 'video');
+                        if (inv && inv.sucesso) return inv;
+                    } catch (e) { }
+
+                    return { sucesso: false, error: result.error || 'Falha ao baixar vídeo' };
                 }
             }
 
@@ -1323,11 +1430,142 @@ class MediaProcessor {
     }
 
     /**
+     * Fallback usando instâncias Invidious públicas para obter URLs diretos
+     * Retorna {sucesso, path, metodo, titulo, tamanho}
+     */
+    async tryInvidiousFallback(videoId: string, prefer: 'audio' | 'video' = 'audio'): Promise<any> {
+        try {
+            const instances = (this.config?.INVIDIOUS_INSTANCES || 'yewtu.cafe,yewtu.eu,yewtu.snopyta.org').split(',');
+            for (const inst of instances) {
+                const base = inst.trim();
+                if (!base) continue;
+                const url = `https://${base}/api/v1/videos/${videoId}`;
+                this.logger?.info(`🔎 Tentando método alternativo para obter formatos`);
+                try {
+                    const res = await axios.get(url, { timeout: 10000 });
+                    const data = res.data;
+
+                    const formats = Array.isArray(data?.formats) ? data.formats : [];
+                    const adaptive = Array.isArray(data?.adaptiveFormats) ? data.adaptiveFormats : [];
+                    const all = formats.concat(adaptive || []);
+
+                    if (!all || all.length === 0) {
+                        this.logger?.warn(`⚠️ Método alternativo ${base} não retornou formatos válidos`);
+                        continue;
+                    }
+
+                    // Escolha de formato
+                    if (prefer === 'audio') {
+                        // Procura o melhor audio (audioonly)
+                        const auds = all.filter((f: any) => String(f.mimeType || f.mime_type || '').includes('audio'));
+                        if (auds.length === 0) continue;
+                        // Priorizar maior bitrate/contentLength
+                        auds.sort((a: any, b: any) => (parseInt(b.bitrate || b.audioBitrate || 0) || 0) - (parseInt(a.bitrate || a.audioBitrate || 0) || 0));
+                        const chosen = auds[0];
+                        const audiourl = chosen.url || chosen.cipher || chosen.signatureCipher;
+                        if (!audiourl) continue;
+
+                        const outPath = this.generateRandomFilename('mp3');
+                        await this._downloadUrlToFile(audiourl, outPath + '.tmp');
+
+                        // Converter para mp3 com ffmpeg se necessário
+                        await new Promise((resolve, reject) => {
+                            ffmpeg(outPath + '.tmp')
+                                .noVideo()
+                                .audioCodec('libmp3lame')
+                                .audioBitrate('192k')
+                                .on('end', () => resolve(void 0))
+                                .on('error', (err) => reject(err))
+                                .save(outPath);
+                        });
+
+                        await this.cleanupFile(outPath + '.tmp');
+                        const stats = fs.statSync(outPath);
+                        return { sucesso: true, audioPath: outPath, metodo: 'download', titulo: data?.title || 'YouTube', tamanho: stats.size };
+                    } else {
+                        // video prefer
+                        // procura formatos progressivos (contêm audio+video) primeiro
+                        const progressive = all.filter((f: any) => { const mt = String(f.mimeType || f.mime_type || ''); return mt.includes('video') && (f.audioBitrate || mt.includes('audio')) && f.url; });
+                        if (progressive.length > 0) {
+                            progressive.sort((a: any, b: any) => (parseInt(b.bitrate || 0) || 0) - (parseInt(a.bitrate || 0) || 0));
+                            const chosen = progressive[0];
+                            const vurl = chosen.url;
+                            const outPath = this.generateRandomFilename('mp4');
+                            await this._downloadUrlToFile(vurl, outPath);
+                            const stats = fs.statSync(outPath);
+                            return { sucesso: true, videoPath: outPath, metodo: 'download', titulo: data?.title || 'YouTube', tamanho: stats.size };
+                        }
+
+                        // Se não há progressivo, pega melhor video e melhor audio e merge
+                        const videos = all.filter((f: any) => String(f.mimeType || '').includes('video') && f.url).sort((a: any, b: any) => (parseInt(b.bitrate || 0) || 0) - (parseInt(a.bitrate || 0) || 0));
+                        const audios = all.filter((f: any) => String(f.mimeType || '').includes('audio') && f.url).sort((a: any, b: any) => (parseInt(b.bitrate || b.audioBitrate || 0) || 0) - (parseInt(a.bitrate || a.audioBitrate || 0) || 0));
+                        if (videos.length > 0 && audios.length > 0) {
+                            const v = videos[0];
+                            const a = audios[0];
+                            const vPath = this.generateRandomFilename('mp4');
+                            const aPath = this.generateRandomFilename('m4a');
+                            await this._downloadUrlToFile(v.url, vPath);
+                            await this._downloadUrlToFile(a.url, aPath);
+
+                            const outMerged = this.generateRandomFilename('mp4');
+                            await new Promise((resolve, reject) => {
+                                ffmpeg()
+                                    .input(vPath)
+                                    .input(aPath)
+                                    .outputOptions(['-c:v copy', '-c:a aac', '-strict experimental'])
+                                    .on('end', () => resolve(void 0))
+                                    .on('error', (err) => reject(err))
+                                    .save(outMerged);
+                            });
+
+                            await Promise.all([this.cleanupFile(vPath), this.cleanupFile(aPath)]);
+                            const stats = fs.statSync(outMerged);
+                            return { sucesso: true, videoPath: outMerged, metodo: 'download', titulo: data?.title || 'YouTube', tamanho: stats.size };
+                        }
+                    }
+                } catch (e) {
+                    this.logger?.debug(`⚠️ Erro no método alternativo ${base}: ${e.message}`);
+                    continue;
+                }
+            }
+
+            return { sucesso: false, error: 'Invidious não encontrou formatos válidos' };
+        } catch (e) {
+            return { sucesso: false, error: e.message };
+        }
+    }
+
+    // Helper para baixar uma url direta para arquivo via axios stream
+    async _downloadUrlToFile(url: string, outPath: string): Promise<void> {
+        return new Promise(async (resolve, reject) => {
+            try {
+                const response = await axios.get(url, { responseType: 'stream', timeout: 60000 });
+                const writer = fs.createWriteStream(outPath);
+                response.data.pipe(writer);
+                writer.on('finish', () => resolve());
+                writer.on('error', (err: any) => reject(err));
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
+    /**
     * Processa link do YouTube (validação)
     */
     isValidYouTubeUrl(url: any): boolean {
         const regex = /^(https?:\/\/(www\.)?)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\/.*$/i;
         return regex.test(String(url));
+    }
+
+    /**
+     * Extrai o ID do vídeo do YouTube de diversas URLs
+     */
+    extractYouTubeVideoId(url: string): string | null {
+        if (!url) return null;
+        const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([^"&?\/\s]{11})/i;
+        const match = url.match(regex);
+        return match ? match[1] : null;
     }
 
     /**
@@ -1479,7 +1717,7 @@ class MediaProcessor {
                 };
             }
 
-            const buffer = fs.readFileSync(outputPath);
+            const buffer = await fs.promises.readFile(outputPath);
 
             // Limpar arquivo temporário
             await this.cleanupFile(outputPath);
@@ -1625,15 +1863,15 @@ class MediaProcessor {
                     .format('mp3')
                     .on('end', () => {
                         try {
-                            const buffer = fs.readFileSync(outputPath);
-
-                            // Limpar arquivos temporários
-                            if (Buffer.isBuffer(audioInput)) {
-                                fs.unlinkSync(inputPath);
-                            }
-                            fs.unlinkSync(outputPath);
-
-                            resolve(buffer);
+                            fs.promises.readFile(outputPath).then((buffer) => {
+                                // Limpar arquivos temporários (não-bloqueante)
+                                const cleanupPromises: Promise<any>[] = [];
+                                if (Buffer.isBuffer(audioInput)) {
+                                    cleanupPromises.push(fs.promises.unlink(inputPath).catch(() => { }));
+                                }
+                                cleanupPromises.push(fs.promises.unlink(outputPath).catch(() => { }));
+                                Promise.all(cleanupPromises).then(() => resolve(buffer)).catch(() => resolve(buffer));
+                            }).catch((e) => reject(e));
                         } catch (e) {
                             reject(e);
                         }
@@ -1664,3 +1902,4 @@ class MediaProcessor {
 }
 
 export default MediaProcessor;
+

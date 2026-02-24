@@ -1,270 +1,206 @@
-# Implementation Plan: Fix Missing Commands in Akira Bot
+# Implementation Plan: Fix Command Issues - Akira Bot V21
 
 ## Overview
-Fix the critical issue where many commands exist in modules but are not accessible through the CommandHandler switch statement. This resolves the "comandos não sendo encontrados" problem reported by the user.
+Fix critical command issues in Akira Bot V21 including submenu functionality, command recognition, and missing command implementations. The main issues are:
+- Submenus not working ("os submenos não estão funcpnado")
+- Commands not being found ("os comandos não estãp sendo encomtradao")
+- Missing command implementations
+- Menu system inconsistencies
 
-## Root Cause Analysis
+## Issues Identified
 
-### Primary Issue: Incomplete CommandHandler Switch
-The CommandHandler switch statement is missing many commands that exist in the modules:
-- ImageEffects commands (wasted, jail, triggered, etc.)
-- Economy commands (withdraw, transacoes)
-- OSINT commands (dork, email, phone, username)
-- Moderation commands (blacklist, warn, etc.)
-- GridTactics game commands
+### 1. Submenu System Broken
+**Problem:** Submenu aliases like `#menucyber`, `#menumedia`, etc. are not working
+**Root Cause:** CommandHandler has submenu aliases but they may not be properly handled
+**Current Code:**
+```typescript
+// SUBMENU ALIASES - Fix for "submenus não estão funcionando"
+case 'menucyber':
+case 'menumedia':
+case 'menuconta':
+case 'menudiversao':
+case 'menujogos':
+case 'menugrupo':
+case 'menuadm':
+case 'menuinfo':
+case 'menupremium':
+case 'menuosint':
+case 'menuaudio':
+case 'menuimagem':
+    // Extract submenu from command (remove "menu" prefix)
+    const subMenu = command.substring(4).toLowerCase(); // "menucyber" -> "cyber"
+    return await this._showMenu(m, subMenu);
+```
 
-### Secondary Issue: GridTactics Import Problem
-GridTacticsGame is imported but not properly connected to the CommandHandler.
+### 2. Command Recognition Issues
+**Problem:** Some commands are not being recognized or executed
+**Possible Causes:**
+- Case sensitivity issues
+- Missing command handlers
+- Import/initialization problems
+- Permission system blocking commands
 
-## Files to Modify
+### 3. Missing Command Implementations
+**Problem:** Some commands exist in the switch statement but don't have proper handlers
+**Examples:**
+- Many commands have empty cases or missing implementations
+- Some commands reference non-existent methods
 
-### 1. modules/CommandHandler.ts
+### 4. Menu System Inconsistencies
+**Problem:** Menu shows commands that don't exist or work
+**Issues:**
+- Dynamic command detection shows commands not in static menu
+- Some menu categories are incomplete
+- Command descriptions don't match actual functionality
+
+## Types
+No new types needed. Focus on fixing existing command handling logic.
+
+## Files
+
+### 1. modules/CommandHandler.ts (Major Fix)
 **Changes:**
-- Add missing command cases to the switch statement
-- Import GridTacticsGame properly
-- Add missing handler methods
-- Fix GridTactics command implementation
+- Fix submenu alias handling
+- Add missing command implementations
+- Fix command recognition logic
+- Improve error handling for unknown commands
+- Add proper fallbacks for missing handlers
 
-### 2. modules/GridTacticsGame.ts
+### 2. modules/BotCore.ts (Minor Fix)
 **Changes:**
-- Ensure proper export/import compatibility
-- Fix any missing methods referenced in CommandHandler
+- Ensure CommandHandler is properly initialized
+- Add better error logging for command processing
 
-## Commands to Add
+### 3. modules/PermissionManager.ts (Minor Fix)
+**Changes:**
+- Fix command permission checking
+- Ensure public commands work without registration
 
-### Image Effects Commands
-```typescript
-case 'wasted':
-case 'jail':
-case 'triggered':
-case 'communism':
-case 'sepia':
-case 'grey':
-case 'invert':
-case 'mission':
-case 'angola':
-case 'addbg':
-    return await this._handleImageEffect(m, command, args);
-```
+## Functions
 
-### Economy Commands
-```typescript
-case 'withdraw':
-case 'sacar':
-    return await this._handleWithdraw(m, userId, args);
+### New Functions to Add:
 
-case 'transacoes':
-case 'transactions':
-    return await this._handleTransactions(m, userId);
-```
+#### CommandHandler
+1. `_handleUnknownCommand(command, m)` - Handle unrecognized commands gracefully
+2. `_validateCommand(command, args)` - Validate command syntax and arguments
+3. `_getCommandHelp(command)` - Get help text for specific commands
+4. `_fixSubmenuAlias(command)` - Properly handle submenu aliases
 
-### OSINT Commands
-```typescript
-case 'dork':
-    if (!isOwner) {
-        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
-        return true;
-    }
-    return await this._handleDork(m, args);
+### Modified Functions:
 
-case 'email':
-    if (!isOwner) {
-        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
-        return true;
-    }
-    return await this._handleEmailCheck(m, args);
+#### CommandHandler.handle()
+- Add better command validation
+- Improve error handling
+- Add logging for debugging
 
-case 'phone':
-    if (!isOwner) {
-        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
-        return true;
-    }
-    return await this._handlePhoneLookup(m, args);
+#### CommandHandler._showMenu()
+- Fix submenu navigation
+- Add better error messages
+- Improve menu consistency
 
-case 'username':
-    if (!isOwner) {
-        await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
-        return true;
-    }
-    return await this._handleUsernameCheck(m, args);
-```
-
-### Moderation Commands
-```typescript
-case 'blacklist':
-    if (!isOwner) return false;
-    return await this._handleBlacklist(m, args);
-
-case 'mutelist':
-    if (!isOwner) return false;
-    return await this._handleMuteList(m);
-
-case 'warn':
-    if (!isOwner && !isAdminUsers) return false;
-    return await this._handleManualWarn(m, args);
-
-case 'unwarn':
-case 'resetwarns':
-    if (!isOwner && !isAdminUsers) return false;
-    return await this._handleResetWarns(m, args);
-```
-
-### GridTactics Commands
-```typescript
-case 'gridtactics':
-case 'grid':
-    const gameRes = await this.gridTacticsGame.handleGridTactics(chatJid, userId, args[0] || 'start', args.slice(1));
-    return await this._reply(m, gameRes.text);
-```
-
-## Handler Methods to Add
-
-### Economy Handlers
-```typescript
-public async _handleWithdraw(m: any, userId: string, args: string[]): Promise<boolean> {
-    // Implementation similar to _handleDeposit
-}
-
-public async _handleTransactions(m: any, userId: string): Promise<boolean> {
-    // Implementation to show transaction history
-}
-```
-
-### OSINT Handlers
-```typescript
-public async _handleDork(m: any, args: string[]): Promise<boolean> {
-    // Proxy to OSINTFramework
-}
-
-public async _handleEmailCheck(m: any, args: string[]): Promise<boolean> {
-    // Proxy to OSINTFramework
-}
-
-public async _handlePhoneLookup(m: any, args: string[]): Promise<boolean> {
-    // Proxy to OSINTFramework
-}
-
-public async _handleUsernameCheck(m: any, args: string[]): Promise<boolean> {
-    // Proxy to OSINTFramework
-}
-```
-
-### Moderation Handlers
-```typescript
-public async _handleBlacklist(m: any, args: string[]): Promise<boolean> {
-    // Implementation for blacklist management
-}
-
-public async _handleMuteList(m: any): Promise<boolean> {
-    // Implementation to show muted users
-}
-```
-
-## Implementation Steps
-
-### Step 1: Add Missing Command Cases
-Add all missing command cases to the switch statement in CommandHandler.ts
-
-### Step 2: Implement Handler Methods
-Add the missing handler method implementations
-
-### Step 3: Fix GridTactics Integration
-Ensure GridTacticsGame is properly imported and the handleGridTactics method exists
-
-### Step 4: Test Commands
-Test that all newly added commands work correctly
-
-## Priority Order
-
-### High Priority (Core Functionality)
-1. Image Effects commands (wasted, jail, etc.) - Most requested
-2. Economy commands (withdraw, transacoes) - Basic functionality
-3. GridTactics commands - Game functionality
-
-### Medium Priority (Advanced Features)
-4. OSINT commands (dork, email, phone, username) - Owner only
-5. Moderation commands (blacklist, warn) - Admin functionality
-
-## Testing Strategy
-
-### Test Cases
-1. Test each new command individually
-2. Verify owner/admin permissions work
-3. Test error handling for invalid inputs
-4. Verify commands appear in menu system
-
-### Regression Testing
-1. Ensure existing commands still work
-2. Verify no conflicts with existing functionality
-3. Test in both group and private chat contexts
-
-## Success Criteria
-
-### Functional Requirements
-- [ ] All commands listed in inventory are accessible
-- [ ] Commands work with proper permissions
-- [ ] Error messages are user-friendly
-- [ ] Commands integrate with existing menu system
-
-### Quality Requirements
-- [ ] Code follows existing patterns
-- [ ] Proper error handling implemented
-- [ ] Logging added where appropriate
-- [ ] No performance degradation
-
-## Risk Assessment
-
-### Low Risk
-- Adding new command cases (follows existing pattern)
-- Adding handler methods (follows existing pattern)
-
-### Medium Risk
-- GridTactics integration (may need method signature fixes)
-- OSINT command permissions (owner-only commands)
-
-### Mitigation Strategies
-- Test each command individually before bulk testing
-- Have rollback plan (comment out new code if issues)
-- Verify with existing command patterns
-
-## Timeline
-
-### Phase 1: Core Commands (1-2 hours)
-- Add ImageEffects commands
-- Add Economy commands
-- Fix GridTactics integration
-
-### Phase 2: Advanced Commands (1-2 hours)
-- Add OSINT commands
-- Add Moderation commands
-- Test all functionality
-
-### Phase 3: Validation (30 minutes)
-- Comprehensive testing
-- Menu system integration
-- Documentation update
+## Classes
+No new classes. Modifications to existing CommandHandler class.
 
 ## Dependencies
+No new dependencies required.
 
-### Internal Dependencies
-- All existing modules must be properly initialized
-- GridTacticsGame must export handleGridTactics method
-- OSINTFramework must have the required methods
+## Testing
 
-### External Dependencies
-- No new external dependencies required
-- All functionality uses existing libraries
+### Command Testing:
+1. Test all submenu aliases: `#menucyber`, `#menumedia`, etc.
+2. Test basic commands: `#ping`, `#menu`, `#help`
+3. Test registration-required commands
+4. Test admin-only commands
+5. Test submenu navigation
 
-## Documentation Updates
+### Menu Testing:
+1. Test main menu display
+2. Test submenu navigation
+3. Test dynamic command detection
+4. Test menu consistency
 
-### Update Commands Inventory
-- Mark newly implemented commands as ✅
-- Update status for any commands that were previously ❌
+## Implementation Order
 
-### Update Menu System
-- Ensure new commands appear in appropriate menu categories
-- Update help text and examples
+### Step 1: Fix Submenu System
+1. Fix submenu alias extraction logic
+2. Ensure submenu commands call `_showMenu()` correctly
+3. Test all submenu aliases work
 
-## Conclusion
+### Step 2: Fix Command Recognition
+1. Add better command validation
+2. Fix case sensitivity issues
+3. Add proper error handling for unknown commands
 
-This implementation plan will resolve the core issue of missing commands by systematically adding all command cases to the CommandHandler switch statement and implementing the necessary handler methods. The phased approach ensures quality and minimizes risk of introducing bugs.
+### Step 3: Add Missing Command Implementations
+1. Identify commands with empty cases
+2. Implement missing handlers or remove unused commands
+3. Add proper fallbacks
+
+### Step 4: Fix Menu System
+1. Update menu to reflect actual working commands
+2. Fix dynamic command detection
+3. Improve menu navigation
+
+### Step 5: Testing and Validation
+1. Test all commands work
+2. Test menu system
+3. Test submenu navigation
+4. Add logging for debugging
+
+## Task Progress
+
+- [ ] Step 1: Fix Submenu System
+- [ ] Step 2: Fix Command Recognition
+- [ ] Step 3: Add Missing Command Implementations
+- [ ] Step 4: Fix Menu System
+- [ ] Step 5: Testing and Validation
+
+## Quality Standards
+
+### Command Quality:
+- All commands in switch statement must have implementations
+- Commands must provide helpful error messages
+- Commands must handle edge cases gracefully
+- Commands must respect permission system
+
+### Menu Quality:
+- Menu must accurately reflect available commands
+- Submenus must work correctly
+- Menu navigation must be intuitive
+- Dynamic detection must work properly
+
+### Error Handling:
+- Unknown commands should provide helpful suggestions
+- Failed commands should log errors appropriately
+- Permission denied should explain why
+- Network errors should be handled gracefully
+
+## Risk Mitigation
+
+### Technical Risks:
+- Breaking existing working commands during fixes
+- Introducing new bugs in command handling
+- Performance degradation from added validation
+
+### User Experience Risks:
+- Commands becoming unavailable during fixes
+- Confusing error messages
+- Inconsistent menu behavior
+
+## Success Metrics
+
+### Functional Metrics:
+- All submenu aliases work: 100%
+- All implemented commands work: 100%
+- Menu system consistent: 100%
+- Error messages helpful: 95%+
+
+### Performance Metrics:
+- Command response time: < 2 seconds
+- Menu display time: < 1 second
+- Memory usage: No significant increase
+
+### User Experience Metrics:
+- Command success rate: > 95%
+- Menu navigation intuitive: 100%
+- Error messages clear: 100%
