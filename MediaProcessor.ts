@@ -110,36 +110,36 @@ class MediaProcessor {
             this.logger?.warn(`⚠️ YouTube Bypass: Nenhum ficheiro de cookies detetado! Esperados em: ${possibleCookiePaths.join(', ')}`);
         }
 
-        const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates';
-        const secHeaders = '--add-header "Sec-Ch-Ua: \\"Google Chrome\\";v=\\"125\\", \\"Chromium\\";v=\\"125\\", \\"Not.A/Brand\\";v=\\"24\\"" --add-header "Sec-Ch-Ua-Mobile: ?0" --add-header "Sec-Ch-Ua-Platform: \\"Windows\\""';
+        const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates --ignore-config --no-cache-dir';
+
+        // 📱 User-Agents Modernos (Bypass 2026.7)
+        const ua_iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+        const ua_android = 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UD1A.230805.019; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.6422.165 Mobile Safari/537.36';
+        const ua_chrome = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
         const strategies: Array<{ client: string; args: string }> = [];
 
-        // 🟢 Estratégia [WEB + COOKIES] - Mais estável (se houver cookies)
+        // 🟢 1. WEB + COOKIES (mais robusto se cookies válidos)
         if (finalCookieArg) {
-            let webArgs = `--extractor-args "youtube:player_client=web${poToken ? `;po_token=web+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} ${secHeaders}`;
+            let webArgs = `--extractor-args "youtube:player_client=web" ${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_chrome}"`;
             strategies.push({ client: 'web+cookies', args: webArgs });
         }
 
-        // 🟠 Estratégia [IOS] - Melhor bypass sem cookies em 2026
-        // O cliente iOS costuma ter menos restrições para IPs de servidores
-        const iosArgs = `--extractor-args "youtube:player_client=ios${poToken ? `;po_token=ios+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs} --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"`;
-        strategies.push({ client: 'ios', args: iosArgs.trim() });
+        // 🔴 2. TV_EMBEDDED (raro bot-detect, sem cookies para evitar falhas de autenticação)
+        let tvArgs = `--extractor-args "youtube:player_client=tv_embedded" ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        strategies.push({ client: 'tv_embedded', args: tvArgs });
 
-        // 🟡 Estratégia [TV_EMBEDDED] - Raramente bloqueado
-        strategies.push({
-            client: 'tv_embedded',
-            args: `--extractor-args "youtube:player_client=tv_embedded" ${finalCookieArg} ${baseSleepArgs}`.trim()
-        });
+        // 🟣 3. ANDROID (classic bypass, sem cookies)
+        let androidArgs = `--extractor-args "youtube:player_client=android" ${baseSleepArgs} --user-agent "${ua_android}"`;
+        strategies.push({ client: 'android', args: androidArgs });
 
-        // 🔵 Estratégia [ANDROID] - Bypass clássico
-        const androidArgs = `--extractor-args "youtube:player_client=android${poToken ? `;po_token=android+${poToken}` : ''}" ${finalCookieArg} ${baseSleepArgs}`;
-        strategies.push({ client: 'android', args: androidArgs.trim() });
+        // 🔵 4. WEB_EMBEDDED (mais permissivo, sem player_client determinado)
+        let webEmbeddedArgs = `${baseSleepArgs} --user-agent "${ua_chrome}"`;
+        strategies.push({ client: 'web_embedded_flex', args: webEmbeddedArgs });
 
-        // ⚪ Estratégia [WEB_EMBEDDED] - Compatibilidade máxima
-        strategies.push({
-            client: 'web_embedded',
-            args: `--extractor-args "youtube:player_client=web_embedded" ${finalCookieArg} ${baseSleepArgs}`.trim()
-        });
+        // 🟠 5. IOS (mobile fallback, User-Agent only)
+        let iosArgs = `${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        strategies.push({ client: 'ios_flex', args: iosArgs });
 
         return strategies;
     }
@@ -159,6 +159,9 @@ class MediaProcessor {
         for (const strategy of strategies) {
             this.logger?.info(`🔄 Tentando strategy: [${strategy.client}]`);
             const command = buildCommand(strategy.args);
+
+            // Log do comando EXATO para diagnóstico
+            this.logger?.info(`📝 Comando: ${command.slice(0, 200)}...`);
 
             const result = await new Promise<{ sucesso: boolean; output?: string; error?: string }>((resolve) => {
                 exec(command, { timeout: this.config?.YT_TIMEOUT_MS || 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -181,6 +184,7 @@ class MediaProcessor {
                     // Detecta bloqueio real de bot-detection
                     if (errMsg.includes('Sign in') || errMsg.includes('bot') || errMsg.includes('403') || errMsg.includes('Requested format is not available')) {
                         this.logger?.warn(`⛔ [${strategy.client}] Bloqueado ou formato indisponível, tentando próximo...`);
+                        this.logger?.info(`🔍 Erro detectado: ${errMsg.slice(0, 100)}`);
                     } else if (errMsg.includes('Video unavailable') || errMsg.includes('Private video')) {
                         return resolve({ sucesso: false, error: 'Vídeo indisponível ou privado' });
                     } else {
@@ -284,17 +288,28 @@ class MediaProcessor {
                 return null;
             }
 
+            // ✅ NORMALIZAÇÃO DE MIMETYPE (Crucial para Baileys Decryption)
+            // Se mimeType for genérico ('image', 'audio'), tentamos inferir do objeto encontrado
+            let finalMimeType = mimeType;
+            if (mediaContent.mimetype && (mimeType === 'image' || mimeType === 'video' || mimeType === 'audio')) {
+                // Baileys usa as chaves do objeto para decidir o tipo de decifração.
+                // Passar o 'mimeType' correto (ex: 'image') é essencial.
+                if (mediaContent.mimetype.includes('image')) finalMimeType = 'image';
+                else if (mediaContent.mimetype.includes('video')) finalMimeType = 'video';
+                else if (mediaContent.mimetype.includes('audio')) finalMimeType = 'audio';
+            }
+
             // Diagnostic log para 'Empty Media Key'
-            if (!mediaContent.mediaKey || !mediaContent.directPath) {
+            if (!mediaContent.mediaKey || (!mediaContent.directPath && !mediaContent.url)) {
                 this.logger?.warn('⚠️ Mídia encontrada mas incompleta (Empty Media Key):');
                 this.logger?.debug('📋 Conteúdo extraído:', JSON.stringify(mediaContent, null, 2));
                 this.logger?.debug('📋 Mensagem original:', JSON.stringify(message, null, 2).slice(0, 1000));
             }
 
             // A Baileys precisa do objeto final (ex: imageMessage) para decifrar a chave
-            message = mediaContent;
+            const targetMessage = mediaContent;
 
-            this.logger?.debug(`⬇️ Baixando mídia (mime: ${mimeType})...`);
+            this.logger?.debug(`⬇️ Baixando mídia (tipo inferido: ${finalMimeType}, original: ${mimeType})...`);
             this.logger?.debug(`📋 Tipo de mensagem: ${typeof message}`);
 
             // Timeout de 30 segundos para download
@@ -305,7 +320,7 @@ class MediaProcessor {
 
             for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
-                    const downloadPromise = downloadContentFromMessage(message, mimeType as any);
+                    const downloadPromise = downloadContentFromMessage(targetMessage, finalMimeType as any);
                     const timeoutPromise = new Promise((_, reject) =>
                         setTimeout(() => reject(new Error('Timeout ao baixar mídia (30s)')), 30000)
                     );
@@ -877,6 +892,7 @@ class MediaProcessor {
             const buildCommand = (bypassArgs: string) => {
                 const ytdlpTool = this.findYtDlp();
                 const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
+                // Sem -f: deixa --extract-audio selecionar automaticamente o melhor áudio
                 return `${cmd} ${bypassArgs} --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
             };
 
@@ -1140,7 +1156,6 @@ class MediaProcessor {
 
             const outputTemplate = this.generateRandomFilename('').replace(/\\$/, '');
             const maxSizeMB = this.config?.YT_MAX_SIZE_MB || 2048;
-            const formatStr = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best";
 
             // Detecta extensão real após download (pode ser mp4, webm, mkv)
             const findOutputFile = () => {
@@ -1153,7 +1168,11 @@ class MediaProcessor {
 
             const buildCommand = (bypassArgs: string) => {
                 const cmd = process.platform === 'win32' ? `"${ytdlpTool.cmd}"` : ytdlpTool.cmd;
-                return `${cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --merge-output-format mp4 --no-warnings "${url}"`;
+                // Formato ultra-compatível: tenta video+audio juntos, após tenta qualquer combinação
+                // bestvideo+bestaudio = melhor video + melhor audio (padrão youtube-dl)
+                // /best = se não conseguir combinar, pega o arquivo único melhor
+                const formatStr = "bestvideo+bestaudio/best";
+                return `${cmd} ${bypassArgs} -f "${formatStr}" -o "${outputTemplate}.%(ext)s" --no-playlist --max-filesize ${maxSizeMB}M --no-warnings "${url}"`;
             };
 
             // Usa o mesmo sistema de fallback progressivo do áudio
