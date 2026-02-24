@@ -62,12 +62,11 @@ RUN apk add --no-cache \
     ruby-full
 
 # ═══════════════════════════════════════════════════════════════════════
-# INSTALAÇÃO DO YT-DLP VIA PIP (MAIS CONFIÁVEL QUE BINÁRIO)
+# INSTALAÇÃO DO YT-DLP (MÁXIMA PRIORIDADE PARA BYPASS 2026)
 # ═══════════════════════════════════════════════════════════════════════
-RUN pip install --upgrade yt-dlp 2>/dev/null || \
-    (curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp) && \
-    echo "✅ yt-dlp instalado: $(yt-dlp --version)"
+RUN pip install --upgrade --no-cache-dir yt-dlp && \
+    ln -sf /usr/bin/yt-dlp /usr/local/bin/yt-dlp || true && \
+    echo "✅ yt-dlp atualizado: $(yt-dlp --version)"
 
 # ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
