@@ -62,11 +62,12 @@ RUN apk add --no-cache \
     ruby-full
 
 # ═══════════════════════════════════════════════════════════════════════
-# INSTALAÇÃO MANUAL DO YT-DLP (LATEST) - REQUISITO DEPLOY
+# INSTALAÇÃO DO YT-DLP VIA PIP (MAIS CONFIÁVEL QUE BINÁRIO)
 # ═══════════════════════════════════════════════════════════════════════
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp && \
-    echo "✅ yt-dlp instalado manualmente: $(yt-dlp --version)"
+RUN pip install --upgrade yt-dlp 2>/dev/null || \
+    (curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp) && \
+    echo "✅ yt-dlp instalado: $(yt-dlp --version)"
 
 # ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
@@ -119,16 +120,16 @@ RUN cd /opt && \
     git clone https://github.com/commixproject/commix.git commix || true && \
     ([ -f /opt/commix/commix.py ] && ln -s /opt/commix/commix.py /usr/local/bin/commix && chmod +x /opt/commix/commix.py || true)
 
-# IMPACKET, SHERLOCK, HOLEHE e THEHARVESTER via PIP
+# IMPACKET, SHERLOCK, HOLEHE e THEHARVESTER via PIP (com fallback robusto)
 RUN pip3 install --no-cache-dir --break-system-packages \
     impacket \
     sherlock-project \
     holehe \
-    theHarvester && \
-    ln -sf $(which theHarvester) /usr/local/bin/theharvester || true && \
-    ln -sf $(which sherlock) /usr/local/bin/sherlock || true && \
-    ln -sf $(which holehe) /usr/local/bin/holehe || true && \
-    ln -sf $(which impacket-psexec) /usr/local/bin/impacket-psexec || true
+    theHarvester 2>/dev/null || true && \
+    for tool in theHarvester sherlock holehe; do \
+        which "$tool" >/dev/null 2>&1 && ln -sf $(which "$tool") /usr/local/bin/"$tool" 2>/dev/null || true; \
+    done && \
+    which impacket-psexec >/dev/null 2>&1 && ln -sf $(which impacket-psexec) /usr/local/bin/impacket-psexec || true
 
 # NETEXEC via PIP (específico)
 RUN pip3 install --no-cache-dir --break-system-packages git+https://github.com/Pennyw0rth/NetExec && \
