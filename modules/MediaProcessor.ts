@@ -115,22 +115,31 @@ class MediaProcessor {
         // 📱 User-Agents Modernos (Bypass 2026.7)
         const ua_iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
         const ua_android = 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UD1A.230805.019; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.6422.165 Mobile Safari/537.36';
+        const ua_chrome = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
         const strategies: Array<{ client: string; args: string }> = [];
 
-        // 🟢 Estratégia 1: COM COOKIES (mais eficaz que player_client complexos)
+        // 🟢 1. WEB + COOKIES (mais robusto se cookies)
         if (finalCookieArg) {
-            let cookieArgs = `${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_iphone}"`;
-            strategies.push({ client: 'cookies+iphone', args: cookieArgs });
+            let webArgs = `--extractor-args "youtube:player_client=web" ${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_chrome}"`;
+            strategies.push({ client: 'web+cookies', args: webArgs });
         }
 
-        // 🔴 Estratégia 2: ANDROID UA (fallback se cookies falhar)
-        let androidArgs = `${baseSleepArgs} --user-agent "${ua_android}"`;
-        strategies.push({ client: 'android-ua', args: androidArgs });
+        // 🔴 2. TV_EMBEDDED (raro bot-detect)
+        let tvArgs = `--extractor-args "youtube:player_client=tv_embedded" ${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        strategies.push({ client: 'tv_embedded', args: tvArgs });
 
-        // 🔘 Estratégia 3: IPHONE UA (último recurso)
-        let iosArgs = `${baseSleepArgs} --user-agent "${ua_iphone}"`;
-        strategies.push({ client: 'iphone-ua', args: iosArgs });
+        // 🟣 3. ANDROID (classic bypass)
+        let androidArgs = `--extractor-args "youtube:player_client=android" ${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_android}"`;
+        strategies.push({ client: 'android', args: androidArgs });
+
+        // 🔵 4. WEB_EMBEDDED (no-cookies)
+        let webEmbeddedArgs = `--extractor-args "youtube:player_client=web_embedded" ${baseSleepArgs} --user-agent "${ua_chrome}"`;
+        strategies.push({ client: 'web_embedded', args: webEmbeddedArgs });
+
+        // 🟠 5. IOS (mobile fallback)
+        let iosArgs = `--extractor-args "youtube:player_client=ios" ${baseSleepArgs} --user-agent "${ua_iphone}"`;
+        strategies.push({ client: 'ios', args: iosArgs });
 
         return strategies;
     }
