@@ -12,8 +12,10 @@ class LevelSystem {
     public windowDays: number;
     public maxLevel: number;
     public topForAdm: number;
+    public enableDetailedLogging: boolean;
 
     constructor(logger: any = console) {
+
         this.config = ConfigManager.getInstance();
         this.logger = logger;
 
@@ -33,7 +35,9 @@ class LevelSystem {
         this.windowDays = this.config.LEVEL_WINDOW_DAYS || 3;
         this.maxLevel = this.config.LEVEL_MAX || 60;
         this.topForAdm = this.config.LEVEL_TOP_FOR_ADM || 3;
+        this.enableDetailedLogging = true;
     }
+
 
     _ensureFiles() {
         try {

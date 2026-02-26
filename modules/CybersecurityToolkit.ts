@@ -81,8 +81,9 @@ class CybersecurityToolkit {
             try {
                 if (!this.sock) {
                     console.error('❌ CybersecurityToolkit: Socket não injetado.');
-                    return false;
+                    return true;
                 }
+
 
                 // Envia mensagem de processando
                 await this.sock.sendMessage(m.key.remoteJid, { text: `🛡️ Executando ${command}...` }, { quoted: m });

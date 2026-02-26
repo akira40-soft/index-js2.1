@@ -287,7 +287,13 @@ class CommandHandler {
                 case 'level':
                 case 'lvl':
                 case 'nivel':
-                    return await this._handleLevel(m, userId, chatJid, ehGrupo);
+                    try {
+                        return await this._handleLevel(m, userId, chatJid, ehGrupo);
+                    } catch (e: any) {
+                        console.error('[CommandHandler] Erro no comando level:', e.message);
+                        await this._reply(m, '❌ Erro ao processar comando de nível. Tente novamente.');
+                        return true;
+                    }
 
                 case 'rank':
                 case 'ranking':
@@ -387,9 +393,15 @@ class CommandHandler {
                 case 'jogodavelha': {
                     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
                     // Modo IA: se não mencionar ninguém, joga contra a IA
-                    const gs = this.gameSystem || (await import('./GameSystem.js')).default;
-                    const gameRes = await gs.handleTicTacToe(chatJid, userId, args[0] || 'start', mentioned);
-                    return await this._reply(m, gameRes.text, { mentions: [userId, ...(mentioned ? [mentioned] : [])] });
+                    try {
+                        const gs = this.gameSystem || GameSystem;
+                        const gameRes = await gs.handleTicTacToe(chatJid, userId, args[0] || 'start', mentioned);
+                        return await this._reply(m, gameRes.text, { mentions: [userId, ...(mentioned ? [mentioned] : [])] });
+                    } catch (e) {
+                        console.error('Erro no TTT:', e);
+                        await this._reply(m, '❌ Erro ao iniciar o jogo. Tente novamente!');
+                        return true;
+                    }
                 }
 
                 case 'rps':
@@ -416,8 +428,16 @@ class CommandHandler {
 
                 case 'gridtactics':
                 case 'grid': {
-                    const gameRes = await this.gridTacticsGame.handleGridTactics(chatJid, userId, args[0] || 'start', args.slice(1));
-                    return await this._reply(m, gameRes.text);
+                    try {
+                        const action = args[0] || 'start';
+                        const gameArgs = args.slice(1);
+                        const gameRes = await this.gridTacticsGame.handleGridTactics(chatJid, userId, action, gameArgs);
+                        return await this._reply(m, gameRes.text);
+                    } catch (e) {
+                        console.error('Erro no Grid Tactics:', e);
+                        await this._reply(m, '❌ Erro no jogo Grid Tactics. Tente: #gridtactics start');
+                        return true;
+                    }
                 }
 
                 case 'tagall':
@@ -574,7 +594,27 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
                         return true;
                     }
-                    return await this.cybersecurityToolkit.handleCommand(m, command, args);
+                    // Garante que o socket está injetado no toolkit
+                    if (!this.cybersecurityToolkit) {
+                        console.error('[CommandHandler] CybersecurityToolkit não inicializado');
+                        await this._reply(m, '❌ Sistema de cibersegurança não disponível.');
+                        return true;
+                    }
+                    if (!this.cybersecurityToolkit.sock && this.sock) {
+                        this.cybersecurityToolkit.setSocket(this.sock);
+                    }
+                    if (!this.cybersecurityToolkit.sock) {
+                        console.error('[CommandHandler] Socket não disponível para CybersecurityToolkit');
+                        await this._reply(m, '❌ Erro de conexão. Tente novamente em instantes.');
+                        return true;
+                    }
+                    try {
+                        return await this.cybersecurityToolkit.handleCommand(m, command, args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
+                        await this._reply(m, '❌ Erro ao executar comando de segurança.');
+                        return true;
+                    }
 
                 case 'setoolkit':
                     if (!isOwner) {
@@ -614,6 +654,13 @@ class CommandHandler {
                         return true;
                     }
 
+                    // Verifica se groupManagement está disponível
+                    if (!this.groupManagement) {
+                        console.error('[CommandHandler] GroupManagement não inicializado');
+                        await this._reply(m, '❌ Sistema de gerenciamento de grupo não disponível.');
+                        return true;
+                    }
+
                     // Loga operação administrativa no SecurityLogger
                     try {
                         if (this.securityLogger) {
@@ -642,7 +689,13 @@ class CommandHandler {
                         this.logger?.warn('SecurityLogger falhou ao registrar operação de grupo:', e.message || e);
                     }
 
-                    return await this.groupManagement.handleCommand(m, command, args);
+                    try {
+                        return await this.groupManagement.handleCommand(m, command, args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
+                        // Não mostra mensagem de erro técnica para o usuário
+                        return true;
+                    }
                 }
 
                 // COMANDOS DE GRUPO — ADMIN OU DONO
@@ -654,7 +707,17 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Apenas admins podem abrir/fechar o grupo.');
                         return true;
                     }
-                    return await this.groupManagement.handleCommand(m, command, args);
+                    if (!this.groupManagement) {
+                        console.error('[CommandHandler] GroupManagement não inicializado');
+                        await this._reply(m, '❌ Sistema de gerenciamento não disponível.');
+                        return true;
+                    }
+                    try {
+                        return await this.groupManagement.handleCommand(m, command, args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
+                        return true;
+                    }
 
                 case 'fixar':
                 case 'pin':
@@ -664,7 +727,17 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Apenas admins podem fixar/desafixar mensagens.');
                         return true;
                     }
-                    return await this.groupManagement.handleCommand(m, command, args);
+                    if (!this.groupManagement) {
+                        console.error('[CommandHandler] GroupManagement não inicializado');
+                        await this._reply(m, '❌ Sistema não disponível.');
+                        return true;
+                    }
+                    try {
+                        return await this.groupManagement.handleCommand(m, command, args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
+                        return true;
+                    }
 
                 case 'reagir':
                 case 'react':
@@ -679,7 +752,17 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Apenas admins podem obter o link do grupo.');
                         return true;
                     }
-                    return await this.groupManagement.handleCommand(m, 'link', args);
+                    if (!this.groupManagement) {
+                        console.error('[CommandHandler] GroupManagement não inicializado');
+                        await this._reply(m, '❌ Sistema não disponível.');
+                        return true;
+                    }
+                    try {
+                        return await this.groupManagement.handleCommand(m, 'link', args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando link:`, e.message);
+                        return true;
+                    }
 
                 case 'revlink':
                 case 'revogar':
@@ -687,7 +770,17 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Apenas admins podem revogar o link do grupo.');
                         return true;
                     }
-                    return await this.groupManagement.handleCommand(m, command, args);
+                    if (!this.groupManagement) {
+                        console.error('[CommandHandler] GroupManagement não inicializado');
+                        await this._reply(m, '❌ Sistema não disponível.');
+                        return true;
+                    }
+                    try {
+                        return await this.groupManagement.handleCommand(m, command, args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
+                        return true;
+                    }
 
                 case 'setdesc':
                 case 'descricao':
@@ -695,7 +788,17 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Apenas admins podem alterar a descrição do grupo.');
                         return true;
                     }
-                    return await this.groupManagement.handleCommand(m, 'setdesc', args);
+                    if (!this.groupManagement) {
+                        console.error('[CommandHandler] GroupManagement não inicializado');
+                        await this._reply(m, '❌ Sistema não disponível.');
+                        return true;
+                    }
+                    try {
+                        return await this.groupManagement.handleCommand(m, 'setdesc', args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando setdesc:`, e.message);
+                        return true;
+                    }
 
                 case 'setfoto':
                 case 'fotodogrupo':
@@ -703,7 +806,17 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Apenas admins podem alterar a foto do grupo.');
                         return true;
                     }
-                    return await this.groupManagement.handleCommand(m, 'setfoto', args);
+                    if (!this.groupManagement) {
+                        console.error('[CommandHandler] GroupManagement não inicializado');
+                        await this._reply(m, '❌ Sistema não disponível.');
+                        return true;
+                    }
+                    try {
+                        return await this.groupManagement.handleCommand(m, 'setfoto', args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando setfoto:`, e.message);
+                        return true;
+                    }
 
                 case 'blacklist':
                     if (!isOwner) return false;
@@ -721,9 +834,17 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Apenas admins podem alterar essa configuração.');
                         return true;
                     }
-                    const esOn = args[0] === 'on' || args[0] === '1';
-                    await this._reply(m, `✅ Anti-Spam ${esOn ? 'ATIVADO' : 'DESATIVADO'} para este grupo.`);
-                    return true;
+                    if (!this.groupManagement) {
+                        console.error('[CommandHandler] GroupManagement não inicializado');
+                        await this._reply(m, '❌ Sistema não disponível.');
+                        return true;
+                    }
+                    try {
+                        return await this.groupManagement.handleCommand(m, 'antispam', args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando antispam:`, e.message);
+                        return true;
+                    }
 
                 // INFO DO GRUPO — QUALQUER MEMBRO REGISTRADO
                 case 'groupinfo':
@@ -826,8 +947,21 @@ class CommandHandler {
                 case 'antifake':
                 case 'antiimage':
                 case 'antisticker':
-                    if (!isOwner && !isAdminUsers) return false;
-                    return await this._handleToggleModeration(m, command, args);
+                    if (!isOwner && !isAdminUsers) {
+                        await this.bot.reply(m, '🚫 Apenas admins podem alterar essa configuração.');
+                        return true;
+                    }
+                    if (!this.groupManagement) {
+                        console.error('[CommandHandler] GroupManagement não inicializado');
+                        await this._reply(m, '❌ Sistema não disponível.');
+                        return true;
+                    }
+                    try {
+                        return await this.groupManagement.handleCommand(m, command, args);
+                    } catch (e: any) {
+                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
+                        return true;
+                    }
 
                 case 'warn':
                     if (!isOwner && !isAdminUsers) return false;
@@ -1068,9 +1202,14 @@ _Akira V21 — Desenvolvido por Isaac Quarenta_`;
 • ${P}nikto [url] 👑 — Web server scanner
 • ${P}commix [url] 👑 — Command injection
 • ${P}searchsploit [vuln] 👑 — Exploit database
-• ${P}whois | ${P}dns | ${P}geo [ip] 👑
-• ${P}setoolkit 👑 — Social Engineering Toolkit
-• ${P}metasploit 👑 — Metasploit Framework
+• ${P}whois | ${P}dns | ${P}geo [ip] 👑 — Info lookup
+• ${P}shodan [ip] 👑 — Shodan search
+• ${P}cve [termo] 👑 — CVE database search
+• ${P}socialfish 👑 — Phishing tool (SET alternative)
+• ${P}blackeye 👑 — Phishing tool alternative
+• ${P}netexec [alvo] 👑 — Network exploitation
+• ${P}winrm [alvo] [user] [pass] 👑 — Windows remote shell
+• ${P}impacket [tool] [alvo] 👑 — Impacket tools
 
 ${P}menu osint — Comandos OSINT avançados`,
 
@@ -1084,7 +1223,11 @@ ${P}menu osint — Comandos OSINT avançados`,
 • ${P}sherlock [user] 👑 — Social media search
 • ${P}holehe [email] 👑 — Email reconnaissance
 • ${P}theharvester [domain] 👑 — Email/DNS harvesting
-• ${P}netexec [alvo] 👑 — Network execution`,
+• ${P}shodan [ip] 👑 — Shodan InternetDB search
+• ${P}cve [termo] 👑 — CVE vulnerability search
+• ${P}whois [dominio] 👑 — WHOIS lookup
+• ${P}dns [dominio] 👑 — DNS lookup
+• ${P}geo [ip] 👑 — Geolocalização de IP`,
 
             info:
                 `ℹ️ *INFORMAÇÕES*

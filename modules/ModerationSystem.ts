@@ -611,8 +611,25 @@ class ModerationSystem {
         // Regex robusto para links (http, www, wa.me, t.me, IPs)
         const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(bit\.ly\/[^\s]+)|(t\.me\/[^\s]+)|(wa\.me\/[^\s]+)|(chat\.whatsapp\.com\/[^\s]+)|(\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)/gi;
 
-        return linkRegex.test(text);
+        const hasLink = linkRegex.test(text);
+        
+        if (hasLink && this.enableDetailedLogging) {
+            const timestamp = new Date().toLocaleString('pt-BR');
+            const detectedLink = text.match(linkRegex)?.[0] || 'link detectado';
+            
+            this.logger.log(`\n${'═'.repeat(80)}`);
+            this.logger.log(`🔗 [${timestamp}] ANTILINK - LINK DETECTADO`);
+            this.logger.log(`${'─'.repeat(80)}`);
+            this.logger.log(`👤 Usuário: ${userId}`);
+            this.logger.log(`👥 Grupo: ${groupId}`);
+            this.logger.log(`🔗 Link: ${detectedLink.substring(0, 50)}${detectedLink.length > 50 ? '...' : ''}`);
+            this.logger.log(`📝 Ação: Link bloqueado (AntiLink ativo)`);
+            this.logger.log(`${'═'.repeat(80)}\n`);
+        }
+
+        return hasLink;
     }
+
 
     public banUser(userId: string, reason: string = 'violação de regras', expiresIn: number | null = null): any {
         const key = String(userId);

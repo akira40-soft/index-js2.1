@@ -78,7 +78,13 @@ class BotCore {
         onDisconnected: ((reason: any) => void) | null;
     };
 
+    // Deduplicação de mensagens processadas
+    private processedMessages: Set<string> = new Set();
+    private readonly MAX_PROCESSED_MESSAGES = 1000;
+    private readonly MESSAGE_DEDUP_WINDOW = 30000; // 30 segundos
+
     constructor() {
+
         this.config = ConfigManager.getInstance();
         // Inicializa logger (usa o do config ou cria um novo com pino)
         this.logger = this.config.logger || pino({
@@ -433,12 +439,44 @@ class BotCore {
     }
 
     /**
+    * Verifica se mensagem já foi processada (deduplicação)
+    */
+    private isMessageProcessed(key: any): boolean {
+        if (!key?.id) return false;
+        const messageId = key.id;
+        
+        if (this.processedMessages.has(messageId)) {
+            this.logger.debug(`⏭️ Mensagem já processada: ${messageId.substring(0, 15)}...`);
+            return true;
+        }
+        
+        // Adiciona ao conjunto de mensagens processadas
+        this.processedMessages.add(messageId);
+        
+        // Limita tamanho do conjunto para evitar memory leak
+        if (this.processedMessages.size > this.MAX_PROCESSED_MESSAGES) {
+            this.logger.debug('🧹 Limpando cache de mensagens processadas');
+            // Remove elementos antigos (simplificado - em produção seria mais sofisticado)
+            const arr = Array.from(this.processedMessages);
+            this.processedMessages = new Set(arr.slice(-this.MAX_PROCESSED_MESSAGES / 2));
+        }
+        
+        return false;
+    }
+
+    /**
     * Processa uma única mensagem recebida
     */
     async processMessage(m: any): Promise<void> {
         try {
+            // 🚨 DEDUPLICAÇÃO: Verifica se mensagem já foi processada
+            if (this.isMessageProcessed(m.key)) {
+                return;
+            }
+
             this.logger.warn('🔹 [PIPELINE 1] Iniciando');
             if (!m) {
+
                 this.logger.warn('🔹 [PIPELINE] "m" é null/undefined');
                 return;
             }
@@ -557,10 +595,14 @@ class BotCore {
     async handleImageMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean): Promise<void> {
         this.logger.info(`🖼️ [IMAGEM] Iniciando processamento para ${nome}`);
 
-        // Premiar XP por imagem
-        if (ehGrupo && this.levelSystem) {
-            this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 15);
-        }
+            // Premiar XP por imagem
+            if (ehGrupo && this.levelSystem) {
+                const xpAwarded = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 15);
+                if (xpAwarded && this.levelSystem.enableDetailedLogging !== false) {
+                    this.logger.info(`📈 [LEVELING] ${nome} (${numeroReal}) ganhou 15 XP por enviar imagem no grupo ${m.key.remoteJid}`);
+                }
+            }
+
 
         try {
             // ✅ VERIFICAÇÃO DE ATIVAÇÃO RIGOROSA (Mesma regra do texto)
@@ -841,8 +883,12 @@ class BotCore {
 
                         // Premiar XP por comando (opcional mas bom para engajamento)
                         if (ehGrupo && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
-                            this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
+                            const xpAwarded = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
+                            if (xpAwarded && this.levelSystem.enableDetailedLogging !== false) {
+                                this.logger.info(`📈 [LEVELING] ${nome} (${numeroReal}) ganhou 5 XP por usar comando no grupo ${m.key.remoteJid}`);
+                            }
                         }
+
                         return;
                     }
                 }
@@ -912,8 +958,12 @@ class BotCore {
 
             // Premiar XP por mensagem de texto
             if (ehGrupo && this.levelSystem) {
-                this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 10);
+                const xpAwarded = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 10);
+                if (xpAwarded && this.levelSystem.enableDetailedLogging !== false) {
+                    this.logger.info(`📈 [LEVELING] ${nome} (${numeroReal}) ganhou 10 XP por mensagem de texto no grupo ${m.key.remoteJid}`);
+                }
             }
+
 
             const payload = this.apiClient.buildPayload({
                 usuario: nome,
