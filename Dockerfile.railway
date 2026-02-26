@@ -149,9 +149,32 @@ RUN cd /opt && \
     git clone https://github.com/sullo/nikto.git || true && \
     ([ -f /opt/nikto/program/nikto.pl ] && ln -sf /opt/nikto/program/nikto.pl /usr/local/bin/nikto && chmod +x /opt/nikto/program/nikto.pl || true)
 
+# SOCIALFISH - Social Engineering Tool (Substituto do SEToolkit)
+RUN cd /opt && \
+    git clone https://github.com/UndeadSec/SocialFish.git socialfish || true && \
+    if [ -f /opt/socialfish/SocialFish.py ]; then \
+        chmod +x /opt/socialfish/SocialFish.py && \
+        ln -sf /opt/socialfish/SocialFish.py /usr/local/bin/socialfish; \
+    elif [ -f /opt/socialfish/socialfish.py ]; then \
+        chmod +x /opt/socialfish/socialfish.py && \
+        ln -sf /opt/socialfish/socialfish.py /usr/local/bin/socialfish; \
+    fi || true
+
+# BLACKEYE - Phishing Tool
+RUN cd /opt && \
+    git clone https://github.com/thelinuxchoice/blackeye.git || true && \
+    if [ -f /opt/blackeye/blackeye.sh ]; then \
+        chmod +x /opt/blackeye/blackeye.sh && \
+        ln -sf /opt/blackeye/blackeye.sh /usr/local/bin/blackeye; \
+    elif [ -f /opt/blackeye/blackeye.py ]; then \
+        chmod +x /opt/blackeye/blackeye.py && \
+        ln -sf /opt/blackeye/blackeye.py /usr/local/bin/blackeye; \
+    fi || true
+
 # ═══════════════════════════════════════════════════════════════════════
 # DIRETÓRIOS DE DADOS E PERMISSÕES
 # ═══════════════════════════════════════════════════════════════════════
+
 
 RUN mkdir -p /app/data && \
     mkdir -p /app/data/auth_info_baileys && \
@@ -206,8 +229,11 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     (which sherlock >/dev/null 2>&1 && echo "✅ sherlock encontrado" || echo "⚠️ sherlock aguardando link") && \
     (which holehe >/dev/null 2>&1 && echo "✅ holehe encontrado" || echo "⚠️ holehe aguardando link") && \
     (which impacket-psexec >/dev/null 2>&1 && echo "✅ impacket encontrado" || echo "⚠️ impacket aguardando link") && \
+    (which socialfish >/dev/null 2>&1 && echo "✅ socialfish encontrado" || echo "⚠️ socialfish aguardando clone") && \
+    (which blackeye >/dev/null 2>&1 && echo "✅ blackeye encontrado" || echo "⚠️ blackeye aguardando clone") && \
     echo "✅ Todas as ferramentas verificadas com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
+
 
 
 # Limpar cache para reduzir tamanho da imagem
