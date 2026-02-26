@@ -92,7 +92,7 @@ class CommandHandler {
         this.subscriptionManager = bot?.subscriptionManager || new SubscriptionManager(this.config);
         this.securityLogger = bot?.securityLogger || new SecurityLogger(this.config);
         this.moderationSystem = bot?.moderationSystem || null;
-        this.gameSystem = bot?.gameSystem || null;
+        this.gameSystem = GameSystem; // Usa a instância singleton importada
 
         // Inicializa módulos dependentes de sock
         if (sock) {
@@ -106,18 +106,6 @@ class CommandHandler {
 
         this.gridTacticsGame = GridTacticsGame;
         this.logger = config?.logger || bot?.logger || console;
-
-        // Carregamento tardio se necessário
-        if (!this.gameSystem) this._initGameSystem();
-    }
-
-    private async _initGameSystem() {
-        try {
-            const { default: gs } = await import('./GameSystem.js');
-            this.gameSystem = gs;
-        } catch (e) {
-            console.error('Falha ao carregar GameSystem no CommandHandler:', e);
-        }
     }
 
     public setSocket(sock: any): void {
@@ -394,8 +382,7 @@ class CommandHandler {
                     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
                     // Modo IA: se não mencionar ninguém, joga contra a IA
                     try {
-                        const gs = this.gameSystem || GameSystem;
-                        const gameRes = await gs.handleTicTacToe(chatJid, userId, args[0] || 'start', mentioned);
+                        const gameRes = await GameSystem.handleTicTacToe(chatJid, userId, args[0] || 'start', mentioned);
                         return await this._reply(m, gameRes.text, { mentions: [userId, ...(mentioned ? [mentioned] : [])] });
                     } catch (e) {
                         console.error('Erro no TTT:', e);
@@ -408,8 +395,7 @@ class CommandHandler {
                 case 'ppt':
                 case 'pedrapapeltesoura': {
                     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
-                    const gs = this.gameSystem || (await import('./GameSystem.js')).default;
-                    const gameRes = await gs.handleGame(chatJid, userId, 'rps', args, mentioned);
+                    const gameRes = await GameSystem.handleGame(chatJid, userId, 'rps', args, mentioned);
                     return await this._reply(m, gameRes.text, { mentions: [userId, ...(mentioned ? [mentioned] : [])] });
                 }
 
@@ -431,7 +417,7 @@ class CommandHandler {
                     try {
                         const action = args[0] || 'start';
                         const gameArgs = args.slice(1);
-                        const gameRes = await this.gridTacticsGame.handleGridTactics(chatJid, userId, action, gameArgs);
+                        const gameRes = await GridTacticsGame.handleGridTactics(chatJid, userId, action, gameArgs);
                         return await this._reply(m, gameRes.text);
                     } catch (e) {
                         console.error('Erro no Grid Tactics:', e);

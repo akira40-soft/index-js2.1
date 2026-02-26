@@ -70,22 +70,36 @@ class GroupManagement {
 
     /**
      * Verifica se o socket está conectado e pronto
+     * Versão robusta que verifica múltiplas propriedades do Baileys
      */
     private _checkSocket(): boolean {
         if (!this.sock) {
             this.logger.error('❌ [GroupManagement] Socket não disponível');
             return false;
         }
-        if (!this.sock.ws) {
-            this.logger.error('❌ [GroupManagement] WebSocket não inicializado');
+        
+        // Verifica se tem os métodos essenciais do Baileys
+        if (typeof this.sock.sendMessage !== 'function') {
+            this.logger.error('❌ [GroupManagement] Socket não tem sendMessage');
             return false;
         }
-        if (this.sock.ws.readyState !== 1) { // 1 = OPEN
-            this.logger.error(`❌ [GroupManagement] WebSocket não está aberto (estado: ${this.sock.ws.readyState})`);
-            return false;
+        
+        // Verifica estado do WebSocket de forma segura
+        const wsState = this.sock.ws?.readyState;
+        if (wsState !== undefined && wsState !== 1) {
+            this.logger.warn(`⚠️ [GroupManagement] WebSocket estado: ${wsState}, mas tentando mesmo assim...`);
+            // Não retorna false aqui - deixa tentar executar
         }
+        
+        // Verifica se está autenticado (tem user)
+        if (!this.sock.user) {
+            this.logger.warn('⚠️ [GroupManagement] Socket sem user autenticado ainda');
+            // Não bloqueia - tenta executar e deixa o erro acontecer se for o caso
+        }
+        
         return true;
     }
+
 
     /**
      * Carrega configurações dos grupos do arquivo
@@ -519,6 +533,7 @@ class GroupManagement {
         if (!this.groupSettings[groupJid]) {
             this.groupSettings[groupJid] = {};
         }
+
         if (!this.groupSettings[groupJid].mutedUsers) {
             this.groupSettings[groupJid].mutedUsers = {};
         }
