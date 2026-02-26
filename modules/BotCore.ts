@@ -767,6 +767,52 @@ class BotCore {
         };
     }
 
+    getQRCode(): string | null {
+        return this.currentQR;
+    }
+
+    getStats(): any {
+        return {
+            isConnected: this.isConnected,
+            botJid: this.BOT_JID,
+            botNumero: this.config.BOT_NUMERO_REAL,
+            botName: this.config.BOT_NAME,
+            version: this.config.BOT_VERSION,
+            uptime: Math.floor(process.uptime()),
+            hasQR: !!this.currentQR,
+            reconnectAttempts: this.reconnectAttempts,
+            connectionStartTime: this.connectionStartTime,
+            features: {
+                stt: this.config.FEATURE_STT_ENABLED,
+                tts: this.config.FEATURE_TTS_ENABLED,
+                youtube: this.config.FEATURE_YT_DOWNLOAD,
+                stickers: this.config.FEATURE_STICKERS,
+                moderation: this.config.FEATURE_MODERATION,
+                leveling: this.config.FEATURE_LEVELING,
+                vision: this.config.FEATURE_VISION
+            }
+        };
+    }
+
+    async _forceQRGeneration(): Promise<void> {
+        this.logger.info('🔄 Forçando geração de novo QR code...');
+        this.currentQR = null;
+        if (this.sock) {
+            try {
+                this.sock.ev.removeAllListeners();
+                this.sock.ws?.close();
+            } catch (e: any) {
+                this.logger.warn('Erro ao limpar socket:', e.message);
+            }
+            this.sock = null;
+        }
+        this.isConnected = false;
+        this.BOT_JID = null;
+        await delay(1000);
+        await this.connect();
+    }
+
+
     async disconnect(): Promise<void> {
         try {
             this.logger.info('🔴 Desconectando...');
