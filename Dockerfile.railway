@@ -49,6 +49,8 @@ RUN apk add --no-cache \
     musl-dev \
     perl-net-ssleay \
     perl-libwww \
+    perl-json \
+    perl-xml-writer \
     python3-dev \
     py3-pip \
     py3-setuptools \
@@ -230,4 +232,3 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["node", "dist/index.js"]
