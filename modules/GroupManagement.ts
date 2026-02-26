@@ -79,31 +79,83 @@ class GroupManagement {
             return false;
         }
         
+        // Verifica se o socket está realmente conectado (ws readyState)
+        if (this.sock.ws && this.sock.ws.readyState !== 1) {
+            this.logger.warn('⚠️ [GroupManagement] Socket WebSocket não está aberto (readyState: ' + this.sock.ws.readyState + ')');
+            return false;
+        }
+        
         return true;
     }
 
     /**
-     * Obtém metadados do grupo com cache
+     * Aguarda o socket estar pronto com timeout
      */
-    private async _getGroupMetadata(groupJid: string): Promise<any | null> {
+    private async _waitForSocket(maxWaitMs: number = 5000): Promise<boolean> {
+        const startTime = Date.now();
+        while (Date.now() - startTime < maxWaitMs) {
+            if (this._checkSocket()) {
+                return true;
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        return false;
+    }
+
+    /**
+     * Obtém metadados do grupo com cache e retry
+     */
+    private async _getGroupMetadata(groupJid: string, retries: number = 3): Promise<any | null> {
         // Verifica cache
         const cached = this.metadataCache.get(groupJid);
         if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
             return cached.data;
         }
 
-        if (!this._checkSocket()) {
+        // Aguarda socket estar pronto
+        if (!await this._waitForSocket(3000)) {
+            this.logger.error('❌ [GroupManagement] Socket não disponível após espera');
             return null;
         }
 
-        try {
-            const metadata = await this.sock.groupMetadata(groupJid);
-            this.metadataCache.set(groupJid, { data: metadata, timestamp: Date.now() });
-            return metadata;
-        } catch (e: any) {
-            this.logger.error(`❌ [GroupManagement] Erro ao obter metadados:`, e.message);
-            return null;
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                // Verifica novamente antes de cada tentativa
+                if (!this._checkSocket()) {
+                    this.logger.warn(`⚠️ [GroupManagement] Tentativa ${attempt}: Socket não pronto`);
+                    if (attempt < retries) {
+                        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                        continue;
+                    }
+                    return null;
+                }
+
+                const metadata = await this.sock.groupMetadata(groupJid);
+                this.metadataCache.set(groupJid, { data: metadata, timestamp: Date.now() });
+                return metadata;
+            } catch (e: any) {
+                this.logger.error(`❌ [GroupManagement] Erro ao obter metadados (tentativa ${attempt}/${retries}):`, e.message);
+                
+                if (attempt < retries) {
+                    // Delay exponencial: 1s, 2s, 4s
+                    const delayMs = Math.pow(2, attempt - 1) * 1000;
+                    this.logger.info(`⏳ [GroupManagement] Aguardando ${delayMs}ms antes de retry...`);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    
+                    // Tenta reconectar o socket se necessário
+                    if (e.message?.includes('Connection Closed') && this.sock?.connect) {
+                        this.logger.info('🔄 [GroupManagement] Tentando reconectar socket...');
+                        try {
+                            await this.sock.connect();
+                        } catch (connErr) {
+                            this.logger.error('❌ [GroupManagement] Falha ao reconectar:', connErr);
+                        }
+                    }
+                }
+            }
         }
+        
+        return null;
     }
 
     /**
