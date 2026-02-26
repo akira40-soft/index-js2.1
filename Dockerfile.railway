@@ -1,8 +1,5 @@
-# Dockerfile — AKIRA BOT RAILWAY (Otimizado Janeiro 2026)
+# Dockerfile — AKIRA BOT RAILWAY (Corrigido)
 # ✅ Configurado especificamente para Railway
-# ✅ Pino logging compatível com Railway
-# ✅ Sem pino-pretty transport para evitar erros
-# ✅ Configurações otimizadas para Railway
 
 FROM node:20-alpine
 
@@ -18,9 +15,8 @@ ENV NODE_ENV=production \
     GOPATH=/root/go
 
 # ═══════════════════════════════════════════════════════════════════════
-# INSTALAR DEPENDÊNCIAS DO SISTEMA ESSENCIAIS PARA RAILWAY
+# INSTALAR DEPENDÊNCIAS DO SISTEMA ESSENCIAIS
 # ═══════════════════════════════════════════════════════════════════════
-
 RUN apk add --no-cache \
     git \
     curl \
@@ -62,24 +58,23 @@ RUN apk add --no-cache \
     ruby-full
 
 # ═══════════════════════════════════════════════════════════════════════
-# INSTALAÇÃO DO YT-DLP (MÁXIMA PRIORIDADE PARA BYPASS 2026)
+# INSTALAÇÃO DO YT-DLP
 # ═══════════════════════════════════════════════════════════════════════
 RUN pip3 install --upgrade --no-cache-dir --break-system-packages yt-dlp && \
     ln -sf $(which yt-dlp) /usr/local/bin/yt-dlp 2>/dev/null || true && \
-    echo "✅ yt-dlp instalado: $(yt-dlp --version 2>/dev/null || echo 'versão desconhecida')"
-
+    echo "✅ yt-dlp instalado"
 
 # ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
 # ═══════════════════════════════════════════════════════════════════════
 
-# SQLMAP - SQL Injection Testing
+# SQLMAP
 RUN mkdir -p /opt && \
     cd /opt && \
     git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git || true && \
     ([ -f /opt/sqlmap/sqlmap.py ] && chmod +x /opt/sqlmap/sqlmap.py && ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap || true)
 
-# NUCLEI - Vulnerability Scanning
+# NUCLEI
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_amd64.zip"; \
@@ -97,7 +92,7 @@ RUN ARCH=$(uname -m) && \
     cd - && \
     rm -rf /tmp/nuclei_install
 
-# MASSCAN - Fast Port Scanner
+# MASSCAN
 RUN mkdir -p /tmp/masscan_build && \
     cd /tmp/masscan_build && \
     (git clone https://github.com/robertdavidgraham/masscan.git && \
@@ -107,7 +102,8 @@ RUN mkdir -p /tmp/masscan_build && \
     chmod +x /usr/local/bin/masscan || true) && \
     cd - && \
     rm -rf /tmp/masscan_build || true
-# SEARCHSPLOIT - Exploit Database
+
+# SEARCHSPLOIT
 RUN cd /opt && \
     git clone --depth 1 https://github.com/offensive-security/exploitdb.git exploitdb || true && \
     if [ -f /opt/exploitdb/searchsploit ]; then \
@@ -115,7 +111,7 @@ RUN cd /opt && \
         ln -sf /opt/exploitdb/searchsploit /usr/local/bin/searchsploit; \
     fi || true
 
-# COMMIX - Command Injection Scanner
+# COMMIX
 RUN cd /opt && \
     git clone https://github.com/commixproject/commix.git commix || true && \
     ([ -f /opt/commix/commix.py ] && ln -s /opt/commix/commix.py /usr/local/bin/commix && chmod +x /opt/commix/commix.py || true)
@@ -131,11 +127,12 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     done && \
     which impacket-psexec >/dev/null 2>&1 && ln -sf $(which impacket-psexec) /usr/local/bin/impacket-psexec || true
 
-# NETEXEC via PIP (específico)
+
+# NETEXEC
 RUN pip3 install --no-cache-dir --break-system-packages git+https://github.com/Pennyw0rth/NetExec && \
     ln -sf $(which nxc) /usr/local/bin/nxc || true
 
-# EVIL-WINRM via GEM (Ruby)
+# EVIL-WINRM
 RUN gem install evil-winrm && \
     ln -sf $(which evil-winrm) /usr/local/bin/evil-winrm || true
 
@@ -148,6 +145,7 @@ RUN cd /opt && \
 RUN cd /opt && \
     git clone https://github.com/sullo/nikto.git || true && \
     ([ -f /opt/nikto/program/nikto.pl ] && ln -sf /opt/nikto/program/nikto.pl /usr/local/bin/nikto && chmod +x /opt/nikto/program/nikto.pl || true)
+
 
 # SOCIALFISH - Social Engineering Tool (Substituto do SEToolkit)
 RUN cd /opt && \
@@ -171,11 +169,10 @@ RUN cd /opt && \
         ln -sf /opt/blackeye/blackeye.py /usr/local/bin/blackeye; \
     fi || true
 
-# ═══════════════════════════════════════════════════════════════════════
-# DIRETÓRIOS DE DADOS E PERMISSÕES
-# ═══════════════════════════════════════════════════════════════════════
 
-
+# ═══════════════════════════════════════════════════════════════════════
+# DIRETÓRIOS
+# ═══════════════════════════════════════════════════════════════════════
 RUN mkdir -p /app/data && \
     mkdir -p /app/data/auth_info_baileys && \
     mkdir -p /app/data/database && \
@@ -183,30 +180,19 @@ RUN mkdir -p /app/data && \
     mkdir -p /app/data/temp && \
     chmod -R 755 /app/data
 
-# ═══════════════════════════════════════════════════════════════════════
-# DIRETÓRIO DE TRABALHO
-# ═══════════════════════════════════════════════════════════════════════
-
 WORKDIR /app
 
 # ═══════════════════════════════════════════════════════════════════════
-# INSTALAÇÃO DE DEPENDÊNCIAS NODE.JS PARA RAILWAY
+# DEPENDÊNCIAS NODE.JS
 # ═══════════════════════════════════════════════════════════════════════
-
 COPY package*.json ./
 
-# Instalação otimizada para Railway
 RUN npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
     npm install --include=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps
 
-# ═══════════════════════════════════════════════════════════════════════
-# COPIAR CÓDIGO DA APLICAÇÃO
-# ═══════════════════════════════════════════════════════════════════════
-
 COPY . .
 
-# Build e Limpeza
 RUN npx tsc && \
     npm prune --omit=dev
 
@@ -231,23 +217,14 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
     (which impacket-psexec >/dev/null 2>&1 && echo "✅ impacket encontrado" || echo "⚠️ impacket aguardando link") && \
     (which socialfish >/dev/null 2>&1 && echo "✅ socialfish encontrado" || echo "⚠️ socialfish aguardando clone") && \
     (which blackeye >/dev/null 2>&1 && echo "✅ blackeye encontrado" || echo "⚠️ blackeye aguardando clone") && \
+    (which zphisher >/dev/null 2>&1 && echo "✅ zphisher encontrado" || echo "⚠️ zphisher aguardando clone") && \
     echo "✅ Todas as ferramentas verificadas com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
 
 
-
-# Limpar cache para reduzir tamanho da imagem
 RUN npm cache clean --force 2>/dev/null || true
 
-# ═══════════════════════════════════════════════════════════════════════
-# EXPOR PORTA PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════════
-
 EXPOSE $PORT
-
-# ═══════════════════════════════════════════════════════════════════════
-# COMANDO DE INICIALIZAÇÃO PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════════
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
