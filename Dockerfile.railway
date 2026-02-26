@@ -195,8 +195,11 @@ RUN npm config set fetch-retry-mintimeout 20000 && \
 
 COPY . .
 
-RUN npx tsc && \
+# Limpar dist/ anterior e recompilar TypeScript para garantir código atualizado
+RUN rm -rf dist/ && \
+    npx tsc && \
     npm prune --omit=dev
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # VERIFICAÇÃO FINAL PARA RAILWAY
