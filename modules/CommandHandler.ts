@@ -37,6 +37,7 @@ import LevelSystem from './LevelSystem.js';
 import EconomySystem from './EconomySystem.js';
 import GameSystem from './GameSystem.js';
 import GridTacticsGame from './GridTacticsGame.js';
+import ModerationSystem from './ModerationSystem.js';
 
 // Sistema de rate limiting para features premium (1x a cada 3 meses para users)
 const premiumFeatureUsage = new Map();
@@ -91,7 +92,7 @@ class CommandHandler {
         this.osintFramework = bot?.osintFramework || new OSINTFramework(this.config, sock);
         this.subscriptionManager = bot?.subscriptionManager || new SubscriptionManager(this.config);
         this.securityLogger = bot?.securityLogger || new SecurityLogger(this.config);
-        this.moderationSystem = bot?.moderationSystem || null;
+        this.moderationSystem = bot?.moderationSystem || new ModerationSystem();
         this.gameSystem = GameSystem; // Usa a instância singleton importada
 
         // Inicializa módulos dependentes de sock
@@ -937,13 +938,13 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Apenas admins podem alterar essa configuração.');
                         return true;
                     }
-                    if (!this.groupManagement) {
-                        console.error('[CommandHandler] GroupManagement não inicializado');
-                        await this._reply(m, '❌ Sistema não disponível.');
+                    if (!this.moderationSystem) {
+                        console.error('[CommandHandler] ModerationSystem não inicializado');
+                        await this._reply(m, '❌ Sistema de moderação não disponível.');
                         return true;
                     }
                     try {
-                        return await this.groupManagement.handleCommand(m, command, args);
+                        return await this._handleToggleModeration(m, command, args);
                     } catch (e: any) {
                         console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
                         return true;
@@ -1454,16 +1455,21 @@ ${P}menu osint — Comandos OSINT avançados`,
                 return true;
             }
 
+            // Extrai metadados
+            const metadata = res.metadata || {};
+            const titulo = metadata.titulo || 'Música';
+            const canal = metadata.canal || 'Desconhecido';
+            const duracao = metadata.duracao || 0;
+            const thumbnail = metadata.thumbnail;
+
             // Enviar thumbnail e metadados se disponíveis
-            if (res.thumbnail) {
-                const thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail).catch((): any => null);
+            if (thumbnail) {
+                const thumbBuf = await this.mediaProcessor.fetchBuffer(thumbnail).catch((): any => null);
                 if (thumbBuf) {
-                    const duracaoMin = res.duracao ? `${Math.floor(res.duracao / 60)}:${(res.duracao % 60).toString().padStart(2, '0')}` : '??';
-                    const caption = `🎵 *${res.titulo || 'Música'}*\n\n` +
-                        `👤 *Canal:* ${res.autor}\n` +
-                        `⏱️ *Duração:* ${duracaoMin}\n` +
-                        `👁️ *Views:* ${res.views}\n` +
-                        `👍 *Likes:* ${res.likes}\n\n` +
+                    const duracaoMin = duracao ? `${Math.floor(duracao / 60)}:${(duracao % 60).toString().padStart(2, '0')}` : '??';
+                    const caption = `🎵 *${titulo}*\n\n` +
+                        `👤 *Canal:* ${canal}\n` +
+                        `⏱️ *Duração:* ${duracaoMin}\n\n` +
                         `🎧 _Enviando áudio..._`;
 
                     await this.sock.sendMessage(m.key.remoteJid, {
@@ -1473,39 +1479,41 @@ ${P}menu osint — Comandos OSINT avançados`,
                 }
             }
 
-            // Verifica se o arquivo existe antes de enviar
-            if (res.audioPath && !fs.existsSync(res.audioPath)) {
-                await this._reply(m, '❌ Erro interno: Arquivo de áudio não encontrado após download.');
+            // Verifica se temos buffer
+            if (!res.buffer || res.buffer.length === 0) {
+                await this._reply(m, '❌ Erro interno: Áudio não baixado corretamente.');
                 return true;
             }
 
-            const fileSizeMB = res.tamanho ? (res.tamanho / (1024 * 1024)).toFixed(1) : '??';
-            const isLargeFile = res.tamanho > 64 * 1024 * 1024;
+            // Salva buffer em arquivo temporário
+            const tempFile = this.mediaProcessor.generateRandomFilename('mp3');
+            await fs.promises.writeFile(tempFile, res.buffer);
+
+            const fileSizeMB = (res.buffer.length / (1024 * 1024)).toFixed(1);
+            const isLargeFile = res.buffer.length > 64 * 1024 * 1024;
 
             if (isLargeFile) {
                 this.logger?.info(`📄 Áudio grande(${fileSizeMB}MB), enviando como documento para evitar erro de limite.`);
                 await this.sock.sendMessage(m.key.remoteJid, {
-                    document: { url: res.audioPath },
-                    fileName: `${res.titulo || 'audio'}.mp3`,
+                    document: { url: tempFile },
+                    fileName: `${titulo}.mp3`,
                     mimetype: 'audio/mpeg',
-                    caption: `🎵 *${res.titulo}*\n📦 *Tamanho:* ${fileSizeMB} MB\n\n💡 _Enviado como documento devido ao tamanho._`
+                    caption: `🎵 *${titulo}*\n📦 *Tamanho:* ${fileSizeMB} MB\n\n💡 _Enviado como documento devido ao tamanho._`
                 }, { quoted: m });
             } else {
                 await this.sock.sendMessage(m.key.remoteJid, {
-                    audio: { url: res.audioPath },
+                    audio: { url: tempFile },
                     mimetype: 'audio/mpeg',
                     ptt: false,
-                    fileName: `${res.titulo || 'audio'}.mp3`
+                    fileName: `${titulo}.mp3`
                 }, { quoted: m });
             }
 
-            if (res.audioPath) {
-                // Delay cleanup para dar tempo do Baileys ler/streamar o arquivo
-                const cleanupDelay = isLargeFile ? 60000 : 20000;
-                setTimeout(() => {
-                    this.mediaProcessor.cleanupFile(res.audioPath).catch(console.error);
-                }, cleanupDelay);
-            }
+            // Delay cleanup para dar tempo do Baileys ler/streamar o arquivo
+            const cleanupDelay = isLargeFile ? 60000 : 20000;
+            setTimeout(() => {
+                this.mediaProcessor.cleanupFile(tempFile).catch(console.error);
+            }, cleanupDelay);
 
         } catch (e: any) {
             console.error('Erro no play:', e);
@@ -1689,44 +1697,59 @@ ${P}menu osint — Comandos OSINT avançados`,
         try {
             const res = await this.mediaProcessor.downloadYouTubeVideo(query);
 
-            if (!res.sucesso || (!res.buffer && !res.videoPath)) {
+            if (!res.sucesso || res.error) {
                 await this._reply(m, `❌ ${res.error || 'Erro ao baixar vídeo.'}`);
                 return true;
             }
 
+            // Extrai metadados
+            const metadata = res.metadata || {};
+            const titulo = metadata.titulo || 'Vídeo';
+            const canal = metadata.canal || 'Desconhecido';
+            const thumbnail = metadata.thumbnail;
+
             let thumbBuf = null;
-            if (res.thumbnail) {
-                thumbBuf = await this.mediaProcessor.fetchBuffer(res.thumbnail).catch((): any => null);
+            if (thumbnail) {
+                thumbBuf = await this.mediaProcessor.fetchBuffer(thumbnail).catch((): any => null);
             }
 
-            const fileSizeMB = res.size ? (res.size / (1024 * 1024)).toFixed(1) : '??';
-            const caption = `🎬 *${res.titulo}*\n👤 *Canal:* ${res.autor || 'Desconhecido'}\n📦 *Tamanho:* ${fileSizeMB}MB`;
+            // Verifica se temos buffer
+            if (!res.buffer || res.buffer.length === 0) {
+                await this._reply(m, '❌ Erro interno: Vídeo não baixado corretamente.');
+                return true;
+            }
 
-            const isLargeFile = res.size > 64 * 1024 * 1024;
+            // Salva buffer em arquivo temporário
+            const tempFile = this.mediaProcessor.generateRandomFilename('mp4');
+            await fs.promises.writeFile(tempFile, res.buffer);
+
+            const fileSizeMB = (res.buffer.length / (1024 * 1024)).toFixed(1);
+            const caption = `🎬 *${titulo}*\n👤 *Canal:* ${canal}\n📦 *Tamanho:* ${fileSizeMB}MB`;
+
+            const isLargeFile = res.buffer.length > 64 * 1024 * 1024;
 
             if (isLargeFile) {
                 this.logger?.info(`📄 Arquivo grande (${fileSizeMB}MB), enviando como documento para evitar erro de limite.`);
                 await this.sock.sendMessage(m.key.remoteJid, {
-                    document: { url: res.videoPath },
-                    fileName: `${res.titulo}.mp4`,
+                    document: { url: tempFile },
+                    fileName: `${titulo}.mp4`,
                     mimetype: 'video/mp4',
                     caption: caption + '\n\n💡 _Enviado como documento para manter a qualidade e evitar limites do WhatsApp._'
                 }, { quoted: m });
             } else {
                 await this.sock.sendMessage(m.key.remoteJid, {
-                    video: res.buffer || { url: res.videoPath },
+                    video: { url: tempFile },
                     caption: caption,
                     mimetype: 'video/mp4',
                     jpegThumbnail: thumbBuf || undefined
                 }, { quoted: m });
             }
 
-            if (res.videoPath) {
-                const cleanupDelay = isLargeFile ? 60000 : 15000;
-                setTimeout(() => {
-                    this.mediaProcessor.cleanupFile(res.videoPath).catch((e: any) => console.error('Erro no cleanup tardio:', e.message));
-                }, cleanupDelay);
-            }
+            // Delay cleanup para dar tempo do Baileys ler/streamar o arquivo
+            const cleanupDelay = isLargeFile ? 60000 : 15000;
+            setTimeout(() => {
+                this.mediaProcessor.cleanupFile(tempFile).catch((e: any) => console.error('Erro no cleanup tardio:', e.message));
+            }, cleanupDelay);
 
         } catch (e: any) {
             console.error('Erro no video:', e);

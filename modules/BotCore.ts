@@ -812,7 +812,6 @@ class BotCore {
         await this.connect();
     }
 
-
     async disconnect(): Promise<void> {
         try {
             this.logger.info('🔴 Desconectando...');

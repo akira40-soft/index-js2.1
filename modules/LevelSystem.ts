@@ -15,7 +15,6 @@ class LevelSystem {
     public enableDetailedLogging: boolean;
 
     constructor(logger: any = console) {
-
         this.config = ConfigManager.getInstance();
         this.logger = logger;
 
@@ -37,7 +36,6 @@ class LevelSystem {
         this.topForAdm = this.config.LEVEL_TOP_FOR_ADM || 3;
         this.enableDetailedLogging = true;
     }
-
 
     _ensureFiles() {
         try {
@@ -119,6 +117,23 @@ class LevelSystem {
 
         this.saveRecord(rec);
         return { rec, leveled };
+    }
+
+    /**
+     * Verifica se o socket está conectado e pronto
+     */
+    private _checkSocket(sock: any): boolean {
+        if (!sock) {
+            this.logger.warn('⚠️ [LevelSystem] Socket não disponível');
+            return false;
+        }
+        
+        if (typeof sock.groupUpdateDescription !== 'function') {
+            this.logger.warn('⚠️ [LevelSystem] Socket não tem groupUpdateDescription');
+            return false;
+        }
+        
+        return true;
     }
 
     // Auto-ADM promotion window logic
@@ -237,8 +252,15 @@ class LevelSystem {
                         window.promotedToADM.push(uid);
                         this._save(this.promoPath, this.promos);
 
-                        if (sock && typeof sock.groupUpdateDescription === 'function') {
-                            sock.groupUpdateDescription(gid, `Akira Auto-ADM: ${userName} (Nível ${this.maxLevel} - Top ${position}/${this.topForAdm})`).catch(() => { });
+                        // Verifica se o socket está disponível antes de tentar usar
+                        if (this._checkSocket(sock)) {
+                            // Tenta atualizar descrição com tratamento de erro
+                            sock.groupUpdateDescription(gid, `Akira Auto-ADM: ${userName} (Nível ${this.maxLevel} - Top ${position}/${this.topForAdm})`)
+                                .catch((err: any) => {
+                                    this.logger.warn('⚠️ [LevelSystem] Erro ao atualizar descrição:', err.message);
+                                });
+                        } else {
+                            this.logger.warn('⚠️ [LevelSystem] Socket não disponível para atualizar descrição');
                         }
 
                         return {
@@ -248,6 +270,7 @@ class LevelSystem {
                             message: `🎉 Parabéns! Você foi promovido a ADM! (Top ${position}/${this.topForAdm})`
                         };
                     } catch (e: any) {
+                        this.logger.error('❌ [LevelSystem] Erro ao promover ADM:', e.message);
                         return { success: false, message: '❌ Erro ao promover ADM' };
                     }
                 }
@@ -264,6 +287,7 @@ class LevelSystem {
                 maxPositions: this.topForAdm
             };
         } catch (e: any) {
+            this.logger.error('❌ [LevelSystem] Erro em registerMaxLevelUser:', e.message);
             return { success: false, message: e.message };
         }
     }

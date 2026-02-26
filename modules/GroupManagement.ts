@@ -19,25 +19,24 @@ class GroupManagement {
     public groupSettings: any;
     public scheduledActions: any;
     public moderationSystem: any;
+    private metadataCache: Map<string, { data: any; timestamp: number }>;
+    private readonly CACHE_TTL = 30000; // 30 segundos
 
     /**
      * Cria uma lista de alvos a partir da mensagem, incluindo mentions e
      * usuário citado no reply. Retorna array vazio se nenhum alvo encontrado.
      */
     private _extractTargets(m: any): string[] {
-        // primeiro, menções diretas
         const mentioned: string[] = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
         if (mentioned.length > 0) {
             return mentioned;
         }
 
-        // depois, verifica se algum replyInfo foi anexado (pelo CommandHandler)
         const replyInfo = m.replyInfo || m._replyInfo;
-        if (replyInfo && replyInfo.quemEscreveuCitacaoJid) {
+        if (replyInfo?.quemEscreveuCitacaoJid) {
             return [replyInfo.quemEscreveuCitacaoJid];
         }
 
-        // fallback para a forma antiga de obter participante do contextInfo
         const participant = m.message?.extendedTextMessage?.contextInfo?.participant;
         if (participant) {
             return [participant];
@@ -51,16 +50,14 @@ class GroupManagement {
         this.config = config || ConfigManager.getInstance();
         this.logger = console;
         this.moderationSystem = moderationSystem;
+        this.metadataCache = new Map();
 
-        // Pasta para dados de grupos
         this.groupsDataPath = path.join(this.config.DATABASE_FOLDER, 'group_settings.json');
         this.scheduledActionsPath = path.join(this.config.DATABASE_FOLDER, 'scheduled_actions.json');
 
-        // Carregar configurações existentes
         this.groupSettings = this.loadGroupSettings();
         this.scheduledActions = this.loadScheduledActions();
 
-        // Iniciar verificador de ações programadas
         this.startScheduledActionsChecker();
     }
 
@@ -70,7 +67,6 @@ class GroupManagement {
 
     /**
      * Verifica se o socket está conectado e pronto
-     * Versão robusta que verifica múltiplas propriedades do Baileys
      */
     private _checkSocket(): boolean {
         if (!this.sock) {
@@ -78,28 +74,48 @@ class GroupManagement {
             return false;
         }
         
-        // Verifica se tem os métodos essenciais do Baileys
         if (typeof this.sock.sendMessage !== 'function') {
             this.logger.error('❌ [GroupManagement] Socket não tem sendMessage');
             return false;
         }
         
-        // Verifica estado do WebSocket de forma segura
-        const wsState = this.sock.ws?.readyState;
-        if (wsState !== undefined && wsState !== 1) {
-            this.logger.warn(`⚠️ [GroupManagement] WebSocket estado: ${wsState}, mas tentando mesmo assim...`);
-            // Não retorna false aqui - deixa tentar executar
-        }
-        
-        // Verifica se está autenticado (tem user)
-        if (!this.sock.user) {
-            this.logger.warn('⚠️ [GroupManagement] Socket sem user autenticado ainda');
-            // Não bloqueia - tenta executar e deixa o erro acontecer se for o caso
-        }
-        
         return true;
     }
 
+    /**
+     * Obtém metadados do grupo com cache
+     */
+    private async _getGroupMetadata(groupJid: string): Promise<any | null> {
+        // Verifica cache
+        const cached = this.metadataCache.get(groupJid);
+        if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
+            return cached.data;
+        }
+
+        if (!this._checkSocket()) {
+            return null;
+        }
+
+        try {
+            const metadata = await this.sock.groupMetadata(groupJid);
+            this.metadataCache.set(groupJid, { data: metadata, timestamp: Date.now() });
+            return metadata;
+        } catch (e: any) {
+            this.logger.error(`❌ [GroupManagement] Erro ao obter metadados:`, e.message);
+            return null;
+        }
+    }
+
+    /**
+     * Limpa cache de metadados
+     */
+    clearMetadataCache(groupJid?: string) {
+        if (groupJid) {
+            this.metadataCache.delete(groupJid);
+        } else {
+            this.metadataCache.clear();
+        }
+    }
 
     /**
      * Carrega configurações dos grupos do arquivo
@@ -108,7 +124,8 @@ class GroupManagement {
         try {
             if (fs.existsSync(this.groupsDataPath)) {
                 const data = fs.readFileSync(this.groupsDataPath, 'utf8');
-                return JSON.parse(data || '{}');
+                const parsed = JSON.parse(data || '{}');
+                return parsed || {};
             }
         } catch (e: any) {
             this.logger.error('❌ [GroupManagement] Erro ao carregar configurações:', e.message);
@@ -150,7 +167,6 @@ class GroupManagement {
      * Inicia verificador de ações programadas
      */
     startScheduledActionsChecker(): void {
-        // Verifica ações programadas a cada minuto
         setInterval(() => {
             this.checkScheduledActions();
         }, 60000);
@@ -169,7 +185,6 @@ class GroupManagement {
                     if (this.moderationSystem) {
                         this.moderationSystem.unmuteUser(action.groupJid, action.userJid);
                     }
-                    // Remove do groupSettings também
                     if (this.groupSettings[action.groupJid]?.mutedUsers?.[action.userJid]) {
                         delete this.groupSettings[action.groupJid].mutedUsers[action.userJid];
                     }
@@ -183,7 +198,6 @@ class GroupManagement {
             }
         }
 
-        // Remove ações executadas
         this.scheduledActions = this.scheduledActions.filter((action: any) => action.executeAt > now);
         this.saveScheduledActions();
     }
@@ -207,7 +221,6 @@ class GroupManagement {
      * Processa comandos de grupo
      */
     async handleCommand(m: any, command: string, args: any[]) {
-        // Verifica se é grupo
         const isGroup = m.key.remoteJid.endsWith('@g.us');
         if (!isGroup) {
             if (this._checkSocket()) {
@@ -216,34 +229,29 @@ class GroupManagement {
             return true;
         }
 
-        // Verifica socket antes de processar comandos que precisam de conexão
         const needsSocket = ['mute', 'desmute', 'unmute', 'kick', 'ban', 'add', 'promote', 'demote', 
                              'fechar', 'close', 'abrir', 'open', 'link', 'revlink', 'revogar',
                              'fixar', 'pin', 'desafixar', 'unpin', 'tagall', 'totag'].includes(command);
         
         if (needsSocket && !this._checkSocket()) {
             this.logger.error(`❌ [GroupManagement] Comando ${command} falhou: socket não disponível`);
-            // Não envia mensagem de erro para o usuário, apenas loga no terminal
             return true;
         }
 
         switch (command) {
             case 'antilink':
                 return await this.toggleSetting(m, 'antilink', args[0]);
-            // COMANDOS DE USUÁRIO (Mute/Unmute)
             case 'mute':
                 return await this.muteUser(m, args);
             case 'desmute':
             case 'unmute':
                 return await this.unmuteUser(m, args);
-            // COMANDOS DE GRUPO (Fechar/Abrir)
             case 'fechar':
             case 'close':
                 return await this.closeGroupCommand(m);
             case 'abrir':
             case 'open':
                 return await this.openGroupCommand(m);
-            // COMANDOS DE AUTONOMIA
             case 'fixar':
             case 'pin':
                 return await this.pinMessage(m, args);
@@ -256,7 +264,6 @@ class GroupManagement {
             case 'reagir':
             case 'react':
                 return await this.reactToMessage(m, args);
-            // COMANDOS DE GERENCIAMENTO
             case 'ban':
             case 'kick':
                 return await this.kickUser(m, args);
@@ -273,7 +280,6 @@ class GroupManagement {
                 return await this.revokeGroupLink(m);
             case 'totag':
                 return await this.tagAll(m, args);
-            // INFO DE GRUPO
             case 'groupinfo':
             case 'infogrupo':
             case 'ginfo':
@@ -284,7 +290,6 @@ class GroupManagement {
             case 'admins':
             case 'listadmins':
                 return await this.listAdmins(m);
-            // CONFIGURAÇÕES
             case 'welcome':
                 return await this.toggleSetting(m, 'welcome', args[0]);
             case 'antifake':
@@ -331,7 +336,7 @@ class GroupManagement {
     }
 
     /**
-     * Define uma mensagem personalizada (welcome, goodbye)
+     * Define uma mensagem personalizada
      */
     async setCustomMessage(groupJid: string, type: string, text: string) {
         if (!this.groupSettings[groupJid]) this.groupSettings[groupJid] = {};
@@ -346,6 +351,7 @@ class GroupManagement {
      * Obtém uma mensagem personalizada
      */
     getCustomMessage(groupJid: string, type: string): string | null {
+        if (!this.groupSettings) this.groupSettings = {};
         return this.groupSettings[groupJid]?.messages?.[type] || null;
     }
 
@@ -353,6 +359,7 @@ class GroupManagement {
      * Verifica se welcome está ativo
      */
     getWelcomeStatus(groupJid: string): boolean {
+        if (!this.groupSettings) this.groupSettings = {};
         return this.groupSettings[groupJid]?.welcome === true;
     }
 
@@ -360,6 +367,7 @@ class GroupManagement {
      * Verifica se goodbye está ativo
      */
     getGoodbyeStatus(groupJid: string): boolean {
+        if (!this.groupSettings) this.groupSettings = {};
         return this.groupSettings[groupJid]?.goodbye === true;
     }
 
@@ -382,15 +390,17 @@ class GroupManagement {
      */
     async formatMessage(groupJid: string, participantJid: string, template: string) {
         try {
-            const metadata = await this.sock.groupMetadata(groupJid);
+            const metadata = await this._getGroupMetadata(groupJid);
+            if (!metadata) return template;
+
             const groupName = metadata.subject || 'Grupo';
             const groupDesc = metadata.desc?.toString() || 'Sem descrição';
             const userTag = `@${participantJid.split('@')[0]}`;
 
-            // Link do grupo se o bot for admin
             let groupLink = 'Apenas admins podem gerar link';
             try {
-                if (metadata.participants.find((p: any) => p.id === this.sock.user?.id && (p.admin === 'admin' || p.admin === 'superadmin'))) {
+                const me = metadata.participants.find((p: any) => p.id === this.sock?.user?.id);
+                if (me && (me.admin === 'admin' || me.admin === 'superadmin')) {
                     const code = await this.sock.groupInviteCode(groupJid);
                     groupLink = `https://chat.whatsapp.com/${code}`;
                 }
@@ -402,8 +412,7 @@ class GroupManagement {
                 .replace(/@desc/g, groupDesc)
                 .replace(/@links/g, groupLink);
         } catch (e) {
-            console.error('Erro ao formatar mensagem:', e);
-            return template; // Fallback para o template sem substituições se falhar
+            return template;
         }
     }
 
@@ -413,7 +422,7 @@ class GroupManagement {
 
     async closeGroupCommand(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível fechar grupo: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
         const result = await this.closeGroup(m.key.remoteJid);
@@ -427,7 +436,7 @@ class GroupManagement {
 
     async openGroupCommand(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível abrir grupo: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
         const result = await this.openGroup(m.key.remoteJid);
@@ -440,7 +449,7 @@ class GroupManagement {
     }
 
     /**
-     * Fecha o grupo (apenas admins podem enviar mensagens)
+     * Fecha o grupo
      */
     async closeGroup(groupJid: string): Promise<{ success: boolean; message?: string; error?: string }> {
         if (!this._checkSocket()) {
@@ -449,6 +458,7 @@ class GroupManagement {
 
         try {
             await this.sock.groupSettingUpdate(groupJid, 'announcement');
+            this.clearMetadataCache(groupJid);
             this.logger.info(`✅ [GroupManagement] Grupo ${groupJid} fechado`);
             return { success: true, message: '🔒 Grupo fechado. Apenas admins podem enviar mensagens.' };
         } catch (e: any) {
@@ -458,7 +468,7 @@ class GroupManagement {
     }
 
     /**
-     * Abre o grupo (todos podem enviar mensagens)
+     * Abre o grupo
      */
     async openGroup(groupJid: string): Promise<{ success: boolean; message?: string; error?: string }> {
         if (!this._checkSocket()) {
@@ -467,6 +477,7 @@ class GroupManagement {
 
         try {
             await this.sock.groupSettingUpdate(groupJid, 'not_announcement');
+            this.clearMetadataCache(groupJid);
             this.logger.info(`✅ [GroupManagement] Grupo ${groupJid} aberto`);
             return { success: true, message: '🔓 Grupo aberto. Todos podem enviar mensagens.' };
         } catch (e: any) {
@@ -491,7 +502,6 @@ class GroupManagement {
         }
 
         const groupJid = m.key.remoteJid;
-        // Tempo padrão base: 5 minutos
         let duration = 5;
         if (args.length > 0) {
             const parsed = parseInt(args[0]);
@@ -500,11 +510,9 @@ class GroupManagement {
             }
         }
 
-        // Se houver ModerationSystem, delega para ele (fonte única de verdade para enforcement)
         if (this.moderationSystem) {
             const muteInfo = this.moderationSystem.muteUser(groupJid, target, duration);
 
-            // Opcional: persistir expiração também em groupSettings para relatórios externos
             if (!this.groupSettings[groupJid]) {
                 this.groupSettings[groupJid] = {};
             }
@@ -516,10 +524,9 @@ class GroupManagement {
 
             if (this.sock) {
                 const userName = target.split('@')[0];
-                const extra =
-                    muteInfo.muteCount && muteInfo.muteCount > 1
-                        ? `\n⚠️ Reincidência: ${muteInfo.muteCount} mute(s) hoje. Tempo ajustado automaticamente.`
-                        : '';
+                const extra = muteInfo.muteCount && muteInfo.muteCount > 1
+                    ? `\n⚠️ Reincidência: ${muteInfo.muteCount} mute(s) hoje.`
+                    : '';
                 await this.sock.sendMessage(m.key.remoteJid, {
                     text: `🔇 Usuário @${userName} silenciado por ${muteInfo.muteMinutes} minuto(s).${extra}`,
                     mentions: [target]
@@ -529,7 +536,7 @@ class GroupManagement {
             return true;
         }
 
-        // Fallback: comportamento antigo baseado apenas em groupSettings
+        // Fallback
         if (!this.groupSettings[groupJid]) {
             this.groupSettings[groupJid] = {};
         }
@@ -566,7 +573,6 @@ class GroupManagement {
 
         const groupJid = m.key.remoteJid;
 
-        // Sempre tenta desmutar no ModerationSystem se disponível
         if (this.moderationSystem) {
             this.moderationSystem.unmuteUser(groupJid, target);
         }
@@ -593,14 +599,17 @@ class GroupManagement {
         return true;
     }
 
-    // Método auxiliar para verificar se usuário está mutado
+    /**
+     * Verifica se usuário está mutado
+     */
     isUserMuted(groupJid: string, userJid: string): boolean {
+        if (!this.groupSettings) this.groupSettings = {};
         const mutedUsers = this.groupSettings[groupJid]?.mutedUsers || {};
+
         const muteUntil = mutedUsers[userJid];
 
         if (!muteUntil) return false;
 
-        // Se o tempo expirou, remover o mute
         if (Date.now() > muteUntil) {
             delete mutedUsers[userJid];
             this.saveGroupSettings();
@@ -616,11 +625,10 @@ class GroupManagement {
 
     async pinMessage(m: any, args: any[]) {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível fixar mensagem: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return false;
         }
 
-        // Fixar mensagem quotada
         const quotedMsg = m.message?.extendedTextMessage?.contextInfo;
         if (!quotedMsg) {
             await this.sock.sendMessage(m.key.remoteJid, {
@@ -630,7 +638,6 @@ class GroupManagement {
         }
 
         try {
-            // Duração padrão: 24 horas (86400 segundos)
             let duration = 86400;
             if (args.length > 0) {
                 const time = args[0].toLowerCase();
@@ -660,7 +667,7 @@ class GroupManagement {
 
     async unpinMessage(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível desafixar mensagem: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return false;
         }
 
@@ -693,15 +700,12 @@ class GroupManagement {
 
     async markAsRead(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível marcar como lido: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return false;
         }
 
         try {
-            // Marca a mensagem e todas anteriores como lidas
             await this.sock.readMessages([m.key]);
-
-            // Confirmar silenciosamente (evitar spam)
             this.logger?.info('✅ [GroupManagement] Mensagens marcadas como lidas');
         } catch (e: any) {
             this.logger?.error('❌ [GroupManagement] Erro ao marcar como lido:', e.message);
@@ -712,7 +716,7 @@ class GroupManagement {
 
     async reactToMessage(m: any, args: any[]): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível reagir: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return false;
         }
 
@@ -734,7 +738,6 @@ class GroupManagement {
                 }
             });
 
-            // Confirmação silenciosa
             this.logger?.info(`✅ [GroupManagement] Reagiu com ${emoji}`);
         } catch (e: any) {
             this.logger?.error('❌ [GroupManagement] Erro ao reagir:', e.message);
@@ -749,7 +752,7 @@ class GroupManagement {
 
     async kickUser(m: any, args: any[]): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível remover usuário: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
@@ -785,7 +788,7 @@ class GroupManagement {
 
     async addUser(m: any, args: any[]): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível adicionar usuário: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
@@ -798,7 +801,6 @@ class GroupManagement {
             return true;
         }
 
-        // Extrai números dos argumentos
         const numbers = args.map((arg: string) => {
             const cleaned = arg.replace(/\D/g, '');
             return cleaned.length > 0 ? `${cleaned}@s.whatsapp.net` : null;
@@ -814,7 +816,6 @@ class GroupManagement {
         try {
             const result = await this.sock.groupParticipantsUpdate(groupJid, numbers, 'add');
             
-            // Verifica resultados
             const success = result.filter((r: any) => r.status === 200);
             const failed = result.filter((r: any) => r.status !== 200);
 
@@ -824,7 +825,7 @@ class GroupManagement {
                 message += `✅ Usuário(s) ${mentions} adicionado(s) com sucesso.\n`;
             }
             if (failed.length > 0) {
-                message += `❌ Falha ao adicionar ${failed.length} usuário(s). Verifique se os números estão corretos e se o grupo permite adições.`;
+                message += `❌ Falha ao adicionar ${failed.length} usuário(s). Verifique se os números estão corretos.`;
             }
 
             await this.sock.sendMessage(groupJid, { text: message.trim() }, { quoted: m });
@@ -841,7 +842,7 @@ class GroupManagement {
 
     async promoteUser(m: any, args: any[]): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível promover usuário: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
@@ -877,7 +878,7 @@ class GroupManagement {
 
     async demoteUser(m: any, args: any[]): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível rebaixar usuário: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
@@ -915,18 +916,11 @@ class GroupManagement {
      * Verifica se um usuário é admin do grupo
      */
     async isUserAdmin(groupJid: string, userJid: string): Promise<boolean> {
-        if (!this._checkSocket()) {
-            return false;
-        }
+        const metadata = await this._getGroupMetadata(groupJid);
+        if (!metadata) return false;
 
-        try {
-            const metadata = await this.sock.groupMetadata(groupJid);
-            const participant = metadata.participants.find((p: any) => p.id === userJid);
-            return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
-        } catch (e: any) {
-            this.logger.error(`❌ [GroupManagement] Erro ao verificar admin:`, e.message);
-            return false;
-        }
+        const participant = metadata.participants.find((p: any) => p.id === userJid);
+        return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
     }
 
     // ═════════════════════════════════════════════════════════════════
@@ -935,7 +929,7 @@ class GroupManagement {
 
     async getGroupLink(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível obter link: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
@@ -962,7 +956,7 @@ class GroupManagement {
 
     async revokeGroupLink(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível revogar link: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
@@ -992,7 +986,7 @@ class GroupManagement {
 
     async tagAll(m: any, args: any[]): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível taguear todos: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
@@ -1000,7 +994,12 @@ class GroupManagement {
         const message = args.join(' ') || '📢 Chamando todos...';
 
         try {
-            const metadata = await this.sock.groupMetadata(groupJid);
+            const metadata = await this._getGroupMetadata(groupJid);
+            if (!metadata) {
+                await this.sock.sendMessage(groupJid, { text: '❌ Não foi possível obter informações do grupo.' }, { quoted: m });
+                return true;
+            }
+
             const participants = metadata.participants.map((p: any) => p.id);
 
             await this.sock.sendMessage(groupJid, {
@@ -1021,14 +1020,18 @@ class GroupManagement {
 
     async getGroupInfo(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível obter info: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
         const groupJid = m.key.remoteJid;
 
         try {
-            const metadata = await this.sock.groupMetadata(groupJid);
+            const metadata = await this._getGroupMetadata(groupJid);
+            if (!metadata) {
+                await this.sock.sendMessage(groupJid, { text: '❌ Não foi possível obter informações do grupo.' }, { quoted: m });
+                return true;
+            }
             
             const creationDate = metadata.creation ? new Date(metadata.creation * 1000).toLocaleDateString('pt-BR') : 'Desconhecida';
             const owner = metadata.owner ? `@${metadata.owner.split('@')[0]}` : 'Desconhecido';
@@ -1067,14 +1070,19 @@ class GroupManagement {
 
     async listMembers(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível listar membros: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
         const groupJid = m.key.remoteJid;
 
         try {
-            const metadata = await this.sock.groupMetadata(groupJid);
+            const metadata = await this._getGroupMetadata(groupJid);
+            if (!metadata) {
+                await this.sock.sendMessage(groupJid, { text: '❌ Não foi possível obter informações do grupo.' }, { quoted: m });
+                return true;
+            }
+
             const participants = metadata.participants;
 
             let text = `👥 *Lista de Membros (${participants.length})*\n\n`;
@@ -1102,14 +1110,19 @@ class GroupManagement {
 
     async listAdmins(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível listar admins: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
         const groupJid = m.key.remoteJid;
 
         try {
-            const metadata = await this.sock.groupMetadata(groupJid);
+            const metadata = await this._getGroupMetadata(groupJid);
+            if (!metadata) {
+                await this.sock.sendMessage(groupJid, { text: '❌ Não foi possível obter informações do grupo.' }, { quoted: m });
+                return true;
+            }
+
             const admins = metadata.participants.filter((p: any) => p.admin === 'admin' || p.admin === 'superadmin');
 
             if (admins.length === 0) {
@@ -1148,7 +1161,7 @@ class GroupManagement {
 
     async setGroupDesc(m: any, args: any[]): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível definir descrição: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
@@ -1182,7 +1195,7 @@ class GroupManagement {
 
     async setGroupPhoto(m: any): Promise<boolean> {
         if (!this._checkSocket()) {
-            this.logger.error('❌ [GroupManagement] Não foi possível definir foto: socket não disponível');
+            this.logger.error('❌ [GroupManagement] Socket não disponível');
             return true;
         }
 
@@ -1232,7 +1245,7 @@ class GroupManagement {
         this.groupSettings[groupJid].requireRegistration = require;
         this.saveGroupSettings();
 
-        // Também salvar no arquivo específico de registro (compatibilidade com PermissionManager)
+        // Também salvar no arquivo específico de registro
         try {
             const configPath = './temp/akira_data/group_registration_config.json';
             
