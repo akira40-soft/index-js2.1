@@ -3,14 +3,12 @@
  * CLASSE: BotCore
  * ═══════════════════════════════════════════════════════════════════════
  * Núcleo central do bot Akira.
- * Gerencia conexão, eventos do socket, e orquestra os módulos de processamento.
  * ═══════════════════════════════════════════════════════════════════════
  */
 
 import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay, Browsers, getContentType } from '@whiskeysockets/baileys';
 import fs from 'fs';
-import path from 'path';
-import pino from 'pino'; // Logger usado pelo Baileys
+import pino from 'pino';
 
 import ConfigManager from './ConfigManager.js';
 import APIClient from './APIClient.js';
@@ -40,13 +38,12 @@ class BotCore {
     public config: any;
     public logger: any;
     public sock: any;
-    public isConnected: boolean;
-    public reconnectAttempts: number;
-    public MAX_RECONNECT_ATTEMPTS: number;
-    public connectionStartTime: number | null;
-    public qrTimeout: any;
-    public currentQR: string | null;
-    public BOT_JID: string | null;
+    public isConnected: boolean = false;
+    public reconnectAttempts: number = 0;
+    public MAX_RECONNECT_ATTEMPTS: number = 5;
+    public connectionStartTime: number | null = null;
+    public currentQR: string | null = null;
+    public BOT_JID: string | null = null;
 
     // Componentes
     public advancedPentestingToolkit: any;
@@ -71,91 +68,50 @@ class BotCore {
     public permissionManager: any;
     public stickerViewOnceHandler: any;
 
-    // Event listeners externos
+    // Event listeners
     public eventListeners: {
         onQRGenerated: ((qr: string) => void) | null;
         onConnected: ((jid: string) => void) | null;
         onDisconnected: ((reason: any) => void) | null;
+    } = {
+        onQRGenerated: null,
+        onConnected: null,
+        onDisconnected: null
     };
 
-    // Deduplicação de mensagens processadas
+    // Deduplicação
     private processedMessages: Set<string> = new Set();
     private readonly MAX_PROCESSED_MESSAGES = 1000;
-    private readonly MESSAGE_DEDUP_WINDOW = 30000; // 30 segundos
+    private pipelineLogCounter: number = 0;
+    private readonly PIPELINE_LOG_INTERVAL = 10;
 
     constructor() {
-
         this.config = ConfigManager.getInstance();
-        // Inicializa logger (usa o do config ou cria um novo com pino)
         this.logger = this.config.logger || pino({
             level: this.config.LOG_LEVEL || 'info',
             timestamp: () => `,"time":"${new Date().toISOString()}"`
         });
         this.sock = null;
-        this.isConnected = false;
-        this.reconnectAttempts = 0;
-        this.MAX_RECONNECT_ATTEMPTS = 5; // Limite de tentativas antes de desistir temporariamente
-        this.connectionStartTime = null;
-        this.qrTimeout = null;
-        this.currentQR = null;
-        this.BOT_JID = null;
-
-        // Componentes
-        this.apiClient = null;
-        this.audioProcessor = null;
-        this.mediaProcessor = null;
-        this.messageProcessor = null;
-        this.moderationSystem = null;
-        this.levelSystem = null;
-        this.registrationSystem = null;
-        this.paymentManager = null;
-        this.subscriptionManager = null;
-        this.commandHandler = null;
-        this.presenceSimulator = null;
-        this.economySystem = null;
-
-        // Event listeners externos
-        this.eventListeners = {
-            onQRGenerated: null,
-            onConnected: null,
-            onDisconnected: null
-        };
     }
 
-    /**
-    * Inicializa o bot (prepara componentes e diretórios) sem conectar
-    */
     async initialize(): Promise<boolean> {
         try {
             this.logger.info('🚀 Inicializando BotCore...');
-
-            // Aplica correções para HF Spaces se necessário
             HFCorrections.apply();
-
-            // Valida configurações
             this.config.validate();
-
-            // Inicializa componentes
             await this.initializeComponents();
-
             return true;
         } catch (error: any) {
-            this.logger.error('❌ Erro ao inicializar bot:', error.message);
+            this.logger.error('❌ Erro ao inicializar:', error.message);
             throw error;
         }
     }
 
-    /**
-    * Conecta o bot (Atalho para start completo)
-    */
     async start() {
         await this.initialize();
         await this.connect();
     }
 
-    /**
-    * Inicializa módulos auxiliares
-    */
     async initializeComponents() {
         try {
             this.logger.debug('🔧 Inicializando componentes..');
@@ -177,111 +133,71 @@ class BotCore {
             this.stickerViewOnceHandler = new StickerViewOnceHandler(this.sock, this.config);
             this.advancedPentestingToolkit = new AdvancedPentestingToolkit(this.config);
 
-            // Inicializa PaymentManager (passando this para acessar SubscriptionManager depois)
             this.paymentManager = new PaymentManager(this, this.subscriptionManager);
-
-            // Inicializa PresenceSimulator
             this.presenceSimulator = new PresenceSimulator(this.sock || null);
-
-            // Inicializa EconomySystem
             this.economySystem = new EconomySystem(this.logger);
 
-            // CommandHandler pode falhar no Hugging Face, tratar separadamente
             try {
                 this.commandHandler = new CommandHandler(this.sock, this.config, this, this.messageProcessor);
-                // Injeta sistemas explicitamente se necessário (embora já passe 'this' como BotContext)
                 this.commandHandler.economySystem = this.economySystem;
                 this.commandHandler.gameSystem = (await import('./GameSystem.js')).default;
-
-                this.logger.debug('✅ CommandHandler inicializado com injeção de dependência e componentes');
-            } catch (commandError) {
-                this.logger.warn(`⚠️ CommandHandler falhou: ${commandError.message}`);
-                this.logger.warn('⚠️Continuando sem CommandHandler (modo limitado)');
+                this.logger.debug('✅ CommandHandler inicializado');
+            } catch (err: any) {
+                this.logger.warn(`⚠️ CommandHandler: ${err.message}`);
                 this.commandHandler = null;
             }
 
-            // Inicializa OSINTFramework (BotCore level)
             try {
                 this.osintFramework = new OSINTFramework(this.config, this.sock);
                 this.logger.debug('✅ OSINTFramework inicializado');
-            } catch (osintError) {
-                this.logger.warn(`⚠️ OSINTFramework falhou na inicialização: ${osintError.message || osintError}`);
-                // Não impede o boot, apenas deixa sem o framework no nível core
+            } catch (err: any) {
+                this.logger.warn(`⚠️ OSINTFramework: ${err.message}`);
             }
 
-            // Diagnóstico de Bypass YouTube (Diagnóstico Railway 2026)
             const poToken = this.config?.YT_PO_TOKEN;
             const cookiesPath = this.config?.YT_COOKIES_PATH;
-            this.logger.info(`📺 YouTube Bypass: PO_TOKEN: ${poToken ? '✅ Configurado' : '❌ Não configurado'}, Cookies: ${cookiesPath ? '✅ Configurado' : '❌ Não configurado'}`);
+            this.logger.info(`📺 YouTube: PO_TOKEN=${poToken ? '✅' : '❌'}, Cookies=${cookiesPath ? '✅' : '❌'}`);
 
             this.logger.debug('✅ Componentes inicializados');
         } catch (error: any) {
-            this.logger.error('❌ Erro ao inicializar componentes:', error.message);
-            // Não lançar erro fatal, tentar continuar com componentes disponíveis
+            this.logger.error('❌ Erro componentes:', error.message);
         }
     }
 
-    /**
-     * Atualiza o socket em todos os componentes que dependem dele
-     * Chamado após a conexão ser estabelecida
-     */
     private _updateComponentsSocket(sock: any): void {
         try {
-            this.logger.info('🔄 Atualizando socket nos componentes...');
-
-            // Core Handlers
-            if (this.commandHandler) {
-                if (this.commandHandler.setSocket) this.commandHandler.setSocket(sock);
-                this.commandHandler.bot = this; // Garante referência ao BotCore instanciado
-            }
-
-            // Modules
-            // if (this.stickerViewOnceHandler?.setSocket) this.stickerViewOnceHandler.setSocket(sock); // Não existe no código atual
+            this.logger.info('🔄 Atualizando socket...');
+            if (this.commandHandler?.setSocket) this.commandHandler.setSocket(sock);
             if (this.groupManagement?.setSocket) this.groupManagement.setSocket(sock);
             if (this.cybersecurityToolkit?.setSocket) this.cybersecurityToolkit.setSocket(sock);
             if (this.osintFramework?.setSocket) this.osintFramework.setSocket(sock);
             if (this.stickerViewOnceHandler?.setSocket) this.stickerViewOnceHandler.setSocket(sock);
             if (this.botProfile?.setSocket) this.botProfile.setSocket(sock);
             if (this.userProfile?.setSocket) this.userProfile.setSocket(sock);
-
-            // Novos módulos
-            if (this.advancedPentestingToolkit?.setSocket) this.advancedPentestingToolkit.setSocket(sock);
             if (this.presenceSimulator) this.presenceSimulator.sock = sock;
-
-            // Não têm setSocket mas podem precisar (verificar implementações futuras)
-            // this.advancedPentestingToolkit não usa socket no código atual
-
-            this.logger.info('✅ Socket injetado nos componentes com sucesso');
+            this.logger.info('✅ Socket atualizado');
         } catch (e: any) {
-            this.logger.error('❌ Erro ao atualizar socket nos componentes:', e);
+            this.logger.error('❌ Erro socket:', e);
         }
     }
 
-    /**
-    * Estabelece conexão com WhatsApp
-    */
     async connect(): Promise<void> {
         try {
             const { state, saveCreds } = await useMultiFileAuthState(this.config.AUTH_FOLDER);
             const { version, isLatest } = await fetchLatestBaileysVersion();
 
-            this.logger.info(`📡 Conectando ao WhatsApp v${version.join('.')} (Latest: ${isLatest})`);
+            this.logger.info(`📡 WhatsApp v${version.join('.')} (Latest: ${isLatest})`);
 
-            // Configuração do Socket
             const socketConfig: any = {
                 version,
-                logger: pino({ level: 'silent' }), // Silencia logs internos do Baileys para limpar console
-                printQRInTerminal: true, // Útil para dev local
+                logger: pino({ level: 'silent' }),
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
                 },
                 browser: Browsers.macOS('Akira-Bot'),
                 generateHighQualityLinkPreview: true,
-                getMessage: async (key: any) => {
-                    // Necessário para suportar mensagens antigas/contexto
-                    return { conversation: 'hello' };
-                },
+                getMessage: async (key: any) => ({ conversation: 'hello' }),
                 connectTimeoutMs: 60000,
                 defaultQueryTimeoutMs: 60000,
                 keepAliveIntervalMs: 10000,
@@ -289,35 +205,24 @@ class BotCore {
                 retryRequestDelayMs: 250
             };
 
-            // Ajuste para proxy/agente se estiver no HF Space ou ambiente restrito
             const agent = HFCorrections.createHFAgent();
             if (agent) {
                 socketConfig.agent = agent;
-                this.logger.info('🌐 Usando agente HTTP personalizado para conexão');
+                this.logger.info('🌐 Agente HTTP personalizado');
             }
 
-            // Cria o socket
             this.sock = makeWASocket(socketConfig);
 
-            // Atualiza referência do sock nos componentes
-            if (this.commandHandler && this.commandHandler.setSocket) {
-                this.commandHandler.setSocket(this.sock);
-            }
+            if (this.commandHandler?.setSocket) this.commandHandler.setSocket(this.sock);
             if (this.presenceSimulator) this.presenceSimulator.sock = this.sock;
 
-
-            // ═══ EVENTOS DE CONEXÃO ═══
             this.sock.ev.on('connection.update', async (update: any) => {
                 const { connection, lastDisconnect, qr } = update;
 
                 if (qr) {
                     this.logger.info('📸 QR Code recebido');
                     this.currentQR = qr;
-
-                    // Notifica listener externo (para frontend/API)
-                    if (this.eventListeners.onQRGenerated) {
-                        this.eventListeners.onQRGenerated(qr);
-                    }
+                    if (this.eventListeners.onQRGenerated) this.eventListeners.onQRGenerated(qr);
                 }
 
                 if (connection === 'close') {
@@ -325,244 +230,166 @@ class BotCore {
                     this.currentQR = null;
                     const reason = lastDisconnect?.error?.output?.statusCode;
                     const shouldReconnect = reason !== DisconnectReason.loggedOut;
-
                     this.logger.warn(`🔴 Conexão fechada. Motivo: ${reason}. Reconectar: ${shouldReconnect}`);
 
-                    if (this.eventListeners.onDisconnected) {
-                        this.eventListeners.onDisconnected(reason);
-                    }
+                    if (this.eventListeners.onDisconnected) this.eventListeners.onDisconnected(reason);
 
                     if (shouldReconnect) {
                         if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
                             this.reconnectAttempts++;
-                            const delayMs = Math.min(this.reconnectAttempts * 2000, 10000); // Backoff exponencial
-                            this.logger.info(`⏳ Tentando reconectar em ${delayMs}ms (Tentativa ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})..`);
+                            const delayMs = Math.min(this.reconnectAttempts * 2000, 10000);
+                            this.logger.info(`⏳ Reconectando em ${delayMs}ms (Tentativa ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`);
                             await delay(delayMs);
                             this.connect();
                         } else {
-                            this.logger.error('❌ Muitas falhas de conexão. Reiniciando processo..');
-                            // Em containers, sair faz o orquestrador reiniciar
-                            // Em dev local, força restart seguro
+                            this.logger.error('❌ Muitas falhas. Reiniciando...');
                             process.exit(1);
                         }
                     } else {
-                        this.logger.info('🔒 Desconectado permanentemente (Logout ou Sessão Inválida)');
-                        // Limpa auth folder para forçar novo QR na próxima vez
+                        this.logger.info('🔒 Desconectado permanentemente');
                         this._cleanAuthOnError();
                     }
                 } else if (connection === 'open') {
-                    this.logger.info('✅ CONEXÃO ESTABELECIDA COM SUCESSO!');
+                    this.logger.info('✅ CONEXÃO ESTABELECIDA!');
                     this.isConnected = true;
                     this.reconnectAttempts = 0;
                     this.currentQR = null;
                     this.connectionStartTime = Date.now();
-
-                    // ✅ Atualiza socket em todos os componentes dependentes
                     this._updateComponentsSocket(this.sock);
-
-                    const userJid = this.sock.user?.id;
-                    this.BOT_JID = userJid;
-                    this.logger.info(`🤖 Logado como: ${userJid}`);
-
-                    if (this.eventListeners.onConnected) {
-                        this.eventListeners.onConnected(userJid);
-                    }
-
-                    // Envia mensagem de "Estou online" para o número do dono (opcional)
-                    const ownerNumber = this.config.BOT_NUMERO_REAL; // ou owner number real
-                    // await this.sock.sendMessage(ownerNumber + '@s.whatsapp.net', { text: '🤖 Akira Online!' });
+                    this.BOT_JID = this.sock.user?.id;
+                    this.logger.info(`🤖 Logado como: ${this.BOT_JID}`);
+                    if (this.eventListeners.onConnected) this.eventListeners.onConnected(this.BOT_JID);
                 }
             });
 
-            // ═══ EVENTOS DE CREDENCIAIS ═══
             this.sock.ev.on('creds.update', saveCreds);
 
-            // ═══ EVENTOS DE MENSAGEM ═══
             this.sock.ev.on('messages.upsert', async ({ messages, type }: any) => {
                 if (type !== 'notify') return;
-
-                for (const m of messages) {
-                    await this.processMessage(m);
-                }
+                for (const m of messages) await this.processMessage(m);
             });
 
-            // ═══ EVENTO: ENTRADA/SAÍDA DE MEMBROS ═══
             this.sock.ev.on('group-participants.update', async (update: any) => {
                 const { id, participants, action } = update;
 
-                // 1. Anti-Fake (Sempre o primeiro se for entrada)
-                if (action === 'add' && this.moderationSystem && this.moderationSystem.isAntiFakeActive(id)) {
+                if (action === 'add' && this.moderationSystem?.isAntiFakeActive(id)) {
                     for (const participant of participants) {
                         if (this.moderationSystem.isFakeNumber(participant)) {
-                            this.logger.warn(`🚫 [ANTI-FAKE] Kickando número fake: ${participant} do grupo ${id}`);
-                            await this.sock.sendMessage(id, { text: `⚠️ Número fake (+${participant.split('@')[0]}) detectado e removido.` });
+                            this.logger.warn(`🚫 [ANTI-FAKE] ${participant}`);
+                            await this.sock.sendMessage(id, { text: '⚠️ Número fake removido.' });
                             await this.sock.groupParticipantsUpdate(id, [participant], 'remove');
-                            // Se foi removido, não processa boas-vindas para este participante
                             participants.splice(participants.indexOf(participant), 1);
                         }
                     }
                 }
 
-                // 2. Boas-vindas (Welcome)
                 if (action === 'add' && this.groupManagement && participants.length > 0) {
                     const isWelcomeOn = this.groupManagement.groupSettings?.[id]?.welcome;
                     if (isWelcomeOn) {
-                        for (const participant of participants) {
-                            const template = this.groupManagement.getCustomMessage(id, 'welcome') || 'Olá @user, seja bem-vindo ao grupo @group!';
-                            const formatted = await this.groupManagement.formatMessage(id, participant, template);
-                            await this.sock.sendMessage(id, { text: formatted, mentions: [participant] });
+                        for (const p of participants) {
+                            const template = this.groupManagement.getCustomMessage(id, 'welcome') || 'Olá @user!';
+                            const formatted = await this.groupManagement.formatMessage(id, p, template);
+                            await this.sock.sendMessage(id, { text: formatted, mentions: [p] });
                         }
                     }
                 }
 
-                // 3. Adeus (Goodbye)
                 if (action === 'remove' && this.groupManagement) {
                     const isGoodbyeOn = this.groupManagement.groupSettings?.[id]?.goodbye;
                     if (isGoodbyeOn) {
-                        for (const participant of participants) {
-                            const template = this.groupManagement.getCustomMessage(id, 'goodbye') || 'Adeus @user, sentiremos sua falta!';
-                            const formatted = await this.groupManagement.formatMessage(id, participant, template);
-                            await this.sock.sendMessage(id, { text: formatted, mentions: [participant] });
+                        for (const p of participants) {
+                            const template = this.groupManagement.getCustomMessage(id, 'goodbye') || 'Adeus @user!';
+                            const formatted = await this.groupManagement.formatMessage(id, p, template);
+                            await this.sock.sendMessage(id, { text: formatted, mentions: [p] });
                         }
                     }
                 }
             });
 
-            // ═══ CASOS ESPECIAIS (Call, Group Update, etc) ═══
-            // Implementar conforme necessidade...
-
         } catch (error: any) {
-            this.logger.error('❌ Erro na função connect:', error.message);
+            this.logger.error('❌ Erro conexão:', error.message);
             await delay(5000);
-            this.connect(); // Tenta de novo em loop seguro
+            this.connect();
         }
     }
 
-    /**
-    * Verifica se mensagem já foi processada (deduplicação)
-    */
     private isMessageProcessed(key: any): boolean {
         if (!key?.id) return false;
         const messageId = key.id;
-        
         if (this.processedMessages.has(messageId)) {
-            this.logger.debug(`⏭️ Mensagem já processada: ${messageId.substring(0, 15)}...`);
+            this.logger.debug(`⏭️ Já processada: ${messageId.substring(0, 15)}`);
             return true;
         }
-        
-        // Adiciona ao conjunto de mensagens processadas
         this.processedMessages.add(messageId);
-        
-        // Limita tamanho do conjunto para evitar memory leak
         if (this.processedMessages.size > this.MAX_PROCESSED_MESSAGES) {
-            this.logger.debug('🧹 Limpando cache de mensagens processadas');
-            // Remove elementos antigos (simplificado - em produção seria mais sofisticado)
             const arr = Array.from(this.processedMessages);
             this.processedMessages = new Set(arr.slice(-this.MAX_PROCESSED_MESSAGES / 2));
         }
-        
         return false;
     }
 
-    /**
-    * Processa uma única mensagem recebida
-    */
     async processMessage(m: any): Promise<void> {
         try {
-            // 🚨 DEDUPLICAÇÃO: Verifica se mensagem já foi processada
-            if (this.isMessageProcessed(m.key)) {
-                return;
-            }
+            if (this.isMessageProcessed(m.key)) return;
 
-            this.logger.warn('🔹 [PIPELINE 1] Iniciando');
-            if (!m) {
+            this.pipelineLogCounter++;
+            const shouldLog = this.pipelineLogCounter % this.PIPELINE_LOG_INTERVAL === 1;
 
-                this.logger.warn('🔹 [PIPELINE] "m" é null/undefined');
-                return;
-            }
-            if (!m.message) {
-                this.logger.warn('🔹 [PIPELINE] Mensagem vazia, retornando');
-                return;
-            }
-            if (m.key.fromMe) return; // Mensagem do próprio bot
-
-            this.logger.warn('🔹 [PIPELINE 2] Mensagem válida');
-
-            // Trata status de 'protocolMessage' (ex: mensagens apagadas)
+            if (shouldLog) this.logger.debug('🔹 [PIPELINE] Iniciando');
+            if (!m) { this.logger.debug('🔹 [PIPELINE] m null'); return; }
+            if (!m.message) { this.logger.debug('🔹 [PIPELINE] msg vazia'); return; }
+            if (m.key.fromMe) return;
             if (m.message.protocolMessage) return;
+
+            if (shouldLog) this.logger.debug('🔹 [PIPELINE] Válida');
 
             const remoteJid = m.key.remoteJid;
             const ehGrupo = remoteJid.endsWith('@g.us');
             const ehStatus = remoteJid === 'status@broadcast';
+            if (ehStatus) return;
 
-            if (ehStatus) return; // Ignora status updates
-
-            // Extrai dados básicos
-            this.logger.warn('🔹 [PIPELINE 3] Extraindo dados básicos');
             if (!this.messageProcessor) throw new Error('messageProcessor não inicializado');
 
             const nome = m.pushName || 'Usuário';
             const numeroReal = this.messageProcessor.extractUserNumber(m);
-            this.logger.warn(`🔹 [PIPELINE 4] Dados extraídos: ${numeroReal}`);
-            this.logger.debug(`🔹 [PIPELINE] Nome: ${nome}, Número: ${numeroReal}`);
+            if (shouldLog) this.logger.debug(`🔹 [PIPELINE] ${numeroReal}`);
 
-            // Verifica lista negra
-            if (this.moderationSystem && this.moderationSystem.isBlacklisted(numeroReal)) {
-                this.logger.debug(`🚫 Mensagem ignorada de usuário banido: ${nome} (${numeroReal})`);
+            if (this.moderationSystem?.isBlacklisted(numeroReal)) {
+                this.logger.debug(`🚫 Banido: ${nome}`);
                 return;
             }
 
-            // Verifica Mute (apenas grupos)
-            if (ehGrupo && this.moderationSystem && this.moderationSystem.isMuted(remoteJid, m.key.participant)) {
+            if (ehGrupo && this.moderationSystem?.isMuted(remoteJid, m.key.participant)) {
                 await this.handleMutedUserMessage(m, nome);
                 return;
             }
 
-            // Detecta tipo de conteúdo e extrai texto
-            this.logger.warn('🔹 [PIPELINE 5] Detectando conteúdo');
             const texto = this.messageProcessor.extractText(m);
             const temImagem = this.messageProcessor.hasImage(m);
             const temAudio = this.messageProcessor.hasAudio(m);
-            this.logger.warn(`🔹 [PIPELINE 6] Conteúdo detectado: txt=${!!texto} img=${temImagem} aud=${temAudio}`);
+            if (shouldLog) this.logger.debug(`🔹 [PIPELINE] txt=${!!texto} img=${temImagem} aud=${temAudio}`);
 
-            // Verifica Anti-Link (se tiver texto) - com verificação de admin
             if (ehGrupo && texto && this.moderationSystem) {
-                // Verifica se o usuário é admin do grupo
                 let isAdmin = false;
                 try {
-                    if (this.groupManagement) {
-                        isAdmin = await this.groupManagement.isUserAdmin(remoteJid, m.key.participant);
-                    }
-                } catch (e) {
-                    // Se falhar a verificação, assume que não é admin
-                    isAdmin = false;
-                }
-
-                // Se não for admin, verifica se tem link
+                    if (this.groupManagement) isAdmin = await this.groupManagement.isUserAdmin(remoteJid, m.key.participant);
+                } catch (e) { isAdmin = false; }
                 if (!isAdmin && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
                     await this.handleAntiLinkViolation(m, nome);
                     return;
                 }
             }
 
-            // Anti-Spam (Rate Limit) -> Verificado dentro do handleTextMessage para economizar calls, 
-            // mas poderia ser aqui. Vamos deixar no handleTextMessage para permitir que imagens passem por enquanto ou replicar logica.
-
-            // Extrai informações de Reply
-            this.logger.debug('🔹 [PIPELINE] Extraindo replyInfo');
             const replyInfo = this.messageProcessor.extractReplyInfo(m);
-            this.logger.debug('🔹 [PIPELINE] ReplyInfo extraído, iniciando roteamento');
-
-            // Roteamento de tipos
             const temSticker = !!m.message?.stickerMessage;
 
-            if (temSticker && ehGrupo && this.moderationSystem.isAntiStickerActive(remoteJid)) {
+            if (temSticker && ehGrupo && this.moderationSystem?.isAntiStickerActive(remoteJid)) {
                 await this.handleAntiMediaViolation(m, 'sticker');
                 return;
             }
 
             if (temImagem) {
-                if (ehGrupo && this.moderationSystem.isAntiImageActive(remoteJid)) {
+                if (ehGrupo && this.moderationSystem?.isAntiImageActive(remoteJid)) {
                     await this.handleAntiMediaViolation(m, 'imagem');
                     return;
                 }
@@ -571,142 +398,78 @@ class BotCore {
                 await this.handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo);
             } else if (texto) {
                 await this.handleTextMessage(m, nome, numeroReal, texto, replyInfo, ehGrupo);
-            } else if (temSticker) {
-                // Se não foi bloqueado e é um sticker, pode processar se quiser
             }
         } catch (error: any) {
-            // Log bruto para garantir visibilidade
-            console.error('❌ [CRITICAL ERROR RAW]:', error);
-
-            this.logger.error('❌ Erro no pipeline de mensagem:', error?.message || 'SEM MENSAGEM');
-            this.logger.error('📍 Stack trace:', error?.stack || 'SEM STACK TRACE');
-            this.logger.error('🔍 JSON:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+            console.error('❌ [CRITICAL]:', error);
+            this.logger.error('❌ Erro pipeline:', error?.message);
         }
     }
 
-    /**
-    * Handle image message (Computer Vision)
-    * FLUXO CRÍTICO:
-    * 1. Recebe mensagem com imageMessage (criptografada pelo WhatsApp)
-    * 2. MediaProcessor baixa e DECIFRA a imagem -> retorna Buffer RAW
-    * 3. BotCore converte Buffer RAW -> Base64
-    * 4. Envia Base64 para API Python (ComputerVision)
-    */
     async handleImageMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean): Promise<void> {
-        this.logger.info(`🖼️ [IMAGEM] Iniciando processamento para ${nome}`);
-
-            // Premiar XP por imagem
-            if (ehGrupo && this.levelSystem) {
-                const xpAwarded = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 15);
-                if (xpAwarded && this.levelSystem.enableDetailedLogging !== false) {
-                    this.logger.info(`📈 [LEVELING] ${nome} (${numeroReal}) ganhou 15 XP por enviar imagem no grupo ${m.key.remoteJid}`);
-                }
-            }
-
+        this.logger.info(`🖼️ [IMAGEM] ${nome}`);
+        if (ehGrupo && this.levelSystem) {
+            const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 15);
+            if (xp) this.logger.info(`📈 [LEVEL] ${nome} +15 XP`);
+        }
 
         try {
-            // ✅ VERIFICAÇÃO DE ATIVAÇÃO RIGOROSA (Mesma regra do texto)
             let deveResponder = false;
             const caption = this.messageProcessor.extractText(m) || '';
             const captionLower = caption.toLowerCase();
             const botNameLower = (this.config.BOT_NAME || 'belmira').toLowerCase();
-            const hasBotName = captionLower.includes(botNameLower);
 
-            if (!ehGrupo) {
-                // Em PV sempre responde
-                deveResponder = true;
-            } else {
-                // Em Grupo: Menção OU Reply ao Bot OU Nome no Caption OU Comando na Legenda
-                if (this.messageProcessor.isBotMentioned(m)) {
-                    deveResponder = true;
-                } else if (replyInfo && replyInfo.ehRespostaAoBot) {
-                    deveResponder = true;
-                } else if (hasBotName) {
-                    deveResponder = true;
-                } else if (this.messageProcessor.isCommand(caption)) {
-                    deveResponder = true;
-                    this.logger.debug(`✅ Ativação por comando na legenda detectada: ${caption.substring(0, 20)}`);
-                }
-            }
+            if (!ehGrupo) deveResponder = true;
+            else if (this.messageProcessor.isBotMentioned(m)) deveResponder = true;
+            else if (replyInfo?.ehRespostaAoBot) deveResponder = true;
+            else if (captionLower.includes(botNameLower)) deveResponder = true;
+            else if (this.messageProcessor.isCommand(caption)) deveResponder = true;
 
             if (!deveResponder) {
-                this.logger.debug(`⏭️ Imagem ignorada em grupo (sem ativação): ${caption.substring(0, 30)}..`);
+                this.logger.debug(`⏭️ Imagem ignorada: ${caption.substring(0, 30)}`);
                 return;
             }
 
-            // PRIORIDADE: Se a legenda for um comando, desvia para o CommandHandler
             if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
                 try {
                     const handled = await this.commandHandler.handle(m, { nome, numeroReal, texto: caption, replyInfo, ehGrupo });
                     if (handled) {
-                        this.logger.info(`⚡ Comando em legenda de imagem tratado: ${caption.substring(0, 30)}..`);
+                        this.logger.info(`⚡ Comando imagem: ${caption.substring(0, 30)}`);
                         return;
                     }
-                } catch (cmdErr: any) {
-                    this.logger.warn(`⚠️ Falha ao processar comando na legenda: ${cmdErr.message}`);
+                } catch (err: any) {
+                    this.logger.warn(`⚠️ Comando legenda: ${err.message}`);
                 }
             }
 
-            // Marca como entregue/lido
             await this.presenceSimulator.simulateTicks(m, true, false);
-
-            // Simula "olhando" a imagem (digitação breve)
             await this.presenceSimulator.simulateTyping(m.key.remoteJid, 1500);
 
-            // Validação de tipo (suporte a viewOnce)
             const tipoMsg = getContentType(m.message);
             let imgMsg = m.message.imageMessage;
-
             if (tipoMsg === 'viewOnceMessage' || tipoMsg === 'viewOnceMessageV2') {
                 imgMsg = m.message[tipoMsg].message?.imageMessage;
             }
+            if (!imgMsg) { this.logger.error('❌ Imagem inválida'); return; }
 
-            if (!imgMsg) {
-                this.logger.error('❌ Mensagem de imagem inválida ou ausente (não foi possível localizar imageMessage)');
-                // Se não tem imagem mas chegou aqui, pode ser um comando de texto na legenda que não precisava de imagem
-                // Mas geralmente handleImageMessage é para imagens.
+            this.logger.debug('⬇️ Baixando imagem...');
+            const imageBuffer = await this.mediaProcessor.downloadMedia(imgMsg, 'image');
+            if (!imageBuffer?.length) {
+                this.logger.error('❌ Buffer vazio');
+                await this.reply(m, '❌ Não consegui baixar a imagem.');
                 return;
             }
 
-            this.logger.debug('⬇️ Baixando e decifrando imagem...');
-            this.logger.debug(`📋 MimeType: ${imgMsg.mimetype || 'desconhecido'}`);
-            this.logger.debug(`📏 Tamanho relatado: ${imgMsg.fileLength || 'desconhecido'} bytes`);
-
-            // Baixa a imagem (MediaProcessor cuida da decifragem usando chaves da mensagem)
-            const imageBuffer = await this.mediaProcessor.downloadMedia(
-                imgMsg,
-                'image'
-            );
-
-            if (!imageBuffer || imageBuffer.length === 0) {
-                this.logger.error('❌ Falha: Buffer de imagem vazio ou nulo após download/decifragem');
-                await this.reply(m, '❌ Não consegui baixar essa imagem. Tente enviar novamente em um formato diferente (JPG/PNG)...');
-                return;
-            }
-
-            this.logger.debug(`✅ Imagem decifrada com sucesso! Tamanho: ${imageBuffer.length} bytes`);
-
-            // Converte para base64 (Formato esperado pelo computervision.py)
+            this.logger.debug(`✅ Imagem: ${imageBuffer.length} bytes`);
             let base64Image;
             try {
                 base64Image = imageBuffer.toString('base64');
-
-                // Validação do base64 (deve ter comprimento razoável)
-                if (!base64Image || base64Image.length < 100) {
-                    throw new Error(`Base64 inválido: comprimento ${base64Image?.length || 0}`);
-                }
-
-                this.logger.debug(`✅ Conversão base64 OK: ${base64Image.length} caracteres`);
-            } catch (conversionError: any) {
-                this.logger.error('❌ Erro na conversão base64:', conversionError.message);
-                await this.reply(m, '❌ Erro ao processar imagem...');
+                if (!base64Image || base64Image.length < 100) throw new Error('Base64 inválido');
+            } catch (err: any) {
+                this.logger.error('❌ Erro base64:', err.message);
+                await this.reply(m, '❌ Erro ao processar imagem.');
                 return;
             }
 
-            this.logger.debug('🔄 Convertido para Base64. Preparando payload...');
-
-            // Prepara payload para Computer Vision
-            // caption já extraído no início da função
             const payload = this.apiClient.buildPayload({
                 usuario: nome,
                 numero: numeroReal,
@@ -718,9 +481,9 @@ class BotCore {
                 imagem_dados: {
                     dados: base64Image,
                     mime_type: imgMsg.mimetype || 'image/jpeg',
-                    descricao: caption || 'Imagem enviada'
+                    descricao: caption || 'Imagem'
                 },
-                mensagem_citada: (replyInfo && replyInfo.textoMensagemCitada) || '',
+                mensagem_citada: replyInfo?.textoMensagemCitada || '',
                 reply_metadata: replyInfo ? {
                     is_reply: replyInfo.isReply || true,
                     reply_to_bot: replyInfo.ehRespostaAoBot,
@@ -728,223 +491,120 @@ class BotCore {
                 } : null
             });
 
-            this.logger.info(`👁️ Enviando imagem para análise (Computer Vision)...`);
-
-            // Chama API
+            this.logger.info(`👁️ Analisando imagem...`);
             const resultado = await this.apiClient.processMessage(payload);
 
             if (!resultado.success) {
-                this.logger.error('❌ Erro na API de Visão:', resultado.error);
-                await this.sock.sendMessage(m.key.remoteJid, {
-                    text: 'Minha visão está embaçada agora... Tenta depois?'
-                });
+                this.logger.error('❌ Erro API:', resultado.error);
+                await this.sock.sendMessage(m.key.remoteJid, { text: 'Não consegui analisar a imagem.' });
                 return;
             }
 
-            let resposta = resultado.resposta || 'Não sei o que dizer sobre isso.';
-
-            // Envia resposta
+            const resposta = resultado.resposta || 'Sem resposta.';
             await this.presenceSimulator.simulateTyping(m.key.remoteJid, this.presenceSimulator.calculateTypingDuration(resposta));
-
-            // Grupos: SEMPRE reply | PV: reply apenas se usuário respondeu ao bot
-            const opcoes = ehGrupo ? { quoted: m } : (replyInfo && replyInfo.ehRespostaAoBot) ? { quoted: m } : {};
+            const opcoes = ehGrupo ? { quoted: m } : (replyInfo?.ehRespostaAoBot) ? { quoted: m } : {};
             await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
-
-            // Marca como lido final
             await this.presenceSimulator.simulateTicks(m, true, false);
-
         } catch (error: any) {
-            this.logger.error('❌ Erro ao processar imagem:', error.message);
-            this.logger.error(error.stack);
+            this.logger.error('❌ Erro imagem:', error.message);
         }
     }
 
-    /**
-    * Handle audio message
-    */
     async handleAudioMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean): Promise<void> {
         this.logger.info(`🎤 [ÁUDIO] ${nome}`);
-
         try {
-            // Validação de tipo (suporte a viewOnce)
             const tipoMsg = getContentType(m.message);
             let audMsg = m.message.audioMessage;
-
             if (tipoMsg === 'viewOnceMessage' || tipoMsg === 'viewOnceMessageV2') {
                 audMsg = m.message[tipoMsg].message?.audioMessage;
             }
+            if (!audMsg) { this.logger.error('❌ Áudio inválido'); return; }
 
-            if (!audMsg) {
-                this.logger.error('❌ Mensagem de áudio inválida ou ausente');
-                return;
-            }
-
-            // Decodifica áudio
-            const audioBuffer = await this.mediaProcessor.downloadMedia(
-                audMsg,
-                'audio'
-            );
-
+            const audioBuffer = await this.mediaProcessor.downloadMedia(audMsg, 'audio');
             await this.handleAudioMessage_internal(m, nome, numeroReal, replyInfo, ehGrupo, audioBuffer);
         } catch (error: any) {
-            this.logger.error('❌ Erro ao processar áudio:', error.message);
+            this.logger.error('❌ Erro áudio:', error.message);
         }
     }
 
-    /**
-     * Lógica interna de áudio (transcrição e resposta)
-     */
     async handleAudioMessage_internal(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean, audioBuffer: Buffer | null): Promise<void> {
         try {
+            if (!audioBuffer) { this.logger.error('❌ Buffer áudio vazio'); return; }
 
-            if (!audioBuffer) {
-                this.logger.error('❌ Erro ao baixar áudio');
-                return;
-            }
-
-            // STT
             const transcricao = await this.audioProcessor.speechToText(audioBuffer);
+            if (!transcricao.sucesso) { this.logger.warn('⚠️ Falha transcrição'); return; }
 
-            if (!transcricao.sucesso) {
-                this.logger.warn('⚠️ Falha na transcrição');
-                return;
-            }
-
-            const textoAudio = transcricao.texto;
-            this.logger.info(`📝 Transcrição: ${textoAudio.substring(0, 80)}..`);
-
-            // Processa como texto
-            await this.handleTextMessage(m, nome, numeroReal, textoAudio, replyInfo, ehGrupo, true);
-
+            this.logger.info(`📝 Transcrição: ${transcricao.texto.substring(0, 80)}`);
+            await this.handleTextMessage(m, nome, numeroReal, transcricao.texto, replyInfo, ehGrupo, true);
         } catch (error: any) {
-            this.logger.error('❌ Erro ao processar áudio:', error.message);
+            this.logger.error('❌ Erro áudio interno:', error.message);
         }
     }
 
-    /**
-    * Handle text message
-    */
     async handleTextMessage(m: any, nome: string, numeroReal: string, texto: string, replyInfo: any, ehGrupo: boolean, foiAudio: boolean = false): Promise<void> {
         try {
-            // Check rate limit (Spam)
-            // Prefer ModerationSystem hourly limiter if available (more robust), fallback to MessageProcessor short-term limiter
             let allowed = true;
             try {
                 const isDono = typeof this.config?.isDono === 'function' ? this.config.isDono(numeroReal, nome) : false;
-                if (this.moderationSystem && typeof this.moderationSystem.checkAndLimitHourlyMessages === 'function') {
+                if (this.moderationSystem?.checkAndLimitHourlyMessages) {
                     const res = this.moderationSystem.checkAndLimitHourlyMessages(numeroReal, nome, numeroReal, texto, null, isDono);
                     allowed = !!res?.allowed;
                     if (!allowed) {
-                        // If moderation system suggests action, follow its recommended response
-                        if (ehGrupo) {
-                            await this.handleWarning(m, 'Flood/Spam');
-                        } else {
-                            const replyMsg = res?.reason === 'LIMITE_HORARIO_EXCEDIDO' ?
-                                '⏰ Você excedeu o limite de mensagens por hora. Tente novamente mais tarde.' :
-                                '⏰ Você está mandando mensagens muito rápido. Aguarde um pouco.';
-                            await this.sock.sendMessage(m.key.remoteJid, { text: replyMsg });
-                        }
+                        const msg = res?.reason === 'LIMITE_HORARIO_EXCEDIDO' ? '⏰ Limite por hora excedido.' : '⏰ Muitas mensagens. Aguarde.';
+                        await this.sock.sendMessage(m.key.remoteJid, { text: msg });
                         return;
                     }
-                } else {
-                    // Fallback to short-window limiter in MessageProcessor
-                    if (!this.messageProcessor.checkRateLimit(numeroReal)) {
-                        if (ehGrupo) {
-                            await this.handleWarning(m, 'Flood/Spam');
-                        } else {
-                            await this.sock.sendMessage(m.key.remoteJid, {
-                                text: '⏰ Você está mandando mensagens muito rápido. Aguarde um pouco.'
-                            });
-                        }
-                        return;
-                    }
+                } else if (!this.messageProcessor.checkRateLimit(numeroReal)) {
+                    await this.sock.sendMessage(m.key.remoteJid, { text: '⏰ Muitas mensagens. Aguarde.' });
+                    return;
                 }
-            } catch (rlErr) {
-                this.logger?.warn('Erro ao verificar rate limit:', rlErr?.message || rlErr);
-                // On error, fallback to MessageProcessor limiter
+            } catch (err: any) {
+                this.logger?.warn('Erro rate limit:', err?.message);
                 if (!this.messageProcessor.checkRateLimit(numeroReal)) {
-                    if (ehGrupo) {
-                        await this.handleWarning(m, 'Flood/Spam');
-                    } else {
-                        await this.sock.sendMessage(m.key.remoteJid, {
-                            text: '⏰ Você está mandando mensagens muito rápido. Aguarde um pouco.'
-                        });
-                    }
+                    await this.sock.sendMessage(m.key.remoteJid, { text: '⏰ Muitas mensagens. Aguarde.' });
                     return;
                 }
             }
 
-            // Handle commands centrally (short-circuit if handled)
             try {
                 if (this.commandHandler) {
                     const handled = await this.commandHandler.handle(m, { nome, numeroReal, texto, replyInfo, ehGrupo });
                     if (handled) {
-                        this.logger.info(`⚡ Comando tratado: ${texto.substring(0, 30)}..`);
-
-                        // Premiar XP por comando (opcional mas bom para engajamento)
+                        this.logger.info(`⚡ Comando: ${texto.substring(0, 30)}`);
                         if (ehGrupo && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
-                            const xpAwarded = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
-                            if (xpAwarded && this.levelSystem.enableDetailedLogging !== false) {
-                                this.logger.info(`📈 [LEVELING] ${nome} (${numeroReal}) ganhou 5 XP por usar comando no grupo ${m.key.remoteJid}`);
-                            }
+                            const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
+                            if (xp) this.logger.info(`📈 [LEVEL] ${nome} +5 XP`);
                         }
-
                         return;
                     }
                 }
-            } catch (e: any) {
-                this.logger.warn('Erro no CommandHandler:', e.message);
+            } catch (err: any) {
+                this.logger.warn('Erro CommandHandler:', err.message);
             }
 
-            // Verifica se deve responder
             let deveResponder = false;
-
-            // ═══ DETECÇÃO DE ATIVAÇÃO POR PALAVRA-CHAVE "AKIRA" ═══
             const textoLower = texto.toLowerCase();
             const botNameLower = (this.config.BOT_NAME || 'belmira').toLowerCase();
-            const hasBotName = textoLower.includes(botNameLower);
 
             if (foiAudio) {
-                // Audio sempre responde em PV
-                if (!ehGrupo) {
-                    deveResponder = true;
-                } else {
-                    // Em grupos, responde se for reply ao bot, menção, ou palavra "akira"
-                    if (replyInfo && replyInfo.ehRespostaAoBot) {
-                        deveResponder = true;
-                    } else if (this.messageProcessor.isBotMentioned(m)) {
-                        deveResponder = true;
-                    } else if (hasBotName) {
-                        deveResponder = true;
-                    }
-                }
+                if (!ehGrupo) deveResponder = true;
+                else if (replyInfo?.ehRespostaAoBot) deveResponder = true;
+                else if (this.messageProcessor.isBotMentioned(m)) deveResponder = true;
+                else if (textoLower.includes(botNameLower)) deveResponder = true;
             } else {
-                // Texto
-                if (replyInfo && replyInfo.ehRespostaAoBot) {
-                    deveResponder = true;
-                } else if (!ehGrupo) {
-                    // ✅ CORREÇÃO: Em PV sempre responde para qualquer mensagem
-                    // Removido comportamento anterior que exigia reply ao bot
-                    deveResponder = true;
-                    this.logger.debug(`✅ [PV] Respondendo a mensagem privada de ${nome}`);
-                } else {
-                    // Em grupo, responde se mencionado ou se contém palavra "akira"
-                    if (this.messageProcessor.isBotMentioned(m)) {
-                        deveResponder = true;
-                    } else if (hasBotName) {
-                        deveResponder = true;
-                    }
-                }
+                if (replyInfo?.ehRespostaAoBot) deveResponder = true;
+                else if (!ehGrupo) deveResponder = true;
+                else if (this.messageProcessor.isBotMentioned(m)) deveResponder = true;
+                else if (textoLower.includes(botNameLower)) deveResponder = true;
             }
 
             if (!deveResponder) {
-                this.logger.debug(`⏭️ Mensagem ignorada (sem ativação): ${texto.substring(0, 50)}..`);
+                this.logger.debug(`⏭️ Ignorado: ${texto.substring(0, 50)}`);
                 return;
             }
 
-            this.logger.info(`\n🔥 [PROCESSANDO] ${nome}: ${texto.substring(0, 60)}..`);
+            this.logger.info(`\n🔥 [PROCESSANDO] ${nome}: ${texto.substring(0, 60)}`);
 
-            // Constrói payload com reply metadata completo (adaptado de akira)
             const replyMetadata = replyInfo ? {
                 is_reply: replyInfo.isReply || true,
                 reply_to_bot: replyInfo.ehRespostaAoBot,
@@ -956,14 +616,10 @@ class BotCore {
                 priority_level: replyInfo.priorityLevel || 2
             } : { is_reply: false, reply_to_bot: false };
 
-            // Premiar XP por mensagem de texto
             if (ehGrupo && this.levelSystem) {
-                const xpAwarded = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 10);
-                if (xpAwarded && this.levelSystem.enableDetailedLogging !== false) {
-                    this.logger.info(`📈 [LEVELING] ${nome} (${numeroReal}) ganhou 10 XP por mensagem de texto no grupo ${m.key.remoteJid}`);
-                }
+                const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 10);
+                if (xp) this.logger.info(`📈 [LEVEL] ${nome} +10 XP`);
             }
-
 
             const payload = this.apiClient.buildPayload({
                 usuario: nome,
@@ -973,97 +629,60 @@ class BotCore {
                 grupo_id: ehGrupo ? m.key.remoteJid : null,
                 grupo_nome: ehGrupo ? (m.key.remoteJid.split('@')[0] || 'Grupo') : null,
                 tipo_mensagem: foiAudio ? 'audio' : 'texto',
-                mensagem_citada: (replyInfo && replyInfo.textoMensagemCitada) || '',
+                mensagem_citada: replyInfo?.textoMensagemCitada || '',
                 reply_metadata: replyMetadata
             });
 
-            // Chama API
             const resultado = await this.apiClient.processMessage(payload);
-
             if (!resultado.success) {
-                this.logger.error('❌ Erro na API:', resultado.error);
-                await this.sock.sendMessage(m.key.remoteJid, {
-                    text: 'Eita! Tive um problema aqui. Tenta de novo em um segundo?'
-                });
+                this.logger.error('❌ Erro API:', resultado.error);
+                await this.sock.sendMessage(m.key.remoteJid, { text: 'Tive um problema. Tenta de novo?' });
                 return;
             }
 
-            let resposta = resultado.resposta || 'Sem resposta';
+            const resposta = resultado.resposta || 'Sem resposta';
 
-            // TTS se foi áudio (ou se quiser forçar áudio para certas respostas)
             if (foiAudio) {
-                this.logger.info('🎤 [AUDIO RESPONSE] Iniciando fluxo de resposta por áudio...');
-
-                // 1. Inicia presença "gravando" IMEDIATAMENTE
-                if (this.presenceSimulator) {
-                    await this.presenceSimulator.safeSendPresenceUpdate('recording', m.key.remoteJid);
-                }
-
+                this.logger.info('🎤 [AUDIO RESPONSE]');
+                if (this.presenceSimulator) await this.presenceSimulator.safeSendPresenceUpdate('recording', m.key.remoteJid);
                 try {
-                    // 2. Gera o áudio (TTS) ENQUANTO aparece "gravando"
-                    const ttsResult = await this.audioProcessor.textToSpeech(resposta);
-
-                    if (!ttsResult.sucesso) {
-                        this.logger.warn('⚠️ Falha no TTS, enviando texto como fallback');
+                    const tts = await this.audioProcessor.textToSpeech(resposta);
+                    if (!tts.sucesso) {
+                        this.logger.warn('⚠️ Falha TTS');
                         if (this.presenceSimulator) await this.presenceSimulator.safeSendPresenceUpdate('paused', m.key.remoteJid);
                         await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, { quoted: m });
                     } else {
-                        // 3. Envia o áudio como PTT (Voice Note)
-                        this.logger.info('📤 Enviando Voice Note...');
+                        this.logger.info('📤 Voice Note...');
                         await this.sock.sendMessage(m.key.remoteJid, {
-                            audio: ttsResult.buffer,
-                            mimetype: ttsResult.mimetype || 'audio/ogg; codecs=opus',
-                            ptt: true // Is Voice Note
+                            audio: tts.buffer,
+                            mimetype: tts.mimetype || 'audio/ogg; codecs=opus',
+                            ptt: true
                         }, { quoted: m });
-
-                        this.logger.info('✅ Voice Note enviada com sucesso');
                     }
-                } catch (ttsErr: any) {
-                    this.logger.error('❌ Erro crítico no fluxo de TTS:', ttsErr);
-                    // Fallback
+                } catch (err: any) {
+                    this.logger.error('❌ Erro TTS:', err);
                     await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, { quoted: m });
                 } finally {
-                    // 4. Garante que para de gravar
-                    if (this.presenceSimulator) {
-                        await this.presenceSimulator.safeSendPresenceUpdate('paused', m.key.remoteJid);
-                    }
+                    if (this.presenceSimulator) await this.presenceSimulator.safeSendPresenceUpdate('paused', m.key.remoteJid);
                 }
-
-                // Marca como lido final se ter simulador
-                if (this.presenceSimulator) {
-                    await this.presenceSimulator.markAsRead(m);
-                }
+                if (this.presenceSimulator) await this.presenceSimulator.markAsRead(m);
             } else {
-                // Simula comportamento completo para TEXTO (digitação + resposta + ticks)
                 if (this.presenceSimulator) {
                     await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta, false);
                 } else {
-                    // Fallback se simulator não estiver pronto
                     await this.simulateTyping(m.key.remoteJid, Math.min(resposta.length * 50, 5000));
                 }
-
-                // Lógica de Reply Otimizada (PV)
-                const opcoes = ehGrupo ? { quoted: m } : (replyInfo) ? { quoted: m } : {};
-
+                const opcoes = ehGrupo ? { quoted: m } : replyInfo ? { quoted: m } : {};
                 await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
-
-                // Marca como lido final se ter simulador
-                if (this.presenceSimulator) {
-                    await this.presenceSimulator.markAsRead(m);
-                }
+                if (this.presenceSimulator) await this.presenceSimulator.markAsRead(m);
             }
 
-
-            this.logger.info(`✅ [RESPONDIDO] ${resposta.substring(0, 80)}..\n`);
-
+            this.logger.info(`✅ [RESPONDIDO] ${resposta.substring(0, 80)}`);
         } catch (error: any) {
-            this.logger.error('❌ Erro ao processar texto:', error.message);
+            this.logger.error('❌ Erro texto:', error.message);
         }
     }
 
-    /**
-    * Simula digitação
-    */
     async simulateTyping(jid: string, durationMs: number): Promise<void> {
         try {
             if (!this.sock) return;
@@ -1073,152 +692,68 @@ class BotCore {
             await delay(durationMs);
             await this.sock.sendPresenceUpdate('paused', jid);
         } catch (e: any) {
-            // Ignora erros de presença silenciosamente
-            this.logger.debug('Erro na simulação de digitação:', e.message);
+            this.logger.debug('Erro typing:', e.message);
         }
     }
 
-    /**
-    * Helper method para enviar replies (usado pelo CommandHandler)
-    */
     async reply(m: any, text: string, options: any = {}): Promise<any> {
         try {
-            if (!this.sock) {
-                this.logger.warn('⚠️ Socket não disponível para enviar reply');
-                return false;
-            }
-
-            const jid = m.key.remoteJid;
-            return await this.sock.sendMessage(jid, { text, ...options }, { quoted: m });
+            if (!this.sock) { this.logger.warn('⚠️ Socket não disponível'); return false; }
+            return await this.sock.sendMessage(m.key.remoteJid, { text, ...options }, { quoted: m });
         } catch (error: any) {
-            this.logger.error('❌ Erro ao enviar reply:', error.message);
+            this.logger.error('❌ Erro reply:', error.message);
             return false;
         }
     }
 
-    /**
-    * Handle muted user
-    */
     async handleMutedUserMessage(m: any, nome: string): Promise<void> {
         try {
-            this.logger.warn(`🔇 Usuário ${nome} tentou falar durante mute`);
-
-            await this.sock.groupParticipantsUpdate(
-                m.key.remoteJid,
-                [m.key.participant],
-                'remove'
-            );
-
-            await this.sock.sendMessage(m.key.remoteJid, {
-                text: `🚫 *${nome} foi removido por enviar mensagem durante período de mute!*`
-            });
-
-        } catch (error) {
-            this.logger.error('❌ Erro ao remover usuário mutado:', error.message);
+            this.logger.warn(`🔇 ${nome} falou durante mute`);
+            await this.sock.groupParticipantsUpdate(m.key.remoteJid, [m.key.participant], 'remove');
+            await this.sock.sendMessage(m.key.remoteJid, { text: `🚫 *${nome} removido por mute!*` });
+        } catch (error: any) {
+            this.logger.error('❌ Erro mute:', error.message);
         }
     }
 
-    /**
-    * Handle antilink violation
-    */
     async handleAntiLinkViolation(m: any, nome: string): Promise<void> {
         try {
             if (!this.sock) return;
             const jid = m.key.remoteJid;
             const participant = m.key.participant;
-
-            this.logger.warn(`🔗 [ANTI-LINK] ${nome} enviou link`);
-
-            await this.reply(m, `🚫 @${participant.split('@')[0]}, links não são permitidos neste grupo!`, { mentions: [participant] });
-
-            // Deletar mensagem
+            this.logger.warn(`🔗 [ANTI-LINK] ${nome}`);
+            await this.reply(m, `🚫 @${participant.split('@')[0]}, links não permitidos!`, { mentions: [participant] });
             await this.sock.sendMessage(jid, { delete: m.key });
-
-            // Kickar usuário (Anti-Link Pro)
             await delay(1000);
             await this.sock.groupParticipantsUpdate(jid, [participant], 'remove');
-
         } catch (error: any) {
-            this.logger.error('❌ Erro ao banir por link:', error.message);
+            this.logger.error('❌ Erro antilink:', error.message);
         }
     }
 
-    /**
-     * Limpa credenciais em caso de erro de autenticação
-     */
     _cleanAuthOnError(): void {
         try {
             if (fs.existsSync(this.config.AUTH_FOLDER)) {
                 fs.rmSync(this.config.AUTH_FOLDER, { recursive: true, force: true });
-                this.logger.info('🧹 Credenciais limpas devido a erro de autenticação');
+                this.logger.info('🧹 Credenciais limpas');
             }
             this.isConnected = false;
             this.currentQR = null;
             this.BOT_JID = null;
             this.reconnectAttempts = 0;
         } catch (error: any) {
-            this.logger.error('❌ Erro ao limpar credenciais:', error.message);
+            this.logger.error('❌ Erro limpar credenciais:', error.message);
         }
     }
 
-    /**
-     * Força geração de QR code se não vier automaticamente
-     */
-    async _forceQRGeneration(): Promise<void> {
-        try {
-            this.logger.info('🔄 Forçando geração de QR code..');
-
-            this.currentQR = null;
-            this.isConnected = false;
-
-            if (this.sock) {
-                try {
-                    this.sock.ev.removeAllListeners();
-                    if (this.sock.ws) {
-                        this.sock.ws.close();
-                    }
-                } catch (e: any) {
-                    this.logger.warn('Erro ao limpar socket:', e.message);
-                }
-                this.sock = null;
-            }
-
-            if (this.qrTimeout) {
-                clearTimeout(this.qrTimeout);
-                this.qrTimeout = null;
-            }
-
-            await delay(3000);
-            await this.connect();
-
-        } catch (error: any) {
-            this.logger.error('❌ Erro ao forçar QR:', error.message);
-        }
+    async handleAntiMediaViolation(m: any, tipo: string): Promise<void> {
+        if (!this.sock) return;
+        const jid = m.key.remoteJid;
+        const participant = m.key.participant;
+        this.logger.warn(`🚫 [ANTI-MEDIA] ${tipo} de ${participant}`);
+        await this.sock.sendMessage(jid, { delete: m.key });
     }
 
-    /**
-     * Obtém QR Code atual
-     */
-    getQRCode(): string | null {
-        try {
-            if (this.isConnected) return null;
-            if (this.currentQR) return this.currentQR;
-
-            if (this.sock && this.sock.ws) {
-                const state = this.sock.ws.readyState;
-                if (state === 0 || state === 1) return null;
-            }
-
-            return null;
-        } catch (error: any) {
-            this.logger.error('❌ Erro ao obter QR code:', error.message);
-            return null;
-        }
-    }
-
-    /**
-     * Obtém status
-     */
     getStatus(): any {
         return {
             isConnected: this.isConnected,
@@ -1228,127 +763,28 @@ class BotCore {
             version: this.config.BOT_VERSION,
             uptime: Math.floor(process.uptime()),
             hasQR: !!this.currentQR,
-            reconnectAttempts: this.reconnectAttempts,
-            connectionStartTime: this.connectionStartTime
+            reconnectAttempts: this.reconnectAttempts
         };
     }
 
-    /**
-     * Retorna estatísticas
-     */
-    getStats(): any {
-        const status = this.getStatus();
-        return {
-            ...status,
-            api: this.apiClient?.getStats() || { error: 'API não inicializada' },
-            audio: this.audioProcessor?.getStats() || { error: 'AudioProcessor não inicializado' },
-            media: this.mediaProcessor?.getStats() || { error: 'MediaProcessor não inicializado' },
-            message: this.messageProcessor?.getStats() || { error: 'MessageProcessor não inicializado' },
-            moderation: this.moderationSystem?.getStats() || { error: 'ModerationSystem não inicializado' },
-            leveling: this.levelSystem?.getStats() || { error: 'LevelSystem não inicializado' },
-            componentsInitialized: {
-                apiClient: !!this.apiClient,
-                audioProcessor: !!this.audioProcessor,
-                mediaProcessor: !!this.mediaProcessor,
-                messageProcessor: !!this.messageProcessor,
-                moderationSystem: !!this.moderationSystem,
-                levelSystem: !!this.levelSystem,
-                commandHandler: !!this.commandHandler
-            }
-        };
-    }
-
-    /**
-     * Registra event listeners
-     */
-    on(event: string, callback: any): void {
-        if (event === 'qr') {
-            this.eventListeners.onQRGenerated = callback;
-        } else if (event === 'connected') {
-            this.eventListeners.onConnected = callback;
-        } else if (event === 'disconnected') {
-            this.eventListeners.onDisconnected = callback;
-        } else {
-            this.logger.warn(`⚠️ Evento não suportado: ${event}`);
-        }
-    }
-
-    /**
-     * Limpa cache de componentes
-     */
-    clearCache(): void {
-        try {
-            this.audioProcessor?.clearCache?.();
-            this.mediaProcessor?.clearCache?.();
-            this.messageProcessor?.clearCache?.();
-            this.logger.info('✅ Cache limpo');
-        } catch (error: any) {
-            this.logger.error('❌ Erro ao limpar cache:', error.message);
-        }
-    }
-
-    /**
-     * Verifica se o bot está pronto
-     */
-    isReady(): boolean {
-        return this.isConnected && !!this.sock?.ws && this.sock.ws.readyState === 1;
-    }
-
-    /**
-     * Desconecta o bot
-     */
     async disconnect(): Promise<void> {
         try {
-            this.logger.info('🔴 Desconectando bot..');
-
+            this.logger.info('🔴 Desconectando...');
             if (this.sock) {
                 try {
                     this.sock.ev.removeAllListeners();
                     this.sock.ws?.close();
                 } catch (e: any) {
-                    this.logger.warn('Erro ao limpar socket:', e.message);
+                    this.logger.warn('Erro limpar socket:', e.message);
                 }
                 this.sock = null;
             }
-
             this.isConnected = false;
             this.currentQR = null;
             this.BOT_JID = null;
-
-            this.logger.info('✅ Bot desconectado');
+            this.logger.info('✅ Desconectado');
         } catch (error: any) {
-            this.logger.error('❌ Erro ao desconectar:', error.message);
-        }
-    }
-    // ═══ HANDLERS DE VIOLAÇÃO DE MODERAÇÃO ═══
-
-    async handleAntiMediaViolation(m: any, tipo: string): Promise<void> {
-        if (!this.sock) return;
-        const jid = m.key.remoteJid;
-        const participant = m.key.participant;
-
-        this.logger.warn(`🚫 [ANTI-MEDIA] ${tipo.toUpperCase()} bloqueado de ${participant}`);
-
-        // Deletar mensagem
-        await this.sock.sendMessage(jid, { delete: m.key });
-    }
-
-    async handleWarning(m: any, reason: string): Promise<void> {
-        if (!this.sock || !this.moderationSystem) return;
-        const jid = m.key.remoteJid;
-        const participant = m.key.participant;
-        const nome = m.pushName || 'Usuário';
-
-        const warnCount = this.moderationSystem.addWarning(jid, participant, reason);
-        this.logger.warn(`⚠️ [WARN] ${nome} recebeu aviso ${warnCount}/3 por: ${reason}`);
-
-        if (warnCount >= 3) {
-            await this.reply(m, `🚫 @${participant.split('@')[0]} atingiu o limite de avisos (3/3) e foi removido.`, { mentions: [participant] });
-            await delay(1000);
-            await this.sock.groupParticipantsUpdate(jid, [participant], 'remove');
-            this.moderationSystem.resetWarnings(jid, participant);
-        } else {
-            await this.reply(m, `⚠️ @${participant.split('@')[0]}, você recebeu um aviso (${warnCount}/3).\nMotivo: ${reason}`, { mentions: [participant] });
+            this.logger.error('❌ Erro desconectar:', error.message);
         }
     }
 }
