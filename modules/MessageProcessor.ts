@@ -288,6 +288,12 @@ class MessageProcessor {
             // Check if reply is to bot
             const ehRespostaAoBot = this.isReplyToBot(participantJidCitado);
 
+            // ═══════════════════════════════════════════════════════════════════
+            // DETECÇÃO DE REPLY A MENSAGEM DE JOGO
+            // Verifica se a mensagem citada é uma mensagem de jogo do bot
+            // ═══════════════════════════════════════════════════════════════════
+            const isGameReply = this.detectGameMessage(quotedTextOriginal, textoMensagemCitada);
+
             // Texto atual para hints e prioridade
             const currentMessageText = this.extractText(message);
             const contextHint = this.extractContextHint(quotedTextOriginal, currentMessageText);
@@ -312,13 +318,104 @@ class MessageProcessor {
                 quotedTextOriginal: quotedTextOriginal,
                 contextHint: contextHint,
                 priorityLevel: priorityLevel,
-                isReply: true
+                isReply: true,
+                // Novas propriedades para detecção de jogos
+                isReplyToGame: isGameReply.isGame,
+                gameType: isGameReply.gameType
             };
 
         } catch (e: any) {
             this.logger?.error('Erro ao extrair reply info:', e.message);
             return null;
         }
+    }
+
+    /**
+    * Detecta se a mensagem citada é uma mensagem de jogo
+    * Retorna o tipo de jogo se for uma mensagem de jogo
+    */
+    detectGameMessage(quotedText: string, fullQuotedText: string): { isGame: boolean; gameType: string | null } {
+        const text = (quotedText || '').toLowerCase();
+        const fullText = (fullQuotedText || '').toLowerCase();
+        
+        // Padrões de mensagem de Jogo da Velha
+        const tttPatterns = [
+            'jogo da velha',
+            'tic-tac-toe',
+            'ttt',
+            'jogodavelha',
+            'vez de:',
+            'sua vez',
+            'vez do',
+            'jogou na posição',
+            'tabuleiro'
+        ];
+        
+        // Padrões de mensagem de Grid Tactics
+        const gridPatterns = [
+            'grid tactics',
+            'grid tactics -',
+            'posição (ex:',
+            'gridtactics'
+        ];
+        
+        // Padrões de mensagem de Pedra, Papel, Tesoura
+        const rpsPatterns = [
+            'pedra, papel, tesoura',
+            'rps',
+            'escolha:',
+            'escolheu!'
+        ];
+        
+        // Padrões de mensagem de Advinha o Número
+        const guessPatterns = [
+            'advinha o número',
+            'advinhe o número',
+            'tentativas:',
+            'número é'
+        ];
+        
+        // Padrões de mensagem de Forca
+        const hangmanPatterns = [
+            'jogo da forca',
+            'hangman',
+            'forca',
+            'letras usadas',
+            'palavra:'
+        ];
+        
+        // Verifica padrões de jogo
+        for (const pattern of tttPatterns) {
+            if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
+                return { isGame: true, gameType: 'ttt' };
+            }
+        }
+        
+        for (const pattern of gridPatterns) {
+            if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
+                return { isGame: true, gameType: 'grid' };
+            }
+        }
+        
+        for (const pattern of rpsPatterns) {
+            if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
+                return { isGame: true, gameType: 'rps' };
+            }
+        }
+        
+        for (const pattern of guessPatterns) {
+            if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
+                return { isGame: true, gameType: 'guess' };
+            }
+        }
+        
+        for (const pattern of hangmanPatterns) {
+            if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
+                return { isGame: true, gameType: 'hangman' };
+            }
+        }
+        
+        return { isGame: false, gameType: null };
     }
 
     /**

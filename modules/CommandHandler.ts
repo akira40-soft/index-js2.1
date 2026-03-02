@@ -155,12 +155,78 @@ class CommandHandler {
             // Log de comando
             // this.logger?.debug(`[CMD] ${command} por ${nome} em ${chatJid}`);
 
-            // Simulador de presença (digitação)
+            // Simulador de presença (digitação) - PULA o comando PING para latência instantânea
             const simulator = this.presenceSimulator || (this.bot && this.bot.presenceSimulator);
-            if (simulator) {
+            if (simulator && command !== 'ping') {
                 // Calcula duração realista baseada no comando ou usa padrão
                 const duration = simulator.calculateTypingDuration(command);
                 await simulator.simulateTyping(chatJid, duration);
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // DETECÇÃO DE JOGADAS VIA REPLY
+            // Se o usuário responde em reply a uma mensagem de jogo com uma jogada válida
+            // processa como jogada automaticamente sem enviar para a IA
+            // ═══════════════════════════════════════════════════════════════════════
+            
+            // Detecta se é uma resposta a uma mensagem de jogo
+            const isGameReply = replyInfo && replyInfo.isReplyToGame;
+            const gameType = replyInfo?.gameType;
+            
+            if (isGameReply && fullArgs && command !== 'ping') {
+                // Verifica se o texto é uma jogada válida
+                const trimmedArgs = fullArgs.trim();
+                
+                // TTT - números 1-9
+                if ((gameType === 'ttt' || (gameType === 'ttt' && /^[1-9]$/.test(trimmedArgs)))) {
+                    try {
+                        const gameRes = await GameSystem.handleTicTacToe(chatJid, senderId, trimmedArgs, undefined);
+                        return await this._reply(m, gameRes.text, { mentions: [senderId] });
+                    } catch (e) {
+                        console.error('Erro no TTT via reply:', e);
+                    }
+                }
+                
+                // Grid Tactics - números
+                if (gameType === 'grid' && /^\d+$/.test(trimmedArgs)) {
+                    try {
+                        const parts = trimmedArgs.split(/\s+/);
+                        const gameRes = await GridTacticsGame.handleGridTactics(chatJid, senderId, parts[0], parts.slice(1));
+                        return await this._reply(m, gameRes.text);
+                    } catch (e) {
+                        console.error('Erro no Grid via reply:', e);
+                    }
+                }
+                
+                // RPS - pedra, papel, tesoura
+                if (gameType === 'rps' && ['pedra', 'papel', 'tesoura'].includes(trimmedArgs.toLowerCase())) {
+                    try {
+                        const gameRes = await GameSystem.handleGame(chatJid, senderId, 'rps', [trimmedArgs.toLowerCase()], undefined);
+                        return await this._reply(m, gameRes.text, { mentions: [senderId] });
+                    } catch (e) {
+                        console.error('Erro no RPS via reply:', e);
+                    }
+                }
+                
+                // Guess - números
+                if (gameType === 'guess' && /^\d+$/.test(trimmedArgs)) {
+                    try {
+                        const gameRes = await GameSystem.handleGame(chatJid, senderId, 'guess', [trimmedArgs]);
+                        return await this._reply(m, gameRes.text);
+                    } catch (e) {
+                        console.error('Erro no Guess via reply:', e);
+                    }
+                }
+                
+                // Forca - letras
+                if (gameType === 'hangman' && /^[a-zA-Z]$/.test(trimmedArgs)) {
+                    try {
+                        const gameRes = await GameSystem.handleGame(chatJid, senderId, 'forca', [trimmedArgs.toLowerCase()]);
+                        return await this._reply(m, gameRes.text);
+                    } catch (e) {
+                        console.error('Erro no Hangman via reply:', e);
+                    }
+                }
             }
 
             // Verifica permissões de dono
