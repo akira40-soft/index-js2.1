@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {
     "compilerOptions": {
         "target": "ESNext",
@@ -19,4 +20,27 @@
         "modules/**/*.ts",
         "index.ts"
     ]
+=======
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "allowJs": true,
+        "checkJs": false,
+        "noEmit": false,
+        "outDir": "./dist",
+        "rootDir": "./",
+        "strict": false,
+        "noImplicitAny": true,
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+        "resolveJsonModule": true
+    },
+    "include": [
+        "modules/**/*.ts",
+        "index.ts"
+    ]
+>>>>>>> bca33df3e80ad01e3a871bb67a7d0a8ff9a621a3
 }

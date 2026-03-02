@@ -22,13 +22,19 @@ import ConfigManager from './ConfigManager.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Webpmux para metadados de stickers
+// Webpmux para metadados de stickers - carregado dinamicamente
 let Webpmux: any = null;
-try {
-    Webpmux = await import('node-webpmux').then(m => m.default || m);
-} catch (e: any) {
-    console.warn('⚠️ node-webpmux não instalado. Stickers sem metadados EXIF.');
+
+async function loadWebpmux() {
+    try {
+        Webpmux = await import('node-webpmux').then(m => m.default || m);
+    } catch (e: any) {
+        console.warn('⚠️ node-webpmux não instalado. Stickers sem metadados EXIF.');
+    }
 }
+
+// Carrega Webpmux asynchronously
+loadWebpmux();
 
 class MediaProcessor {
     private config: any;
@@ -54,177 +60,61 @@ class MediaProcessor {
     }
 
     /**
-     * Estratégias de bypass para YouTube
+     * Encontra o caminho do cookie válido
      */
-    private _getClientStrategies(): Array<{ client: string; args: string }> {
-        const cookiesPath = this.config?.YT_COOKIES_PATH || '';
-        const cookieArg = (cookiesPath && fs.existsSync(cookiesPath)) ? `--cookies "${cookiesPath}"` : '';
-
-        const possibleCookiePaths = [
+    private _findCookiePath(): string {
+        const possiblePaths = [
             './cookies.txt',
             '/app/cookies.txt',
             './youtube_cookies.txt',
-            '/tmp/akira_data/cookies/youtube_cookies.txt'
-        ];
+            '/tmp/akira_data/cookies/youtube_cookies.txt',
+            process.env.YT_COOKIES_PATH
+        ].filter(Boolean);
 
-        let finalCookieArg = cookieArg;
-        if (!finalCookieArg) {
-            for (const p of possibleCookiePaths) {
-                if (fs.existsSync(p)) {
-                    finalCookieArg = `--cookies "${path.resolve(p)}"`;
-                    break;
-                }
+        for (const p of possiblePaths) {
+            if (p && fs.existsSync(p)) {
+                this.logger?.info(`✅ Cookie encontrado em: ${p}`);
+                return p;
             }
         }
-
-        const baseSleepArgs = '--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 5 --no-check-certificates --ignore-config --no-cache-dir';
-        const ua_iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15';
-        const ua_android = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36';
-        const ua_chrome = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
-
-        const strategies: Array<{ client: string; args: string }> = [];
-
-        strategies.push({ 
-            client: 'ios', 
-            args: `--extractor-args "youtube:player_client=ios" ${finalCookieArg || ''} ${baseSleepArgs} --user-agent "${ua_iphone}"` 
-        });
-
-        if (finalCookieArg) {
-            strategies.push({ 
-                client: 'web+cookies', 
-                args: `--extractor-args "youtube:player_client=web" ${finalCookieArg} ${baseSleepArgs} --user-agent "${ua_chrome}"` 
-            });
-        }
-
-        strategies.push({ 
-            client: 'tv_embedded', 
-            args: `--extractor-args "youtube:player_client=tv_embedded" ${baseSleepArgs} --user-agent "${ua_iphone}"` 
-        });
-
-        strategies.push({ 
-            client: 'android', 
-            args: `--extractor-args "youtube:player_client=android" ${baseSleepArgs} --user-agent "${ua_android}"` 
-        });
-
-        return strategies;
+        return '';
     }
 
     /**
-     * Executa yt-dlp com fallback entre strategies
-     */
-    private async _runYtDlpWithFallback(
-        buildCommand: (bypassArgs: string) => string,
-        expectedOutputPath?: string,
-        captureOutput: boolean = false
-    ): Promise<{ sucesso: boolean; output?: string; error?: string }> {
-        const strategies = this._getClientStrategies();
-        let lastError = '';
-
-        for (const strategy of strategies) {
-            const command = buildCommand(strategy.args);
-            
-            const result = await new Promise<{ sucesso: boolean; output?: string; error?: string }>((resolve) => {
-                exec(command, { timeout: 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
-                    // First check: if we expect an output file, check if it exists
-                    if (expectedOutputPath && fs.existsSync(expectedOutputPath)) {
-                        return resolve({ sucesso: true, output: stdout });
-                    }
-
-                    // Second check: if we want to capture stdout (like for JSON metadata)
-                    if (captureOutput && stdout && stdout.trim()) {
-                        return resolve({ sucesso: true, output: stdout });
-                    }
-
-                    // Error handling
-                    const errMsg = (stderr || error?.message || 'Falha').trim();
-                    
-                    // For specific errors that should trigger fallback
-                    if (errMsg.includes('Sign in') || errMsg.includes('bot') || errMsg.includes('403') || 
-                        errMsg.includes('HTTP Error 403') || errMsg.includes('Unable to extract')) {
-                        lastError = errMsg;
-                        resolve({ sucesso: false, error: errMsg });
-                    } else if (!captureOutput && expectedOutputPath) {
-                        // For file downloads, any error is a failure
-                        resolve({ sucesso: false, error: errMsg });
-                    } else if (captureOutput && !stdout) {
-                        // For output capture, empty stdout with error is a failure
-                        resolve({ sucesso: false, error: errMsg || 'Saída vazia' });
-                    } else if (captureOutput && stdout) {
-                        // We have some output, consider it success even with some stderr
-                        resolve({ sucesso: true, output: stdout });
-                    } else {
-                        resolve({ sucesso: false, error: errMsg });
-                    }
-                });
-            });
-
-            if (result.sucesso) return result;
-        }
-
-        return { sucesso: false, error: lastError || 'Todos os métodos falharam' };
-    }
-
-    /**
-     * Simplified yt-dlp execution for metadata only
-     * Uses direct execution without complex fallback for better debugging
-     */
-    private async _getYouTubeMetadataSimple(url: string): Promise<{ sucesso: boolean; output?: string; error?: string }> {
-        const strategies = this._getClientStrategies();
-        
-        for (const strategy of strategies) {
-            const args = strategy.args;
-            // Don't suppress stderr for metadata - we need to see errors
-            const command = `yt-dlp ${args} --dump-json --no-download "${url}"`;
-            
-            try {
-                const { stdout, stderr } = await execAsync(command, { 
-                    timeout: 60000,
-                    maxBuffer: 10 * 1024 * 1024 
-                });
-                
-                if (stdout && stdout.trim()) {
-                    return { sucesso: true, output: stdout };
-                }
-                
-                if (stderr && (stderr.includes('403') || stderr.includes('Sign in'))) {
-                    continue; // Try next strategy
-                }
-            } catch (err: any) {
-                const errMsg = err.message || '';
-                if (errMsg.includes('403') || errMsg.includes('Sign in') || errMsg.includes('bot')) {
-                    continue; // Try next strategy
-                }
-                // For other errors, log but continue
-                this.logger?.warn(`⚠️ Metadata attempt failed: ${errMsg.substring(0, 100)}`);
-            }
-        }
-        
-        return { sucesso: false, error: 'Não foi possível obter metadados após várias tentativas' };
-    }
-
-    /**
-     * ═══════════════════════════════════════════════════════════════════
-     * DOWNLOAD DE ÁUDIO DO YOUTUBE - MÉTODO PRINCIPAL
-     * ═══════════════════════════════════════════════════════════════════
+     * ═══════════════════════════════════════════════════════════════════════
+     * DOWNLOAD DE ÁUDIO DO YOUTUBE - VERSÃO SIMPLIFICADA
+     * ═══════════════════════════════════════════════════════════════════════
      */
     async downloadYouTubeAudio(url: string): Promise<{ sucesso: boolean; buffer?: Buffer; filePath?: string; error?: string; metadata?: any }> {
         try {
             this.logger?.info(`🎵 Download áudio: ${url}`);
 
-            const metadata = await this.getYouTubeMetadata(url);
+            // Primeiro tenta obter metadados
+            const metadata = await this._getYouTubeMetadataSimple(url);
             if (!metadata.sucesso) {
-                return { sucesso: false, error: metadata.error || 'Metadados não obtidos' };
+                // Tenta com ytdl-core se yt-dlp falhar
+                this.logger?.warn('⚠️ yt-dlp falhou, tentando ytdl-core...');
+                return await this._downloadWithYtdlCore(url, 'audio');
             }
 
             const outputPath = this.generateRandomFilename('mp3');
+            const cookiePath = this._findCookiePath();
+            const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            const result = await this._runYtDlpWithFallback(
-                (bypassArgs) => `yt-dlp ${bypassArgs} -f "bestaudio[ext=m4a]/bestaudio/best" --extract-audio --audio-format mp3 --audio-quality 2 -o "${outputPath}" "${url}"`,
-                outputPath
-            );
+            // Tenta download com yt-dlp básico
+            const command = `yt-dlp ${cookieArg} -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${url}"`;
+            this.logger?.info(`📥 Executando: ${command.replace(cookieArg, '[COOKIES]')}`);
 
-            if (!result.sucesso || !fs.existsSync(outputPath)) {
-                return { sucesso: false, error: result.error || 'Falha no download' };
+            try {
+                await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
+            } catch (execErr: any) {
+                this.logger?.warn(`⚠️ yt-dlp falhou: ${execErr.message}`);
+            }
+
+            // Se o arquivo não foi criado, tenta com ytdl-core
+            if (!fs.existsSync(outputPath)) {
+                this.logger?.warn('⚠️ Arquivo não criado, tentando ytdl-core...');
+                return await this._downloadWithYtdlCore(url, 'audio', metadata);
             }
 
             const buffer = await fs.promises.readFile(outputPath);
@@ -242,36 +132,43 @@ class MediaProcessor {
                 }
             };
         } catch (error: any) {
+            this.logger?.error(`❌ Erro no download: ${error.message}`);
             return { sucesso: false, error: error.message };
         }
     }
 
     /**
-     * ═══════════════════════════════════════════════════════════════════
+     * ═══════════════════════════════════════════════════════════════════════
      * DOWNLOAD DE VÍDEO DO YOUTUBE
-     * ═══════════════════════════════════════════════════════════════════
+     * ═══════════════════════════════════════════════════════════════════════
      */
     async downloadYouTubeVideo(url: string, quality: string = '720'): Promise<{ sucesso: boolean; buffer?: Buffer; error?: string; metadata?: any }> {
         try {
-            this.logger?.info(`🎬 Download vídeo: ${url}`);
+            this.logger?.info(`🎬 Download vídeo: ${url} (qualidade: ${quality})`);
 
-            const metadata = await this.getYouTubeMetadata(url);
-            if (!metadata.sucesso) {
-                return { sucesso: false, error: metadata.error };
+            // Obtém metadados
+            const metadata = await this._getYouTubeMetadataSimple(url);
+            
+            const outputPath = this.generateRandomFilename('mp4');
+            const cookiePath = this._findCookiePath();
+            const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
+
+            // Formato de vídeo
+            const formatSelector = quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best[ext=m4a]/best' :
+                                 quality === '720' ? 'bestvideo[height<=720]+bestaudio/best[ext=m4a]/best' :
+                                 'bestvideo[height<=480]+bestaudio/best[ext=m4a]/best';
+
+            const command = `yt-dlp ${cookieArg} -f "${formatSelector}" --merge-output-format mp4 -o "${outputPath}" "${url}"`;
+            
+            try {
+                await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
+            } catch (execErr: any) {
+                this.logger?.warn(`⚠️ yt-dlp falhou: ${execErr.message}`);
             }
 
-            const outputPath = this.generateRandomFilename('mp4');
-            const formatSelector = quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best' :
-                                   quality === '720' ? 'bestvideo[height<=720]+bestaudio/best' :
-                                   'bestvideo[height<=480]+bestaudio/best';
-
-            const result = await this._runYtDlpWithFallback(
-                (bypassArgs) => `yt-dlp ${bypassArgs} -f "${formatSelector}" --merge-output-format mp4 -o "${outputPath}" "${url}"`,
-                outputPath
-            );
-
-            if (!result.sucesso || !fs.existsSync(outputPath)) {
-                return { sucesso: false, error: result.error || 'Falha no download' };
+            if (!fs.existsSync(outputPath)) {
+                // Tenta com ytdl-core
+                return await this._downloadWithYtdlCore(url, 'video', metadata);
             }
 
             const buffer = await fs.promises.readFile(outputPath);
@@ -294,74 +191,147 @@ class MediaProcessor {
     }
 
     /**
-     * Obtém metadados de vídeo do YouTube
-     * Usa método simplificado para melhor reliability
+     * Obtém metadados usando método simples
      */
-    async getYouTubeMetadata(url: string): Promise<any> {
-        try {
-            // First try with the simple method
-            let result = await this._getYouTubeMetadataSimple(url);
-            
-            // If simple method fails, try with the fallback method
-            if (!result.sucesso || !result.output) {
-                result = await this._runYtDlpWithFallback(
-                    (bypassArgs) => `yt-dlp ${bypassArgs} --dump-json --no-download "${url}"`,
-                    undefined,
-                    true
-                );
-            }
+    private async _getYouTubeMetadataSimple(url: string): Promise<any> {
+        const cookiePath = this._findCookiePath();
+        const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
+        
+        // Tenta comando simples primeiro
+        const commands = [
+            `yt-dlp ${cookieArg} --dump-json --no-download "${url}"`,
+            `yt-dlp --dump-json --no-download "${url}"`,
+            `yt-dlp ${cookieArg} -j --no-download "${url}"`,
+            `yt-dlp -j --no-download "${url}"`
+        ];
 
-            if (!result.sucesso || !result.output) {
-                // Try one more time with a simple approach
-                try {
-                    const simpleCommand = `yt-dlp --dump-json --no-download "${url}"`;
-                    const { stdout } = await execAsync(simpleCommand, { timeout: 30000 });
-                    if (stdout && stdout.trim()) {
-                        result = { sucesso: true, output: stdout };
-                    }
-                } catch (e) {
-                    // Ignore and return error
-                }
-                
-                if (!result.sucesso || !result.output) {
-                    return { sucesso: false, error: result.error || 'Não foi possível obter metadados' };
-                }
-            }
-
-            // Parse JSON output from yt-dlp
-            let data;
+        for (const cmd of commands) {
             try {
-                data = JSON.parse(result.output.trim());
-            } catch (parseError) {
-                // If JSON parsing fails, try to extract from multi-line output
-                const lines = result.output.trim().split('\n');
-                for (const line of lines) {
-                    try {
-                        data = JSON.parse(line.trim());
-                        break;
-                    } catch (e) {
-                        continue;
-                    }
+                const { stdout } = await execAsync(cmd, { timeout: 60000 });
+                if (stdout && stdout.trim()) {
+                    const data = JSON.parse(stdout.trim());
+                    return {
+                        sucesso: true,
+                        titulo: data.title || 'Título desconhecido',
+                        canal: data.channel || data.uploader || 'Canal desconhecido',
+                        duracao: data.duration || 0,
+                        duracaoFormatada: this._formatDuration(data.duration || 0),
+                        thumbnail: data.thumbnail || '',
+                        url: data.webpage_url || url
+                    };
                 }
-                if (!data) {
-                    return { sucesso: false, error: 'Formato de resposta inválido' };
-                }
+            } catch (err: any) {
+                this.logger?.debug(`⚠️ Tentativa falhou: ${err.message.substring(0, 50)}`);
             }
+        }
 
+        // Tenta com ytdl-core
+        return await this._getMetadataYtdlCore(url);
+    }
+
+    /**
+     * Obtém metadados usando ytdl-core
+     */
+    private async _getMetadataYtdlCore(url: string): Promise<any> {
+        try {
+            const ytdl = await import('ytdl-core').then(m => m.default || m);
+            
+            const info = await ytdl.getInfo(url);
+            const videoDetails = info.videoDetails;
+            
             return {
                 sucesso: true,
-                titulo: data.title || 'Título desconhecido',
-                canal: data.channel || data.uploader || 'Canal desconhecido',
-                duracao: data.duration || 0,
-                duracaoFormatada: this._formatDuration(data.duration || 0),
-                views: this._formatCount(data.view_count || 0),
-                thumbnail: data.thumbnail || '',
-                url: data.webpage_url || url,
-                id: data.id || ''
+                titulo: videoDetails.title || 'Título desconhecido',
+                canal: videoDetails.author?.name || 'Canal desconhecido',
+                duracao: parseInt(videoDetails.lengthSeconds) || 0,
+                duracaoFormatada: this._formatDuration(parseInt(videoDetails.lengthSeconds) || 0),
+                thumbnail: videoDetails.thumbnails?.[0]?.url || '',
+                url: videoDetails.video_url || url
             };
+        } catch (err: any) {
+            this.logger?.warn(`⚠️ ytdl-core falhou: ${err.message}`);
+            return { sucesso: false, error: err.message };
+        }
+    }
+
+    /**
+     * Download usando ytdl-core como fallback
+     */
+    private async _downloadWithYtdlCore(url: string, type: 'audio' | 'video', metadata?: any): Promise<{ sucesso: boolean; buffer?: Buffer; error?: string; metadata?: any }> {
+        try {
+            this.logger?.info(`📥 Usando ytdl-core para ${type}...`);
+            
+            const ytdl = await import('ytdl-core').then(m => m.default || m);
+            
+            const info = await ytdl.getInfo(url);
+            const formats = info.formats;
+            
+            let format;
+            if (type === 'audio') {
+                format = ytdl.chooseFormat(formats, { quality: 'highestaudio', filter: 'audioonly' });
+            } else {
+                format = ytdl.chooseFormat(formats, { quality: 'highest' });
+            }
+            
+            if (!format || !format.url) {
+                return { sucesso: false, error: 'Não foi possível obter URL de download' };
+            }
+            
+            // Download usando axios
+            const response = await axios.get(format.url, {
+                responseType: 'arraybuffer',
+                timeout: 300000,
+                maxContentLength: 500 * 1024 * 1024
+            });
+            
+            let buffer = Buffer.from(response.data);
+            
+            // Se for áudio, converte para MP3
+            if (type === 'audio') {
+                const inputPath = this.generateRandomFilename('webm');
+                const outputPath = this.generateRandomFilename('mp3');
+                
+                await fs.promises.writeFile(inputPath, buffer);
+                
+                await new Promise((resolve, reject) => {
+                    ffmpeg(inputPath)
+                        .toFormat('mp3')
+                        .audioCodec('libmp3lame')
+                        .on('end', () => resolve(void 0))
+                        .on('error', reject)
+                        .save(outputPath);
+                });
+                
+                buffer = await fs.promises.readFile(outputPath);
+                await this.cleanupFile(inputPath);
+                await this.cleanupFile(outputPath);
+            }
+            
+            const videoMeta = metadata || {
+                titulo: info.videoDetails.title,
+                canal: info.videoDetails.author?.name,
+                duracao: parseInt(info.videoDetails.lengthSeconds),
+                duracaoFormatada: this._formatDuration(parseInt(info.videoDetails.lengthSeconds) || 0),
+                thumbnail: info.videoDetails.thumbnails?.[0]?.url
+            };
+            
+            return {
+                sucesso: true,
+                buffer,
+                metadata: videoMeta
+            };
+            
         } catch (error: any) {
+            this.logger?.error(`❌ Erro ytdl-core: ${error.message}`);
             return { sucesso: false, error: error.message };
         }
+    }
+
+    /**
+     * Obtém metadados de vídeo do YouTube (compatibilidade)
+     */
+    async getYouTubeMetadata(url: string): Promise<any> {
+        return await this._getYouTubeMetadataSimple(url);
     }
 
     /**
