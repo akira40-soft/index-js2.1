@@ -10,6 +10,8 @@
 # ✅ NUCLEI - Vulnerability scanning REAL
 # ✅ MASSCAN - Fast port scanner REAL
 # ✅ NIKTO - Web server scanner REAL
+# ✅ COMMIX - Command Injection Scanner (NOVO)
+# ✅ SEARCHSPLOIT - Exploit Database (NOVO)
 # ✅ FFMPEG - Processamento de mídia
 #═══════════════════════════════════════════════════════════════════════════
 
@@ -22,27 +24,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Versões esperadas
-TOOL_VERSIONS=(
-    "yt-dlp"
-    "nmap"
-    "sqlmap.py"
-    "hydra"
-    "nuclei"
-    "masscan"
-    "nikto"
-    "ffmpeg"
-)
-
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${BLUE}🔧 INSTALAÇÃO DE FERRAMENTAS DE PENTESTING - AKIRA BOT${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}\n"
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════
 # 1️⃣  SYSTEM UPDATES
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════
 
-echo -e "${YELLOW}[1/8] Atualizando package manager...${NC}"
+echo -e "${YELLOW}[1/12] Atualizando package manager...${NC}"
 if command -v apt-get &> /dev/null; then
     apt-get update -qq
     apt-get upgrade -y -qq
@@ -56,309 +46,223 @@ else
 fi
 echo -e "${GREEN}✅ Package manager atualizado${NC}\n"
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 2️⃣  YT-DLP - Download de vídeos YouTube
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════
+# 2️⃣  YT-DLP
+# ════════════════════════════════════════════════════════════════════
 
-echo -e "${YELLOW}[2/8] Instalando YT-DLP...${NC}"
+echo -e "${YELLOW}[2/12] Instalando YT-DLP...${NC}"
 if ! command -v yt-dlp &> /dev/null; then
-    echo "   → Baixando yt-dlp..."
-    
-    # Método 1: pip3
     if command -v pip3 &> /dev/null; then
-        pip3 install yt-dlp --quiet 2>/dev/null || echo "   ⚠️  pip3 download falhou, tentando método alternativo"
+        pip3 install yt-dlp --quiet 2>/dev/null || true
     fi
-    
-    # Método 2: curl direto (Linux)
     if ! command -v yt-dlp &> /dev/null; then
-        echo "   → Baixando binary do GitHub..."
         ARCH=$(uname -m)
-        
         if [ "$ARCH" = "x86_64" ]; then
             DOWNLOAD_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
-        elif [ "$ARCH" = "aarch64" ]; then
-            DOWNLOAD_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64"
         else
-            DOWNLOAD_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+            DOWNLOAD_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64"
         fi
-        
         curl -L "$DOWNLOAD_URL" -o /usr/local/bin/yt-dlp 2>/dev/null || true
         chmod +x /usr/local/bin/yt-dlp 2>/dev/null || true
     fi
-    
-    # Método 3: apt/apk
-    if ! command -v yt-dlp &> /dev/null; then
-        if [ "$PKG_MANAGER" = "apt-get" ]; then
-            apt-get install -y yt-dlp -qq 2>/dev/null || echo "   ⚠️  apt-get install falhou"
-        elif [ "$PKG_MANAGER" = "apk" ]; then
-            apk add yt-dlp 2>/dev/null || echo "   ⚠️  apk install falhou"
-        fi
-    fi
 fi
+command -v yt-dlp &> /dev/null && echo -e "${GREEN}✅ YT-DLP instalado${NC}" || echo -e "${RED}❌ YT-DLP falhou${NC}"
 
-if command -v yt-dlp &> /dev/null; then
-    YT_VERSION=$(yt-dlp --version 2>/dev/null)
-    echo -e "${GREEN}✅ YT-DLP instalado: $YT_VERSION${NC}\n"
-else
-    echo -e "${RED}❌ YT-DLP não foi instalado${NC}\n"
-fi
+# ════════════════════════════════════════════════════════════════════
+# 3️⃣  NMAP
+# ════════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 3️⃣  NMAP - Port Scanning
-# ═══════════════════════════════════════════════════════════════════════════
-
-echo -e "${YELLOW}[3/8] Instalando NMAP...${NC}"
+echo -e "${YELLOW}[3/12] Instalando NMAP...${NC}"
 if ! command -v nmap &> /dev/null; then
-    echo "   → Instalando NMAP..."
-    
     if [ "$PKG_MANAGER" = "apt-get" ]; then
         apt-get install -y nmap -qq
     elif [ "$PKG_MANAGER" = "apk" ]; then
         apk add nmap --quiet
     fi
 fi
+command -v nmap &> /dev/null && echo -e "${GREEN}✅ NMAP instalado${NC}" || echo -e "${RED}❌ NMAP falhou${NC}"
 
-if command -v nmap &> /dev/null; then
-    NMAP_VERSION=$(nmap --version 2>/dev/null | head -1)
-    echo -e "${GREEN}✅ NMAP instalado: $NMAP_VERSION${NC}\n"
-else
-    echo -e "${RED}❌ NMAP não foi instalado${NC}\n"
-fi
+# ════════════════════════════════════════════════════════════════════
+# 4️⃣  SQLMAP
+# ════════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 4️⃣  SQLMAP - SQL Injection Testing
-# ═══════════════════════════════════════════════════════════════════════════
-
-echo -e "${YELLOW}[4/8] Instalando SQLMAP...${NC}"
+echo -e "${YELLOW}[4/12] Instalando SQLMAP...${NC}"
 if [ ! -d "/opt/sqlmap" ]; then
-    echo "   → Clonando SQLMap do GitHub..."
     mkdir -p /opt
     cd /opt
-    git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git 2>/dev/null || echo "   ⚠️  git clone falhou"
+    git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git 2>/dev/null || true
     cd - > /dev/null
 fi
-
-# Criar symlink se não existir
-if [ -f "/opt/sqlmap/sqlmap.py" ] && [ ! -L "/usr/local/bin/sqlmap" ]; then
-    ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap 2>/dev/null || true
-    chmod +x /opt/sqlmap/sqlmap.py 2>/dev/null || true
-fi
-
 if [ -f "/opt/sqlmap/sqlmap.py" ]; then
-    SQLMAP_VERSION=$(python3 /opt/sqlmap/sqlmap.py --version 2>/dev/null | head -1)
-    echo -e "${GREEN}✅ SQLMAP instalado em /opt/sqlmap: $SQLMAP_VERSION${NC}\n"
+    chmod +x /opt/sqlmap/sqlmap.py
+    [ ! -L "/usr/local/bin/sqlmap" ] && ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap 2>/dev/null || true
+    echo -e "${GREEN}✅ SQLMAP instalado${NC}"
 else
-    echo -e "${RED}❌ SQLMAP não foi instalado${NC}\n"
+    echo -e "${RED}❌ SQLMAP falhou${NC}"
 fi
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 5️⃣  HYDRA - Password Cracking
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════
+# 5️⃣  HYDRA
+# ════════════════════════════════════════════════════════════════════
 
-echo -e "${YELLOW}[5/8] Instalando HYDRA...${NC}"
+echo -e "${YELLOW}[5/12] Instalando HYDRA...${NC}"
 if ! command -v hydra &> /dev/null; then
-    echo "   → Instalando HYDRA..."
-    
     if [ "$PKG_MANAGER" = "apt-get" ]; then
         apt-get install -y hydra -qq
     elif [ "$PKG_MANAGER" = "apk" ]; then
         apk add hydra --quiet
     fi
 fi
+command -v hydra &> /dev/null && echo -e "${GREEN}✅ HYDRA instalado${NC}" || echo -e "${RED}❌ HYDRA falhou${NC}"
 
-if command -v hydra &> /dev/null; then
-    HYDRA_VERSION=$(hydra -h 2>/dev/null | head -1)
-    echo -e "${GREEN}✅ HYDRA instalado: $HYDRA_VERSION${NC}\n"
-else
-    echo -e "${RED}❌ HYDRA não foi instalado${NC}\n"
-fi
+# ════════════════════════════════════════════════════════════════════
+# 6️⃣  NUCLEI
+# ════════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 6️⃣  NUCLEI - Vulnerability Scanning
-# ═══════════════════════════════════════════════════════════════════════════
-
-echo -e "${YELLOW}[6/8] Instalando NUCLEI...${NC}"
+echo -e "${YELLOW}[6/12] Instalando NUCLEI...${NC}"
 if ! command -v nuclei &> /dev/null; then
-    echo "   → Instalando Nuclei (ProjectDiscovery)..."
-    
-    # Tentar com Go
     if command -v go &> /dev/null; then
-        go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest 2>/dev/null || true
+        go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 2>/dev/null || true
     fi
-    
-    # Se Go não disponível, tentar com download direto
     if ! command -v nuclei &> /dev/null; then
         ARCH=$(uname -m)
         if [ "$ARCH" = "x86_64" ]; then
             NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_linux_amd64.zip"
-        elif [ "$ARCH" = "aarch64" ]; then
-            NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_linux_arm64.zip"
         else
-            NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_linux_amd64.zip"
+            NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_linux_arm64.zip"
         fi
-        
-        echo "   → Baixando do GitHub: $NUCLEI_URL"
-        mkdir -p /tmp/nuclei_install
-        cd /tmp/nuclei_install
+        mkdir -p /tmp/nuclei_install && cd /tmp/nuclei_install
         curl -L "$NUCLEI_URL" -o nuclei.zip 2>/dev/null || true
-        
-        if [ -f "nuclei.zip" ]; then
-            unzip -q nuclei.zip 2>/dev/null || true
-            [ -f "nuclei" ] && mv nuclei /usr/local/bin/ && chmod +x /usr/local/bin/nuclei
-        fi
-        
-        cd - > /dev/null
-        rm -rf /tmp/nuclei_install
+        unzip -q nuclei.zip 2>/dev/null || true
+        [ -f "nuclei" ] && mv nuclei /usr/local/bin/ && chmod +x /usr/local/bin/nuclei
+        cd - > /dev/null && rm -rf /tmp/nuclei_install
     fi
 fi
+command -v nuclei &> /dev/null && echo -e "${GREEN}✅ NUCLEI instalado${NC}" || echo -e "${RED}❌ NUCLEI falhou${NC}"
 
-if command -v nuclei &> /dev/null; then
-    NUCLEI_VERSION=$(nuclei -version 2>/dev/null)
-    echo -e "${GREEN}✅ NUCLEI instalado: $NUCLEI_VERSION${NC}\n"
-else
-    echo -e "${RED}❌ NUCLEI não foi instalado (pode ser necessário Go instalado)${NC}\n"
-fi
+# ════════════════════════════════════════════════════════════════════
+# 7️⃣  MASSCAN
+# ════════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 7️⃣  MASSCAN - Fast Port Scanner
-# ═══════════════════════════════════════════════════════════════════════════
-
-echo -e "${YELLOW}[7/8] Instalando MASSCAN...${NC}"
+echo -e "${YELLOW}[7/12] Instalando MASSCAN...${NC}"
 if ! command -v masscan &> /dev/null; then
-    echo "   → Instalando MASSCAN..."
-    
     if [ "$PKG_MANAGER" = "apt-get" ]; then
-        apt-get install -y masscan -qq 2>/dev/null || echo "   ⚠️  apt-get falhou, tentando build do source"
+        apt-get install -y masscan -qq 2>/dev/null || true
     elif [ "$PKG_MANAGER" = "apk" ]; then
-        apk add masscan --quiet 2>/dev/null || echo "   ⚠️  apk falhou"
-    fi
-    
-    # Se não conseguir pelo package manager, tentar clonar
-    if ! command -v masscan &> /dev/null; then
-        echo "   → Clonando do GitHub..."
-        mkdir -p /tmp/masscan_build
-        cd /tmp/masscan_build
-        git clone https://github.com/robertdavidgraham/masscan.git 2>/dev/null || true
-        
-        if [ -d "masscan" ]; then
-            cd masscan
-            make -j4 2>/dev/null || true
-            [ -f "bin/masscan" ] && cp bin/masscan /usr/local/bin/ && chmod +x /usr/local/bin/masscan
-        fi
-        
-        cd - > /dev/null
-        rm -rf /tmp/masscan_build
+        apk add masscan --quiet 2>/dev/null || true
     fi
 fi
+command -v masscan &> /dev/null && echo -e "${GREEN}✅ MASSCAN instalado${NC}" || echo -e "${YELLOW}⚠️  MASSCAN opcional${NC}"
 
-if command -v masscan &> /dev/null; then
-    MASSCAN_VERSION=$(masscan --version 2>/dev/null | head -1)
-    echo -e "${GREEN}✅ MASSCAN instalado: $MASSCAN_VERSION${NC}\n"
-else
-    echo -e "${RED}❌ MASSCAN não foi instalado (opcional para este sistema)${NC}\n"
-fi
+# ════════════════════════════════════════════════════════════════════
+# 8️⃣  NIKTO
+# ════════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 8️⃣  NIKTO - Web Server Scanner
-# ═══════════════════════════════════════════════════════════════════════════
-
-echo -e "${YELLOW}[8/8] Instalando NIKTO...${NC}"
+echo -e "${YELLOW}[8/12] Instalando NIKTO...${NC}"
 if ! command -v nikto &> /dev/null; then
-    echo "   → Instalando NIKTO..."
-    
     if [ "$PKG_MANAGER" = "apt-get" ]; then
-        apt-get install -y nikto -qq 2>/dev/null || echo "   ⚠️  apt-get falhou"
+        apt-get install -y nikto -qq 2>/dev/null || true
     elif [ "$PKG_MANAGER" = "apk" ]; then
-        apk add nikto --quiet 2>/dev/null || echo "   ⚠️  apk falhou"
+        apk add nikto --quiet 2>/dev/null || true
     fi
-    
-    # Se não conseguir, clonar do GitHub
     if ! command -v nikto &> /dev/null; then
-        echo "   → Clonando do GitHub..."
-        mkdir -p /opt
-        cd /opt
+        mkdir -p /opt && cd /opt
         git clone https://github.com/sullo/nikto.git 2>/dev/null || true
-        cd nikto/program
-        chmod +x nikto.pl
-        ln -s /opt/nikto/program/nikto.pl /usr/local/bin/nikto 2>/dev/null || true
+        cd nikto/program && chmod +x nikto.pl
+        [ ! -L "/usr/local/bin/nikto" ] && ln -s /opt/nikto/program/nikto.pl /usr/local/bin/nikto 2>/dev/null || true
         cd - > /dev/null
     fi
 fi
+command -v nikto &> /dev/null && echo -e "${GREEN}✅ NIKTO instalado${NC}" || echo -e "${RED}❌ NIKTO falhou${NC}"
 
-if command -v nikto &> /dev/null; then
-    NIKTO_VERSION=$(nikto -version 2>/dev/null | head -1)
-    echo -e "${GREEN}✅ NIKTO instalado: $NIKTO_VERSION${NC}\n"
-else
-    echo -e "${RED}❌ NIKTO não foi instalado${NC}\n"
-fi
+# ════════════════════════════════════════════════════════════════════
+# 9️⃣  COMMIX (NOVO)
+# ════════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════════════
-# RESUMO FINAL
-# ═══════════════════════════════════════════════════════════════════════════
-
-echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}📊 RESUMO DA INSTALAÇÃO${NC}"
-echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}\n"
-
-TOOLS_OK=0
-TOOLS_TOTAL=7
-
-for tool in yt-dlp nmap hydra nikto; do
-    if command -v $tool &> /dev/null; then
-        echo -e "${GREEN}✅ $tool${NC}"
-        ((TOOLS_OK++))
-    else
-        echo -e "${RED}❌ $tool${NC}"
+echo -e "${YELLOW}[9/12] Instalando COMMIX...${NC}"
+if ! command -v commix &> /dev/null; then
+    if [ "$PKG_MANAGER" = "apt-get" ]; then
+        apt-get install -y commix -qq 2>/dev/null || true
     fi
-done
+    # Se não conseguir via apt, instalar via pip
+    if ! command -v commix &> /dev/null; then
+        pip3 install commix --quiet 2>/dev/null || true
+    fi
+fi
+command -v commix &> /dev/null && echo -e "${GREEN}✅ COMMIX instalado${NC}" || echo -e "${YELLOW}⚠️  COMMIX opcional (pip install commix)${NC}"
 
-if [ -f "/opt/sqlmap/sqlmap.py" ]; then
-    echo -e "${GREEN}✅ sqlmap${NC}"
-    ((TOOLS_OK++))
+# ════════════════════════════════════════════════════════════════════
+# 🔟  SEARCHSPLOIT (NOVO)
+# ════════════════════════════════════════════════════════════════════
+
+echo -e "${YELLOW}[10/12] Instalando SEARCHSPLOIT...${NC}"
+if ! command -v searchsploit &> /dev/null; then
+    if [ "$PKG_MANAGER" = "apt-get" ]; then
+        apt-get install -y exploitdb -qq 2>/dev/null || true
+    fi
+fi
+command -v searchsploit &> /dev/null && echo -e "${GREEN}✅ SEARCHSPLOIT instalado${NC}" || echo -e "${YELLOW}⚠️  SEARCHSPLOIT opcional (apt-get install exploitdb)${NC}"
+
+# ════════════════════════════════════════════════════════════════════
+# 1️⃣1️⃣  FFMPEG
+# ════════════════════════════════════════════════════════════════════
+
+echo -e "${YELLOW}[11/12] Instalando FFMPEG...${NC}"
+if ! command -v ffmpeg &> /dev/null; then
+    if [ "$PKG_MANAGER" = "apt-get" ]; then
+        apt-get install -y ffmpeg -qq
+    elif [ "$PKG_MANAGER" = "apk" ]; then
+        apk add ffmpeg --quiet
+    fi
+fi
+command -v ffmpeg &> /dev/null && echo -e "${GREEN}✅ FFMPEG instalado${NC}" || echo -e "${RED}❌ FFMPEG falhou${NC}"
+
+# ════════════════════════════════════════════════════════════════════
+# 1️⃣2️⃣  PYTHON E DEPENDÊNCIAS
+# ════════════════════════════════════════════════════════════════════
+
+echo -e "${YELLOW}[12/12] Instalando dependências Python...${NC}"
+if command -v pip3 &> /dev/null; then
+    pip3 install --quiet pip setuptools wheel 2>/dev/null || true
+    pip3 install --quiet python-dotenv requests beautifulsoup4 lxml 2>/dev/null || true
+    echo -e "${GREEN}✅ Dependências Python instaladas${NC}"
 else
-    echo -e "${RED}❌ sqlmap${NC}"
+    echo -e "${YELLOW}⚠️  pip3 não encontrado${NC}"
 fi
 
-if command -v nuclei &> /dev/null; then
-    echo -e "${GREEN}✅ nuclei${NC}"
-    ((TOOLS_OK++))
-else
-    echo -e "${YELLOW}⚠️  nuclei (Go required)${NC}"
-fi
-
-if command -v masscan &> /dev/null; then
-    echo -e "${GREEN}✅ masscan${NC}"
-    ((TOOLS_OK++))
-else
-    echo -e "${YELLOW}⚠️  masscan (opcional)${NC}"
-fi
+# ════════════════════════════════════════════════════════════════════
+# RESUMO FINAL
+# ════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}✅ Instalação completa: $TOOLS_OK/$TOOLS_TOTAL ferramentas${NC}"
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+echo -e "${BLUE}═══════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}📊 RESUMO DA INSTALAÇÃO${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════${NC}\n"
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CRIAR ARQUIVO DE VERIFICAÇÃO
-# ═══════════════════════════════════════════════════════════════════════════
-
+# Criar diretório de resultados
 mkdir -p /tmp/pentest_results
-cat > /tmp/tools_installed.json << 'EOF'
+
+# Criar arquivo de verificação
+cat > /tmp/tools_installed.json << EOF
 {
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "system": "$(uname -a)",
   "tools": {
-    "yt-dlp": "$(which yt-dlp 2>/dev/null || echo 'NOT_INSTALLED')",
-    "nmap": "$(which nmap 2>/dev/null || echo 'NOT_INSTALLED')",
-    "sqlmap": "$(which sqlmap 2>/dev/null || echo '/opt/sqlmap/sqlmap.py' || echo 'NOT_INSTALLED')",
-    "hydra": "$(which hydra 2>/dev/null || echo 'NOT_INSTALLED')",
-    "nuclei": "$(which nuclei 2>/dev/null || echo 'NOT_INSTALLED')",
-    "masscan": "$(which masscan 2>/dev/null || echo 'NOT_INSTALLED')",
-    "nikto": "$(which nikto 2>/dev/null || echo 'NOT_INSTALLED')"
+    "yt-dlp": "$(command -v yt-dlp 2>/dev/null || echo 'NOT_INSTALLED')",
+    "nmap": "$(command -v nmap 2>/dev/null || echo 'NOT_INSTALLED')",
+    "sqlmap": "$(command -v sqlmap 2>/dev/null || echo '/opt/sqlmap/sqlmap.py')",
+    "hydra": "$(command -v hydra 2>/dev/null || echo 'NOT_INSTALLED')",
+    "nuclei": "$(command -v nuclei 2>/dev/null || echo 'NOT_INSTALLED')",
+    "masscan": "$(command -v masscan 2>/dev/null || echo 'NOT_INSTALLED')",
+    "nikto": "$(command -v nikto 2>/dev/null || echo 'NOT_INSTALLED')",
+    "commix": "$(command -v commix 2>/dev/null || echo 'NOT_INSTALLED')",
+    "searchsploit": "$(command -v searchsploit 2>/dev/null || echo 'NOT_INSTALLED')",
+    "ffmpeg": "$(command -v ffmpeg 2>/dev/null || echo 'NOT_INSTALLED')"
   }
 }
 EOF
 
-echo -e "${BLUE}📝 Arquivo de verificação criado: /tmp/tools_installed.json${NC}\n"
+echo -e "${GREEN}✅ Instalação concluída!${NC}\n"
+echo -e "${BLUE}📝 Arquivo de verificação: /tmp/tools_installed.json${NC}\n"
 
 exit 0

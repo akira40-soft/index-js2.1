@@ -144,7 +144,7 @@ class BotCore {
         if (fs.existsSync(authPath)) {
           fs.rmSync(authPath, { recursive: true, force: true });
         }
-      } catch (e) {}
+      } catch (e) { }
       this.isConnected = false;
       this.currentQR = null;
     }
@@ -196,7 +196,7 @@ class BotCore {
               const msg = await this.store.loadMessage(key.remoteJid, key.id);
               return msg ? msg.message : undefined;
             }
-          } catch (e) {}
+          } catch (e) { }
           return undefined;
         }
       });
@@ -206,7 +206,7 @@ class BotCore {
         if (this.store && typeof this.store.bind === 'function') {
           this.store.bind(this.sock.ev);
         }
-      } catch (e) {}
+      } catch (e) { }
 
       // Event listeners
       this.sock.ev.on('creds.update', saveCreds);
@@ -289,7 +289,7 @@ class BotCore {
         const delay = Math.min(5000 * Math.pow(2, this.reconnectAttempts || 0), 30000);
         this.reconnectAttempts = (this.reconnectAttempts || 0) + 1;
 
-        this.logger.info(`🔄 Reconectando em ${delay/1000}s... (tentativa ${this.reconnectAttempts})`);
+        this.logger.info(`🔄 Reconectando em ${delay / 1000}s... (tentativa ${this.reconnectAttempts})`);
         setTimeout(() => this.connect().catch(e => this.logger.error('Erro na reconexão:', e)), delay);
 
       } else if (connection === 'connecting') {
@@ -337,6 +337,7 @@ class BotCore {
       const nome = m.pushName || numeroReal;
       const texto = this.messageProcessor.extractText(m).trim();
       const temAudio = this.messageProcessor.hasAudio(m);
+      const temImagem = this.messageProcessor.hasImage(m);
 
       // Verifica ban
       if (this.moderationSystem.isBanned(numeroReal)) {
@@ -393,6 +394,12 @@ class BotCore {
         return;
       }
 
+      // Processa imagem
+      if (temImagem) {
+        await this.handleImageMessage(m, nome, numeroReal, texto, replyInfo, ehGrupo);
+        return;
+      }
+
       // Processa texto
       if (texto) {
         await this.handleTextMessage(m, nome, numeroReal, texto, replyInfo, ehGrupo);
@@ -433,6 +440,86 @@ class BotCore {
 
     // Processa como texto
     await this.handleTextMessage(m, nome, numeroReal, textoAudio, replyInfo, ehGrupo, true);
+  }
+
+  /**
+   * Handle image message
+   */
+  async handleImageMessage(m, nome, numeroReal, texto, replyInfo, ehGrupo) {
+    this.logger.info(`📸 [IMAGEM] ${nome}: ${texto.substring(0, 50)}...`);
+
+    try {
+      // Determina onde está a imagem (pode ser view-once)
+      let imageMessage = m.message.imageMessage;
+
+      if (!imageMessage) {
+        const unwrapped = this.mediaProcessor.detectViewOnce(m.message);
+        if (unwrapped && unwrapped.imageMessage) {
+          imageMessage = unwrapped.imageMessage;
+        }
+      }
+
+      if (!imageMessage) {
+        this.logger.warn('⚠️ Imagem não encontrada na mensagem');
+        return;
+      }
+
+      // Download da imagem
+      const buffer = await this.mediaProcessor.downloadMedia(imageMessage, 'image');
+      if (!buffer) {
+        this.logger.error('❌ Erro ao baixar imagem');
+        return;
+      }
+
+      const base64 = this.mediaProcessor.bufferToBase64(buffer);
+
+      // Constrói payload com imagem
+      const payload = {
+        usuario: nome,
+        numero: numeroReal,
+        mensagem: texto || 'O que você vê nessa imagem?',
+        tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+        tipo_mensagem: 'image',
+        mensagem_citada: (replyInfo && replyInfo.textoMensagemCitada) || '',
+        reply_metadata: replyInfo ? {
+          reply_to_bot: replyInfo.ehRespostaAoBot,
+          quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido',
+          quoted_author_numero: replyInfo.quemEscreveuCitacao || 'desconhecido',
+          quoted_type: replyInfo.tipoMidia || 'texto',
+          quoted_text_original: replyInfo.textoMensagemCitada || '',
+          context_hint: ''
+        } : { is_reply: false, reply_to_bot: false },
+        imagem_dados: {
+          dados: base64,
+          mime_type: imageMessage.mimetype || 'image/jpeg',
+          descricao: texto || 'Imagem enviada'
+        }
+      };
+
+      // Simula digitação (análise de visão demora um pouco mais)
+      await this.simulateTyping(m.key.remoteJid, 4000);
+
+      // Chama API
+      const resultado = await this.apiClient.processMessage(payload);
+
+      if (!resultado.success) {
+        this.logger.error('❌ Erro na API (Vision):', resultado.error);
+        await this.sock.sendMessage(m.key.remoteJid, {
+          text: 'Epa! Tentei ver a imagem mas meus olhos eletrônicos falharam. Tenta de novo?'
+        }, { quoted: m });
+        return;
+      }
+
+      let resposta = resultado.resposta || 'Não consegui analisar essa imagem.';
+
+      const opcoes = ehGrupo || (replyInfo && replyInfo.ehRespostaAoBot) ? { quoted: m } : {};
+      await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
+
+      this.logger.info(`✅ [IMAGEM RESPONDIDA] ${resposta.substring(0, 80)}...\n`);
+
+    } catch (error) {
+      this.logger.error('❌ Erro ao processar imagem:', error.message);
+    }
   }
 
   /**
@@ -540,7 +627,7 @@ class BotCore {
           Math.max(resposta.length * this.config.TYPING_SPEED_MS, this.config.MIN_TYPING_TIME_MS),
           this.config.MAX_TYPING_TIME_MS
         );
-        
+
         await this.simulateTyping(m.key.remoteJid, tempoDigitacao);
 
         const opcoes = ehGrupo || (replyInfo && replyInfo.ehRespostaAoBot) ? { quoted: m } : {};

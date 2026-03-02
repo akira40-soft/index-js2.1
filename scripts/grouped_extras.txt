@@ -1,0 +1,38 @@
+🔧 COMANDOS ADICIONAIS AGRUPADOS
+
+*Conta & Economia*
+• balance  • banco  • depositar  • diario  • lvl  • mp3  • nivel  • pagar  • profile  • ranking  • reg  • register  • sacar  • saldo  • top  • transferir
+
+*Mídia & Video*
+• image  • img  • p  • playvid  • ytmp4
+
+*Áudio & Efeitos*
+• enhance  • remini
+
+*Imagem & Efeitos*
+• addbg  • bg  • fotodogrupo  • rmbg
+
+*Grupos & Administração*
+• close  • desafixar  • fixar  • ginfo  • hidetag  • listadmins  • membros  • open  • pin  • revogar  • setbotphoto  • totag  • unmute  • unpin
+
+*Diversão & Jogos*
+• advinha  • caracoroa  • joke  • pedrapapeltesoura  • quote  • raffle  • sorteio  • tictactoe
+
+*Cybersecurity & Pentest*
+• blackeye  • cve  • impacket  • shodan  • socialfish  • winrm
+
+*Moderação & Segurança*
+• antifake  • antiimage  • antisticker  • resetwarns
+
+*Configuração & Bot*
+• creator  • criador  • setbio  • setbotname  • setbotpic  • setbotstatus  • setgoodbye  • setname  • setphoto  • setwelcome
+
+*Pagamento & Premium*
+• addpremium  • addvip  • comprar  • delpremium  • delvip  • doar  • donate  • vip
+
+*Utilitários & Admin*
+• ajuda  • apagar  • bug  • comandos  • del  • delete  • getprofile  • getuser  • help  • info  • infogrupo  • reportar  • restart
+
+*Outros*
+• bemvindo  • broadcast  • descricao  • fig  • goodbye  • poll  • react  • reagir  • roubar
+

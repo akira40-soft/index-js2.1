@@ -1,28 +1,22 @@
-# Dockerfile — AKIRA BOT RAILWAY (Otimizado Janeiro 2026)
+# Dockerfile — AKIRA BOT RAILWAY (Corrigido)
 # ✅ Configurado especificamente para Railway
-# ✅ Pino logging compatível com Railway
-# ✅ Sem pino-pretty transport para evitar erros
-# ✅ Configurações otimizadas para Railway
 
 FROM node:20-alpine
 
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # VARIÁVEIS DE AMBIENTE PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 ENV NODE_ENV=production \
     RAILWAY_ENVIRONMENT=true \
-    # Pino sem transport para evitar erros no Railway
     PINO_NO_PRETTY=true \
-    # Configurações de rede
     NODE_OPTIONS="--dns-result-order=ipv4first --no-warnings" \
     UV_THREADPOOL_SIZE=128 \
     LANG=C.UTF-8 \
     GOPATH=/root/go
 
-# ═══════════════════════════════════════════════════════════════════
-# INSTALAR DEPENDÊNCIAS DO SISTEMA ESSENCIAIS PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
-
+# ═══════════════════════════════════════════════════════════════════════
+# INSTALAR DEPENDÊNCIAS DO SISTEMA ESSENCIAIS
+# ═══════════════════════════════════════════════════════════════════════
 RUN apk add --no-cache \
     git \
     curl \
@@ -36,70 +30,46 @@ RUN apk add --no-cache \
     jpeg-dev \
     giflib-dev \
     ffmpeg \
-    # yt-dlp removido do apk para instalação manual da versão latest abaixo
     ca-certificates \
     openssl \
     openssl-dev \
     zlib-dev \
     bash \
-    # Cybersecurity tools
-    nmap \
-    hydra \
-    nikto \
-    unzip \
-    perl
+    libffi-dev \
+    sqlite-dev \
+    postgresql-dev \
+    rust \
+    cargo \
+    musl-dev \
+    perl-net-ssleay \
+    perl-libwww \
+    perl-json \
+    perl-xml-writer \
+    python3-dev \
+    py3-pip \
+    py3-setuptools \
+    libxml2-dev \
+    libxslt-dev \
+    ruby-dev \
+    ruby-full
 
-# ═══════════════════════════════════════════════════════════════════
-# INSTALAÇÃO MANUAL DO YT-DLP (LATEST) - REQUISITO DEPLOY
-# ═══════════════════════════════════════════════════════════════════
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp && \
-    echo "✅ yt-dlp instalado manualmente: $(yt-dlp --version)"
+# ═══════════════════════════════════════════════════════════════════════
+# INSTALAÇÃO DO YT-DLP
+# ═══════════════════════════════════════════════════════════════════════
+RUN pip3 install --upgrade --no-cache-dir --break-system-packages yt-dlp && \
+    ln -sf $(which yt-dlp) /usr/local/bin/yt-dlp 2>/dev/null || true && \
+    echo "✅ yt-dlp instalado"
 
-# ═══════════════════════════════════════════════════════════════════
-# INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+# (REMOVIDO) INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
+# ═══════════════════════════════════════════════════════════════════════
+# Tudo de cybersegurança foi movido para Ferramentas-cyber/
+# e não deve ser instalado no container do bot principal.
 
-# SQLMAP - SQL Injection Testing
-RUN mkdir -p /opt && \
-    cd /opt && \
-    git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git && \
-    chmod +x /opt/sqlmap/sqlmap.py && \
-    ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
 
-# NUCLEI - Vulnerability Scanning (temporarily disabled - download issues)
-# RUN ARCH=$(uname -m) && \
-#     if [ "$ARCH" = "x86_64" ]; then \
-#         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_amd64.zip"; \
-#     elif [ "$ARCH" = "aarch64" ]; then \
-#         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_arm64.zip"; \
-#     else \
-#         NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_amd64.zip"; \
-#     fi && \
-#     mkdir -p /tmp/nuclei_install && \
-#     cd /tmp/nuclei_install && \
-#     curl -L "$NUCLEI_URL" -o nuclei.zip && \
-#     unzip -q nuclei.zip && \
-#     mv nuclei /usr/local/bin/ && \
-#     chmod +x /usr/local/bin/nuclei && \
-#     cd - && \
-#     rm -rf /tmp/nuclei_install
-
-# MASSCAN - Fast Port Scanner
-RUN mkdir -p /tmp/masscan_build && \
-    cd /tmp/masscan_build && \
-    git clone https://github.com/robertdavidgraham/masscan.git && \
-    cd masscan && \
-    make -j4 && \
-    cp bin/masscan /usr/local/bin/ && \
-    chmod +x /usr/local/bin/masscan && \
-    cd - && \
-    rm -rf /tmp/masscan_build
-
-# ═══════════════════════════════════════════════════════════════════
-# CONFIGURAÇÃO DE DIRETÓRIOS PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
-
+# ═══════════════════════════════════════════════════════════════════════
+# DIRETÓRIOS
+# ═══════════════════════════════════════════════════════════════════════
 RUN mkdir -p /app/data && \
     mkdir -p /app/data/auth_info_baileys && \
     mkdir -p /app/data/database && \
@@ -107,62 +77,44 @@ RUN mkdir -p /app/data && \
     mkdir -p /app/data/temp && \
     chmod -R 755 /app/data
 
-# ═══════════════════════════════════════════════════════════════════
-# DIRETÓRIO DE TRABALHO
-# ═══════════════════════════════════════════════════════════════════
-
 WORKDIR /app
 
-# ═══════════════════════════════════════════════════════════════════
-# INSTALAÇÃO DE DEPENDÊNCIAS NODE.JS PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
-
+# ═══════════════════════════════════════════════════════════════════════
+# DEPENDÊNCIAS NODE.JS
+# ═══════════════════════════════════════════════════════════════════════
 COPY package*.json ./
 
-# Instalação otimizada para Railway
 RUN npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
-    npm install --omit=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps
-
-# ═══════════════════════════════════════════════════════════════════
-# COPIAR CÓDIGO DA APLICAÇÃO
-# ═══════════════════════════════════════════════════════════════════
+    npm install --include=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps
 
 COPY . .
 
-# ═══════════════════════════════════════════════════════════════════
+# Limpar dist/ anterior e recompilar TypeScript para garantir código atualizado
+RUN rm -rf dist/ && \
+    npx tsc && \
+    npm prune --omit=dev
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # VERIFICAÇÃO FINAL PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 RUN echo "🔍 Verificando instalação para Railway..." && \
     node -v && \
     npm -v && \
     python3 --version && \
     ffmpeg -version | head -1 && \
-    echo "🔧 Verificando ferramentas de cybersecurity..." && \
-    nmap --version | head -1 && \
-    hydra -h | head -1 && \
-    nikto -version | head -1 && \
-    python3 /opt/sqlmap/sqlmap.py --version | head -1 && \
-    # (nuclei -version || echo "nuclei instalado (versão não disponível)") && \
-    (masscan --version | head -1 || echo "masscan instalado") && \
-    echo "✅ Todas as ferramentas instaladas com sucesso" && \
+    (yt-dlp --version 2>/dev/null || echo "⚠️ yt-dlp versão não verificada") && \
+    echo "✅ Build verificado com sucesso" && \
     echo "✅ Dockerfile construído com sucesso para Railway"
 
-# Limpar cache para reduzir tamanho da imagem
+
 RUN npm cache clean --force 2>/dev/null || true
 
-# ═══════════════════════════════════════════════════════════════════
-# EXPOR PORTA PARA RAILWAY
-# ═══════════════════════════════════════════════════════════════════
-# Railway usa $PORT automaticamente
 EXPOSE $PORT
 
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# ═══════════════════════════════════════════════════════════════════
-# COMANDO DE INICIALIZAÇÃO PARA RAILWAY (ESM - ECMAScript Modules)
-# ═══════════════════════════════════════════════════════════════════
-# O projeto usa ESM (type: "module" no package.json)
-# Não requer flag --experimental-modules pois Node 18+ suporta ESM nativamente
-
-CMD ["node", "index.js"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

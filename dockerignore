@@ -16,6 +16,7 @@ logs/
 README.md
 LICENSE
 *.md
+!cookies.txt
 *.txt
 test/
 tests/

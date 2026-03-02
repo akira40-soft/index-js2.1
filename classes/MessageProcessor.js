@@ -203,6 +203,30 @@ class MessageProcessor {
   }
 
   /**
+   * Detecta se tem imagem (incluindo View Once)
+   */
+  hasImage(message) {
+    try {
+      const msg = message.message;
+      const tipo = getContentType(msg);
+
+      if (tipo === 'imageMessage') return true;
+
+      // Verifica View Once
+      if (tipo === 'viewOnceMessageV2' || tipo === 'viewOnceMessageV2Extension' || tipo === 'viewOnceMessage') {
+        const unwrapped = msg.viewOnceMessageV2?.message ||
+          msg.viewOnceMessageV2Extension?.message ||
+          msg.viewOnceMessage?.message;
+        return !!unwrapped?.imageMessage;
+      }
+
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
    * Detecta tipo de mídia
    */
   getMediaType(message) {
