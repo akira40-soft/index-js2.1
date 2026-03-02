@@ -125,19 +125,33 @@ class MediaProcessor {
             
             const result = await new Promise<{ sucesso: boolean; output?: string; error?: string }>((resolve) => {
                 exec(command, { timeout: 300000, maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
+                    // First check: if we expect an output file, check if it exists
                     if (expectedOutputPath && fs.existsSync(expectedOutputPath)) {
                         return resolve({ sucesso: true, output: stdout });
                     }
 
-                    if (captureOutput && stdout) {
+                    // Second check: if we want to capture stdout (like for JSON metadata)
+                    if (captureOutput && stdout && stdout.trim()) {
                         return resolve({ sucesso: true, output: stdout });
                     }
 
-                    const errMsg = stderr || error?.message || 'Falha';
+                    // Error handling
+                    const errMsg = (stderr || error?.message || 'Falha').trim();
                     
-                    if (errMsg.includes('Sign in') || errMsg.includes('bot') || errMsg.includes('403')) {
+                    // For specific errors that should trigger fallback
+                    if (errMsg.includes('Sign in') || errMsg.includes('bot') || errMsg.includes('403') || 
+                        errMsg.includes('HTTP Error 403') || errMsg.includes('Unable to extract')) {
                         lastError = errMsg;
                         resolve({ sucesso: false, error: errMsg });
+                    } else if (!captureOutput && expectedOutputPath) {
+                        // For file downloads, any error is a failure
+                        resolve({ sucesso: false, error: errMsg });
+                    } else if (captureOutput && !stdout) {
+                        // For output capture, empty stdout with error is a failure
+                        resolve({ sucesso: false, error: errMsg || 'Saída vazia' });
+                    } else if (captureOutput && stdout) {
+                        // We have some output, consider it success even with some stderr
+                        resolve({ sucesso: true, output: stdout });
                     } else {
                         resolve({ sucesso: false, error: errMsg });
                     }
@@ -148,6 +162,44 @@ class MediaProcessor {
         }
 
         return { sucesso: false, error: lastError || 'Todos os métodos falharam' };
+    }
+
+    /**
+     * Simplified yt-dlp execution for metadata only
+     * Uses direct execution without complex fallback for better debugging
+     */
+    private async _getYouTubeMetadataSimple(url: string): Promise<{ sucesso: boolean; output?: string; error?: string }> {
+        const strategies = this._getClientStrategies();
+        
+        for (const strategy of strategies) {
+            const args = strategy.args;
+            // Don't suppress stderr for metadata - we need to see errors
+            const command = `yt-dlp ${args} --dump-json --no-download "${url}"`;
+            
+            try {
+                const { stdout, stderr } = await execAsync(command, { 
+                    timeout: 60000,
+                    maxBuffer: 10 * 1024 * 1024 
+                });
+                
+                if (stdout && stdout.trim()) {
+                    return { sucesso: true, output: stdout };
+                }
+                
+                if (stderr && (stderr.includes('403') || stderr.includes('Sign in'))) {
+                    continue; // Try next strategy
+                }
+            } catch (err: any) {
+                const errMsg = err.message || '';
+                if (errMsg.includes('403') || errMsg.includes('Sign in') || errMsg.includes('bot')) {
+                    continue; // Try next strategy
+                }
+                // For other errors, log but continue
+                this.logger?.warn(`⚠️ Metadata attempt failed: ${errMsg.substring(0, 100)}`);
+            }
+        }
+        
+        return { sucesso: false, error: 'Não foi possível obter metadados após várias tentativas' };
     }
 
     /**
@@ -243,27 +295,58 @@ class MediaProcessor {
 
     /**
      * Obtém metadados de vídeo do YouTube
+     * Usa método simplificado para melhor reliability
      */
     async getYouTubeMetadata(url: string): Promise<any> {
         try {
-            const result = await this._runYtDlpWithFallback(
-                (bypassArgs) => `yt-dlp ${bypassArgs} --dump-json --no-download "${url}" 2>/dev/null`,
-                undefined,
-                true
-            );
+            // First try with the simple method
+            let result = await this._getYouTubeMetadataSimple(url);
+            
+            // If simple method fails, try with the fallback method
+            if (!result.sucesso || !result.output) {
+                result = await this._runYtDlpWithFallback(
+                    (bypassArgs) => `yt-dlp ${bypassArgs} --dump-json --no-download "${url}"`,
+                    undefined,
+                    true
+                );
+            }
 
             if (!result.sucesso || !result.output) {
-                return { sucesso: false, error: 'Não foi possível obter metadados' };
+                // Try one more time with a simple approach
+                try {
+                    const simpleCommand = `yt-dlp --dump-json --no-download "${url}"`;
+                    const { stdout } = await execAsync(simpleCommand, { timeout: 30000 });
+                    if (stdout && stdout.trim()) {
+                        result = { sucesso: true, output: stdout };
+                    }
+                } catch (e) {
+                    // Ignore and return error
+                }
+                
+                if (!result.sucesso || !result.output) {
+                    return { sucesso: false, error: result.error || 'Não foi possível obter metadados' };
+                }
             }
 
-            const lines = result.output.trim().split('\n').filter(line => line.trim());
-            const jsonLine = lines.find(line => line.startsWith('{'));
-            
-            if (!jsonLine) {
-                return { sucesso: false, error: 'JSON não encontrado' };
+            // Parse JSON output from yt-dlp
+            let data;
+            try {
+                data = JSON.parse(result.output.trim());
+            } catch (parseError) {
+                // If JSON parsing fails, try to extract from multi-line output
+                const lines = result.output.trim().split('\n');
+                for (const line of lines) {
+                    try {
+                        data = JSON.parse(line.trim());
+                        break;
+                    } catch (e) {
+                        continue;
+                    }
+                }
+                if (!data) {
+                    return { sucesso: false, error: 'Formato de resposta inválido' };
+                }
             }
-
-            const data = JSON.parse(jsonLine);
 
             return {
                 sucesso: true,

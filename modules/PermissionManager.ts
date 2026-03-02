@@ -106,6 +106,127 @@ class PermissionManager {
             'enquete': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1.5, grupo: true },
             'poll': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1.5, grupo: true },
 
+            // Aliases e comandos adicionais alinhados com CommandHandler
+            // Conta & Economia
+            'diario': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'banco': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'saldo': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'balance': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'transferir': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1.5 },
+            'pagar': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1.5 },
+            'depositar': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'sacar': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'transacoes': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+
+            // Mídia & Busca
+            'pin': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'image': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'tomp3': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'mp3': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+
+            // Efeitos de Áudio
+            'nightcore': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'slow': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'bass': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'bassboost': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'deep': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'robot': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'reverse': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'squirrel': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'echo': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            '8d': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+
+            // Efeitos de Imagem (aliases adicionais)
+            'triggered': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'communism': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'sepia': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'grey': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'invert': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'mission': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'angola': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'addbg': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 2 },
+
+            // Jogos & Diversão
+            'ttt': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'tictactoe': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'jogodavelha': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'rps': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'ppt': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'pedrapapeltesoura': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'guess': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'adivinhe': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'advinha': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'forca': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'hangman': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'gridtactics': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'grid': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+
+            // Menu & Info aliases
+            'ajuda': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+            'comandos': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+            'dono': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+            'owner': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+            'criador': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+            'creator': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+
+            // Grupo & Administração - aliases adicionais
+            'infogrupo': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'ginfo': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'close': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'open': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'desafixar': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'unpin': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'reagir': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'react': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'descricao': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'fotodogrupo': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 2, grupo: true },
+            'bemvindo': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'antifake': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'antiimage': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'antisticker': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'apagar': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'delete': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'del': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+
+            // Stickers adicionais
+            'take': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1.5 },
+            'roubar': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1.5 },
+
+            // Premium management (owner)
+            'addpremium': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'addvip': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'delpremium': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'delvip': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'restart': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'comprar': { nivel: 'public', requiresRegistration: true, rateLimitMultiplier: 1 },
+            'doar': { nivel: 'public', requiresRegistration: false, rateLimitMultiplier: 0.5 },
+
+            // OSINT operacionais (apenas dono)
+            'dork': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 3 },
+            'email': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 3 },
+            'phone': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 3 },
+            'username': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 3 },
+            'sherlock': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 3 },
+            'holehe': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 3 },
+            'theharvester': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 3 },
+            'shodan': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 3 },
+            'cve': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 3 },
+            'whois': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'dns': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 2 },
+            'geo': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 2 },
+
+            // Cybersecurity (apenas dono)
+            'nuclei': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+            'nikto': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+            'masscan': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+            'commix': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+            'searchsploit': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+            'socialfish': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+            'blackeye': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+            'netexec': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+            'winrm': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+            'impacket': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
+
             // Comandos de GRUPO (Requerem Admin/Dono + Registro)
             'add': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
             'remove': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
@@ -115,6 +236,7 @@ class PermissionManager {
             'demote': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
             'mute': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
             'desmute': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
+            'unmute': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
             'fechar': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
             'abrir': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
             'antilink': { nivel: 'admin', requiresRegistration: true, rateLimitMultiplier: 1, grupo: true },
@@ -142,11 +264,9 @@ class PermissionManager {
             'setbotstatus': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 1 },
             'nmap': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
             'sqlmap': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
-            'whois': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 2 },
 
             // Comandos CYBERSEGURANÇA (requerem pagamento - já implementado)
-            'vpn': { nivel: 'premium', requiresPayment: true, requiresRegistration: true, rateLimitMultiplier: 3 },
-            'osint': { nivel: 'premium', requiresPayment: true, requiresRegistration: true, rateLimitMultiplier: 3 },
+                        // Menu OSINT (somente exibição de menu)
         };
 
         // Tipos de ações e seus limites

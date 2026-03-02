@@ -80,9 +80,12 @@ class GroupManagement {
         }
         
         // Verifica se o socket está realmente conectado (ws readyState)
-        if (this.sock.ws && this.sock.ws.readyState !== 1) {
+        // Nota: Em algumas versões do Baileys, readyState pode ser undefined
+        // Relaxamos a verificação para permitir comandos mesmo com socket não 100% pronto
+        if (this.sock.ws && typeof this.sock.ws.readyState === 'number' && this.sock.ws.readyState !== 1) {
             this.logger.warn('⚠️ [GroupManagement] Socket WebSocket não está aberto (readyState: ' + this.sock.ws.readyState + ')');
-            return false;
+            // Não retornamos false aqui - deixamos tentar enviar a mensagem mesmo assim
+            // Pois às vezes o socket ainda funciona mesmo com readyState diferente de 1
         }
         
         return true;

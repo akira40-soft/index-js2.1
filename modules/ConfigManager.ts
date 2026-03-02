@@ -54,7 +54,7 @@ class ConfigManager {
     public RATE_LIMIT_MAX_CALLS: number = 0;
     public MUTE_DEFAULT_MINUTES: number = 0;
     public MUTE_MAX_DAILY: number = 0;
-    public AUTO_BAN_AFTER_MUTES: number = 0;
+    public AUTO_BAN_AFTER_MINUTES: number = 0;
     public YT_MAX_SIZE_MB: number = 0;
     public YT_TIMEOUT_MS: number = 0;
     public YT_QUALITY: string = "";
@@ -132,7 +132,7 @@ class ConfigManager {
         // ═══ MODERAÇÃO ═══
         this.MUTE_DEFAULT_MINUTES = Number(process.env?.MUTE_DEFAULT_MINUTES || 5);
         this.MUTE_MAX_DAILY = Number(process.env?.MUTE_MAX_DAILY || 5);
-        this.AUTO_BAN_AFTER_MUTES = Number(process.env?.AUTO_BAN_AFTER_MUTES || 3);
+        this.AUTO_BAN_AFTER_MINUTES = Number(process.env?.AUTO_BAN_AFTER_MINUTES || process.env?.AUTO_BAN_AFTER_MUTES || 3);
 
         // ═══ YOUTUBE DOWNLOAD ═══
         this.YT_MAX_SIZE_MB = Number(process.env?.YT_MAX_SIZE_MB || 2048); // Aumentado para 2GB

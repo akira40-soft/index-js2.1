@@ -1,9 +1,9 @@
 /**
- * ═══════════════════════════════════════════════════════════════════════
+ * ═══════════════════════════════════════════════════════════════════════════
  * CLASSE: BotCore
- * ═══════════════════════════════════════════════════════════════════════
+ * ═══════════════════════════════════════════════════════════════════════════
  * Núcleo central do bot Akira.
- * ═══════════════════════════════════════════════════════════════════════
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay, Browsers, getContentType } from '@whiskeysockets/baileys';
@@ -27,16 +27,13 @@ import SubscriptionManager from './SubscriptionManager.js';
 import UserProfile from './UserProfile.js';
 import BotProfile from './BotProfile.js';
 import GroupManagement from './GroupManagement.js';
-import CybersecurityToolkit from './CybersecurityToolkit.js';
-import OSINTFramework from './OSINTFramework.js';
 import ImageEffects from './ImageEffects.js';
 import StickerViewOnceHandler from './StickerViewOnceHandler.js';
 import PermissionManager from './PermissionManager.js';
-import AdvancedPentestingToolkit from './AdvancedPentestingToolkit.js';
 
 class BotCore {
     public config: any;
-    public logger: any;
+    public logger: any; 
     public sock: any;
     public isConnected: boolean = false;
     public reconnectAttempts: number = 0;
@@ -46,8 +43,6 @@ class BotCore {
     public BOT_JID: string | null = null;
 
     // Componentes
-    public advancedPentestingToolkit: any;
-    public osintFramework: any;
     public registrationSystem: any;
     public moderationSystem: any;
     public mediaProcessor: any;
@@ -63,7 +58,6 @@ class BotCore {
     public userProfile: any;
     public botProfile: any;
     public groupManagement: any;
-    public cybersecurityToolkit: any;
     public imageEffects: any;
     public permissionManager: any;
     public stickerViewOnceHandler: any;
@@ -127,11 +121,9 @@ class BotCore {
             this.userProfile = new UserProfile(this.sock, this.config);
             this.botProfile = new BotProfile(this.sock, this.logger);
             this.groupManagement = new GroupManagement(this.sock, this.config, this.moderationSystem);
-            this.cybersecurityToolkit = new CybersecurityToolkit(this.config);
             this.imageEffects = new ImageEffects(this.logger);
             this.permissionManager = new PermissionManager(this.logger);
             this.stickerViewOnceHandler = new StickerViewOnceHandler(this.sock, this.config);
-            this.advancedPentestingToolkit = new AdvancedPentestingToolkit(this.config);
 
             this.paymentManager = new PaymentManager(this, this.subscriptionManager);
             this.presenceSimulator = new PresenceSimulator(this.sock || null);
@@ -145,13 +137,6 @@ class BotCore {
             } catch (err: any) {
                 this.logger.warn(`⚠️ CommandHandler: ${err.message}`);
                 this.commandHandler = null;
-            }
-
-            try {
-                this.osintFramework = new OSINTFramework(this.config, this.sock);
-                this.logger.debug('✅ OSINTFramework inicializado');
-            } catch (err: any) {
-                this.logger.warn(`⚠️ OSINTFramework: ${err.message}`);
             }
 
             const poToken = this.config?.YT_PO_TOKEN;
@@ -169,8 +154,6 @@ class BotCore {
             this.logger.info('🔄 Atualizando socket...');
             if (this.commandHandler?.setSocket) this.commandHandler.setSocket(sock);
             if (this.groupManagement?.setSocket) this.groupManagement.setSocket(sock);
-            if (this.cybersecurityToolkit?.setSocket) this.cybersecurityToolkit.setSocket(sock);
-            if (this.osintFramework?.setSocket) this.osintFramework.setSocket(sock);
             if (this.stickerViewOnceHandler?.setSocket) this.stickerViewOnceHandler.setSocket(sock);
             if (this.botProfile?.setSocket) this.botProfile.setSocket(sock);
             if (this.userProfile?.setSocket) this.userProfile.setSocket(sock);
@@ -374,7 +357,7 @@ class BotCore {
                 try {
                     if (this.groupManagement) isAdmin = await this.groupManagement.isUserAdmin(remoteJid, m.key.participant);
                 } catch (e) { isAdmin = false; }
-                if (!isAdmin && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant)) {
+                if (!isAdmin && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant, isAdmin)) {
                     await this.handleAntiLinkViolation(m, nome);
                     return;
                 }

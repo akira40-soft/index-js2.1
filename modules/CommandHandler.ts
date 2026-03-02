@@ -21,10 +21,9 @@ import StickerViewOnceHandler from './StickerViewOnceHandler.js';
 import MediaProcessor from './MediaProcessor.js';
 
 // Ferramentas Enterprise
-import CybersecurityToolkit from './CybersecurityToolkit.js';
-import OSINTFramework from './OSINTFramework.js';
+
 import SubscriptionManager from './SubscriptionManager.js';
-import SecurityLogger from './SecurityLogger.js';
+
 
 // Novos módulos
 import GroupManagement from './GroupManagement.js';
@@ -58,10 +57,7 @@ class CommandHandler {
     public economySystem: any;
     public stickerHandler: any;
     public mediaProcessor: any;
-    public cybersecurityToolkit: any;
-    public osintFramework: any;
     public subscriptionManager: any;
-    public securityLogger: any;
     public moderationSystem: any;
     public gameSystem: any;
     public groupManagement: any;
@@ -88,10 +84,7 @@ class CommandHandler {
         this.mediaProcessor = bot?.mediaProcessor || new MediaProcessor();
 
         // Ferramentas Enterprise
-        this.cybersecurityToolkit = bot?.cybersecurityToolkit || new CybersecurityToolkit(this.config);
-        this.osintFramework = bot?.osintFramework || new OSINTFramework(this.config, sock);
         this.subscriptionManager = bot?.subscriptionManager || new SubscriptionManager(this.config);
-        this.securityLogger = bot?.securityLogger || new SecurityLogger(this.config);
         this.moderationSystem = bot?.moderationSystem || new ModerationSystem();
         this.gameSystem = GameSystem; // Usa a instância singleton importada
 
@@ -121,10 +114,6 @@ class CommandHandler {
             this.imageEffects = new ImageEffects(this.config);
         }
         if (!this.presenceSimulator) this.presenceSimulator = new PresenceSimulator(sock);
-
-        // Actualiza referências do socket nos módulos existentes
-        if (this.cybersecurityToolkit?.setSocket) this.cybersecurityToolkit.setSocket(sock);
-        if (this.osintFramework?.setSocket) this.osintFramework.setSocket(sock);
     }
 
     public async handle(m: any, meta: any): Promise<boolean | void> {
@@ -581,27 +570,8 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
                         return true;
                     }
-                    // Garante que o socket está injetado no toolkit
-                    if (!this.cybersecurityToolkit) {
-                        console.error('[CommandHandler] CybersecurityToolkit não inicializado');
-                        await this._reply(m, '❌ Sistema de cibersegurança não disponível.');
-                        return true;
-                    }
-                    if (!this.cybersecurityToolkit.sock && this.sock) {
-                        this.cybersecurityToolkit.setSocket(this.sock);
-                    }
-                    if (!this.cybersecurityToolkit.sock) {
-                        console.error('[CommandHandler] Socket não disponível para CybersecurityToolkit');
-                        await this._reply(m, '❌ Erro de conexão. Tente novamente em instantes.');
-                        return true;
-                    }
-                    try {
-                        return await this.cybersecurityToolkit.handleCommand(m, command, args);
-                    } catch (e: any) {
-                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
-                        await this._reply(m, '❌ Erro ao executar comando de segurança.');
-                        return true;
-                    }
+                    await this._reply(m, '❌ Sistema de cibersegurança não disponível no momento.');
+                    return true;
 
                 case 'setoolkit':
                     if (!isOwner) {
@@ -625,8 +595,8 @@ class CommandHandler {
                         await this.bot.reply(m, '🚫 Este comando requer privilégios de administrador.');
                         return true;
                     }
-                    // Unificando via handleCommand do OSINTFramework
-                    return await this.osintFramework.handleCommand(m, command, args);
+                    await this._reply(m, '❌ Sistema OSINT não disponível no momento.');
+                    return true;
 
                 case 'mute':
                 case 'desmute':
@@ -636,8 +606,12 @@ class CommandHandler {
                 case 'add':
                 case 'promote':
                 case 'demote': {
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas administradores do grupo ou o dono do bot podem gerenciar o grupo.');
+                    // SEGURANÇA: Apenas o DONO pode usar comandos de gerenciamento de grupo
+                    // (Como no modelo antigo - Isaac Quarenta tem acesso exclusivo)
+                    if (!isOwner) {
+                        // Se não for dono, verifica se é admin do grupo E se é para permitir admin
+                        // Mas no modelo original, APENAS o dono tem acesso a esses comandos
+                        await this.bot.reply(m, '🚫 *COMANDO RESTRITO!*\n\nApenas o proprietário do bot pode usar este comando.');
                         return true;
                     }
 
@@ -648,33 +622,6 @@ class CommandHandler {
                         return true;
                     }
 
-                    // Loga operação administrativa no SecurityLogger
-                    try {
-                        if (this.securityLogger) {
-                            const targetJids: string[] = this.groupManagement
-                                ? (this.groupManagement as any)._extractTargets?.(m) || []
-                                : [];
-                            const alvo = targetJids.length
-                                ? targetJids.map(j => j.split('@')[0]).join(', ')
-                                : (args[0] || 'N/A');
-
-                            this.securityLogger.logOperation({
-                                usuario: `${nome} (${senderId})`,
-                                tipo: `GROUP_${command.toUpperCase()}`,
-                                alvo,
-                                resultado: 'REQUESTED',
-                                risco: 'MÉDIO',
-                                detalhes: {
-                                    chatJid,
-                                    args,
-                                    isOwner,
-                                    isAdminUsers
-                                }
-                            });
-                        }
-                    } catch (e: any) {
-                        this.logger?.warn('SecurityLogger falhou ao registrar operação de grupo:', e.message || e);
-                    }
 
                     try {
                         return await this.groupManagement.handleCommand(m, command, args);
@@ -685,112 +632,45 @@ class CommandHandler {
                     }
                 }
 
-                // COMANDOS DE GRUPO — ADMIN OU DONO
+                // COMANDOS DE GRUPO — APENAS O DONO PODE USAR
                 case 'fechar':
                 case 'close':
                 case 'abrir':
                 case 'open':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem abrir/fechar o grupo.');
-                        return true;
-                    }
-                    if (!this.groupManagement) {
-                        console.error('[CommandHandler] GroupManagement não inicializado');
-                        await this._reply(m, '❌ Sistema de gerenciamento não disponível.');
-                        return true;
-                    }
-                    try {
-                        return await this.groupManagement.handleCommand(m, command, args);
-                    } catch (e: any) {
-                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
-                        return true;
-                    }
-
                 case 'fixar':
                 case 'pin':
                 case 'desafixar':
                 case 'unpin':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem fixar/desafixar mensagens.');
-                        return true;
-                    }
-                    if (!this.groupManagement) {
-                        console.error('[CommandHandler] GroupManagement não inicializado');
-                        await this._reply(m, '❌ Sistema não disponível.');
-                        return true;
-                    }
-                    try {
-                        return await this.groupManagement.handleCommand(m, command, args);
-                    } catch (e: any) {
-                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
-                        return true;
-                    }
-
                 case 'reagir':
                 case 'react':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem usar reações administrativas.');
-                        return true;
-                    }
-                    return await this.groupManagement.handleCommand(m, command, args);
-
                 case 'link':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem obter o link do grupo.');
-                        return true;
-                    }
-                    if (!this.groupManagement) {
-                        console.error('[CommandHandler] GroupManagement não inicializado');
-                        await this._reply(m, '❌ Sistema não disponível.');
-                        return true;
-                    }
-                    try {
-                        return await this.groupManagement.handleCommand(m, 'link', args);
-                    } catch (e: any) {
-                        console.error(`[CommandHandler] Erro no comando link:`, e.message);
-                        return true;
-                    }
-
                 case 'revlink':
                 case 'revogar':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem revogar o link do grupo.');
-                        return true;
-                    }
-                    if (!this.groupManagement) {
-                        console.error('[CommandHandler] GroupManagement não inicializado');
-                        await this._reply(m, '❌ Sistema não disponível.');
-                        return true;
-                    }
-                    try {
-                        return await this.groupManagement.handleCommand(m, command, args);
-                    } catch (e: any) {
-                        console.error(`[CommandHandler] Erro no comando ${command}:`, e.message);
-                        return true;
-                    }
-
                 case 'setdesc':
                 case 'descricao':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem alterar a descrição do grupo.');
-                        return true;
-                    }
-                    if (!this.groupManagement) {
-                        console.error('[CommandHandler] GroupManagement não inicializado');
-                        await this._reply(m, '❌ Sistema não disponível.');
-                        return true;
-                    }
-                    try {
-                        return await this.groupManagement.handleCommand(m, 'setdesc', args);
-                    } catch (e: any) {
-                        console.error(`[CommandHandler] Erro no comando setdesc:`, e.message);
-                        return true;
-                    }
-
                 case 'setfoto':
                 case 'fotodogrupo':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem alterar a foto do grupo.');
+                case 'welcome':
+                case 'bemvindo':
+                case 'setwelcome':
+                case 'setgoodbye':
+                case 'goodbye':
+                case 'tagall':
+                case 'hidetag':
+                case 'totag':
+                case 'listar':
+                case 'membros':
+                case 'sortear':
+                case 'raffle':
+                case 'sorteio':
+                case 'warn':
+                case 'unwarn':
+                case 'resetwarns':
+                case 'mutelist':
+                case 'silenciados':
+                    // SEGURANÇA: Apenas o DONO pode usar todos os comandos de gerenciamento de grupo
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 *COMANDO RESTRITO!*\n\nApenas o proprietário do bot pode usar este comando.');
                         return true;
                     }
                     if (!this.groupManagement) {
@@ -817,8 +697,9 @@ class CommandHandler {
                     return await this._reply(m, mlReport);
 
                 case 'antispam':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem alterar essa configuração.');
+                    // SEGURANÇA: Apenas o DONO pode usar comandos de moderação
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 *COMANDO RESTRITO!*\n\nApenas o proprietário do bot pode usar este comando.');
                         return true;
                     }
                     if (!this.groupManagement) {
@@ -857,13 +738,6 @@ class CommandHandler {
                     if (!isReg4 && !isOwner) { await this.bot.reply(m, '❌ Use *#registrar Nome|Idade* primeiro!'); return true; }
                     return await this.groupManagement.handleCommand(m, 'admins', args);
                 }
-
-                case 'antispam':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem configurar antispam.');
-                        return true;
-                    }
-                    return await this.groupManagement.handleCommand(m, 'antispam', args);
 
                 // DIVERSÃO & UTILIDADES — REQUER REGISTRO
                 case 'enquete':
@@ -934,8 +808,9 @@ class CommandHandler {
                 case 'antifake':
                 case 'antiimage':
                 case 'antisticker':
-                    if (!isOwner && !isAdminUsers) {
-                        await this.bot.reply(m, '🚫 Apenas admins podem alterar essa configuração.');
+                    // SEGURANÇA: Apenas o DONO pode usar comandos de moderação
+                    if (!isOwner) {
+                        await this.bot.reply(m, '🚫 *COMANDO RESTRITO!*\n\nApenas o proprietário do bot pode usar este comando.');
                         return true;
                     }
                     if (!this.moderationSystem) {
@@ -965,9 +840,9 @@ class CommandHandler {
                     process.exit(0);
                     return true;
 
-                default:
-                    if (isOwner && await this.osintFramework.handleCommand(m, command, args)) return true;
+                default: {
                     return false;
+                }
             }
 
         } catch (error) {
