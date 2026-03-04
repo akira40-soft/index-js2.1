@@ -38,20 +38,7 @@ RUN apk add --no-cache \
     libffi-dev \
     sqlite-dev \
     postgresql-dev \
-    rust \
-    cargo \
-    musl-dev \
-    perl-net-ssleay \
-    perl-libwww \
-    perl-json \
-    perl-xml-writer \
-    python3-dev \
-    py3-pip \
-    py3-setuptools \
-    libxml2-dev \
-    libxslt-dev \
-    ruby-dev \
-    ruby-full
+    musl-dev
 
 # ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DO YT-DLP
