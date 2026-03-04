@@ -151,7 +151,7 @@ class CommandHandler {
             const command = parsed.comando.toLowerCase();
             const args = parsed.args;
             const fullArgs = parsed.textoCompleto;
- 
+
             // Log de comando
             // this.logger?.debug(`[CMD] ${command} por ${nome} em ${chatJid}`);
 
@@ -168,15 +168,15 @@ class CommandHandler {
             // Se o usuário responde em reply a uma mensagem de jogo com uma jogada válida
             // processa como jogada automaticamente sem enviar para a IA
             // ═══════════════════════════════════════════════════════════════════════
-            
+
             // Detecta se é uma resposta a uma mensagem de jogo
             const isGameReply = replyInfo && replyInfo.isReplyToGame;
             const gameType = replyInfo?.gameType;
-            
+
             if (isGameReply && fullArgs && command !== 'ping') {
                 // Verifica se o texto é uma jogada válida
                 const trimmedArgs = fullArgs.trim();
-                
+
                 // TTT - números 1-9
                 if ((gameType === 'ttt' || (gameType === 'ttt' && /^[1-9]$/.test(trimmedArgs)))) {
                     try {
@@ -186,7 +186,7 @@ class CommandHandler {
                         console.error('Erro no TTT via reply:', e);
                     }
                 }
-                
+
                 // Grid Tactics - números
                 if (gameType === 'grid' && /^\d+$/.test(trimmedArgs)) {
                     try {
@@ -197,7 +197,7 @@ class CommandHandler {
                         console.error('Erro no Grid via reply:', e);
                     }
                 }
-                
+
                 // RPS - pedra, papel, tesoura
                 if (gameType === 'rps' && ['pedra', 'papel', 'tesoura'].includes(trimmedArgs.toLowerCase())) {
                     try {
@@ -207,7 +207,7 @@ class CommandHandler {
                         console.error('Erro no RPS via reply:', e);
                     }
                 }
-                
+
                 // Guess - números
                 if (gameType === 'guess' && /^\d+$/.test(trimmedArgs)) {
                     try {
@@ -217,7 +217,7 @@ class CommandHandler {
                         console.error('Erro no Guess via reply:', e);
                     }
                 }
-                
+
                 // Forca - letras
                 if (gameType === 'hangman' && /^[a-zA-Z]$/.test(trimmedArgs)) {
                     try {
