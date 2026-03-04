@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ═══════════════════════════════════════════════════════════════════════
  * CLASSE: ModerationSystem (VERSÃO COM SEGURANÇA MILITAR)
  * ═══════════════════════════════════════════════════════════════════════
@@ -612,11 +612,11 @@ class ModerationSystem {
         const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(bit\.ly\/[^\s]+)|(t\.me\/[^\s]+)|(wa\.me\/[^\s]+)|(chat\.whatsapp\.com\/[^\s]+)|(\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)/gi;
 
         const hasLink = linkRegex.test(text);
-        
+
         if (hasLink && this.enableDetailedLogging) {
             const timestamp = new Date().toLocaleString('pt-BR');
             const detectedLink = text.match(linkRegex)?.[0] || 'link detectado';
-            
+
             this.logger.log(`\n${'═'.repeat(80)}`);
             this.logger.log(`🔗 [${timestamp}] ANTILINK - LINK DETECTADO`);
             this.logger.log(`${'─'.repeat(80)}`);

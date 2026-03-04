@@ -337,7 +337,7 @@ class MessageProcessor {
     detectGameMessage(quotedText: string, fullQuotedText: string): { isGame: boolean; gameType: string | null } {
         const text = (quotedText || '').toLowerCase();
         const fullText = (fullQuotedText || '').toLowerCase();
-        
+
         // Padrões de mensagem de Jogo da Velha
         const tttPatterns = [
             'jogo da velha',
@@ -350,7 +350,7 @@ class MessageProcessor {
             'jogou na posição',
             'tabuleiro'
         ];
-        
+
         // Padrões de mensagem de Grid Tactics
         const gridPatterns = [
             'grid tactics',
@@ -358,7 +358,7 @@ class MessageProcessor {
             'posição (ex:',
             'gridtactics'
         ];
-        
+
         // Padrões de mensagem de Pedra, Papel, Tesoura
         const rpsPatterns = [
             'pedra, papel, tesoura',
@@ -366,7 +366,7 @@ class MessageProcessor {
             'escolha:',
             'escolheu!'
         ];
-        
+
         // Padrões de mensagem de Advinha o Número
         const guessPatterns = [
             'advinha o número',
@@ -374,7 +374,7 @@ class MessageProcessor {
             'tentativas:',
             'número é'
         ];
-        
+
         // Padrões de mensagem de Forca
         const hangmanPatterns = [
             'jogo da forca',
@@ -383,38 +383,38 @@ class MessageProcessor {
             'letras usadas',
             'palavra:'
         ];
-        
+
         // Verifica padrões de jogo
         for (const pattern of tttPatterns) {
             if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
                 return { isGame: true, gameType: 'ttt' };
             }
         }
-        
+
         for (const pattern of gridPatterns) {
             if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
                 return { isGame: true, gameType: 'grid' };
             }
         }
-        
+
         for (const pattern of rpsPatterns) {
             if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
                 return { isGame: true, gameType: 'rps' };
             }
         }
-        
+
         for (const pattern of guessPatterns) {
             if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
                 return { isGame: true, gameType: 'guess' };
             }
         }
-        
+
         for (const pattern of hangmanPatterns) {
             if (text.includes(pattern.toLowerCase()) || fullText.includes(pattern.toLowerCase())) {
                 return { isGame: true, gameType: 'hangman' };
             }
         }
-        
+
         return { isGame: false, gameType: null };
     }
 

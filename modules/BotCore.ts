@@ -33,11 +33,11 @@ import PermissionManager from './PermissionManager.js';
 
 class BotCore {
     public config: any;
-    public logger: any; 
+    public logger: any;
     public sock: any;
     public isConnected: boolean = false;
     public reconnectAttempts: number = 0;
-    public MAX_RECONNECT_ATTEMPTS: number = 5;
+    public MAX_RECONNECT_ATTEMPTS: number = 15;
     public connectionStartTime: number | null = null;
     public currentQR: string | null = null;
     public BOT_JID: string | null = null;
@@ -68,10 +68,10 @@ class BotCore {
         onConnected: ((jid: string) => void) | null;
         onDisconnected: ((reason: any) => void) | null;
     } = {
-        onQRGenerated: null,
-        onConnected: null,
-        onDisconnected: null
-    };
+            onQRGenerated: null,
+            onConnected: null,
+            onDisconnected: null
+        };
 
     // Deduplicação
     private processedMessages: Set<string> = new Set();
@@ -220,7 +220,10 @@ class BotCore {
                     if (shouldReconnect) {
                         if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
                             this.reconnectAttempts++;
-                            const delayMs = Math.min(this.reconnectAttempts * 2000, 10000);
+                            // Exponential backoff com jitter (até 30s)
+                            const baseDelay = Math.min(Math.pow(1.5, this.reconnectAttempts) * 1000, 30000);
+                            const delayMs = Math.floor(baseDelay + Math.random() * 1000);
+
                             this.logger.info(`⏳ Reconectando em ${delayMs}ms (Tentativa ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`);
                             await delay(delayMs);
                             this.connect();
@@ -818,3 +821,4 @@ class BotCore {
 }
 
 export default BotCore;
+

@@ -266,7 +266,7 @@ class PermissionManager {
             'sqlmap': { nivel: 'owner', requiresRegistration: true, rateLimitMultiplier: 5 },
 
             // Comandos CYBERSEGURANÇA (requerem pagamento - já implementado)
-                        // Menu OSINT (somente exibição de menu)
+            // Menu OSINT (somente exibição de menu)
         };
 
         // Tipos de ações e seus limites

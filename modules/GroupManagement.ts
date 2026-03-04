@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ═══════════════════════════════════════════════════════════════════════════
  * MÓDULO: GroupManagement.js
  * ═══════════════════════════════════════════════════════════════════════════
@@ -73,12 +73,12 @@ class GroupManagement {
             this.logger.error('❌ [GroupManagement] Socket não disponível');
             return false;
         }
-        
+
         if (typeof this.sock.sendMessage !== 'function') {
             this.logger.error('❌ [GroupManagement] Socket não tem sendMessage');
             return false;
         }
-        
+
         // Verifica se o socket está realmente conectado (ws readyState)
         // Nota: Em algumas versões do Baileys, readyState pode ser undefined
         // Relaxamos a verificação para permitir comandos mesmo com socket não 100% pronto
@@ -87,7 +87,7 @@ class GroupManagement {
             // Não retornamos false aqui - deixamos tentar enviar a mensagem mesmo assim
             // Pois às vezes o socket ainda funciona mesmo com readyState diferente de 1
         }
-        
+
         return true;
     }
 
@@ -138,13 +138,13 @@ class GroupManagement {
                 return metadata;
             } catch (e: any) {
                 this.logger.error(`❌ [GroupManagement] Erro ao obter metadados (tentativa ${attempt}/${retries}):`, e.message);
-                
+
                 if (attempt < retries) {
                     // Delay exponencial: 1s, 2s, 4s
                     const delayMs = Math.pow(2, attempt - 1) * 1000;
                     this.logger.info(`⏳ [GroupManagement] Aguardando ${delayMs}ms antes de retry...`);
                     await new Promise(resolve => setTimeout(resolve, delayMs));
-                    
+
                     // Tenta reconectar o socket se necessário
                     if (e.message?.includes('Connection Closed') && this.sock?.connect) {
                         this.logger.info('🔄 [GroupManagement] Tentando reconectar socket...');
@@ -157,7 +157,7 @@ class GroupManagement {
                 }
             }
         }
-        
+
         return null;
     }
 
@@ -233,7 +233,7 @@ class GroupManagement {
     async checkScheduledActions(): Promise<void> {
         const now = Date.now();
         const actionsToExecute = this.scheduledActions.filter((action: any) => action.executeAt <= now);
-        
+
         for (const action of actionsToExecute) {
             try {
                 if (action.type === 'unmute') {
@@ -284,10 +284,10 @@ class GroupManagement {
             return true;
         }
 
-        const needsSocket = ['mute', 'desmute', 'unmute', 'kick', 'ban', 'add', 'promote', 'demote', 
-                             'fechar', 'close', 'abrir', 'open', 'link', 'revlink', 'revogar',
-                             'fixar', 'pin', 'desafixar', 'unpin', 'tagall', 'totag'].includes(command);
-        
+        const needsSocket = ['mute', 'desmute', 'unmute', 'kick', 'ban', 'add', 'promote', 'demote',
+            'fechar', 'close', 'abrir', 'open', 'link', 'revlink', 'revogar',
+            'fixar', 'pin', 'desafixar', 'unpin', 'tagall', 'totag'].includes(command);
+
         if (needsSocket && !this._checkSocket()) {
             this.logger.error(`❌ [GroupManagement] Comando ${command} falhou: socket não disponível`);
             return true;
@@ -823,13 +823,13 @@ class GroupManagement {
 
         try {
             await this.sock.groupParticipantsUpdate(groupJid, targets, 'remove');
-            
+
             const mentions = targets.map((t: string) => `@${t.split('@')[0]}`).join(', ');
             await this.sock.sendMessage(groupJid, {
                 text: `👢 Usuário(s) ${mentions} removido(s) do grupo.`,
                 mentions: targets
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Usuários removidos: ${targets.join(', ')}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao remover usuário:`, e.message);
@@ -870,7 +870,7 @@ class GroupManagement {
 
         try {
             const result = await this.sock.groupParticipantsUpdate(groupJid, numbers, 'add');
-            
+
             const success = result.filter((r: any) => r.status === 200);
             const failed = result.filter((r: any) => r.status !== 200);
 
@@ -913,13 +913,13 @@ class GroupManagement {
 
         try {
             await this.sock.groupParticipantsUpdate(groupJid, targets, 'promote');
-            
+
             const mentions = targets.map((t: string) => `@${t.split('@')[0]}`).join(', ');
             await this.sock.sendMessage(groupJid, {
                 text: `👑 Usuário(s) ${mentions} promovido(s) a admin.`,
                 mentions: targets
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Usuários promovidos: ${targets.join(', ')}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao promover usuário:`, e.message);
@@ -949,13 +949,13 @@ class GroupManagement {
 
         try {
             await this.sock.groupParticipantsUpdate(groupJid, targets, 'demote');
-            
+
             const mentions = targets.map((t: string) => `@${t.split('@')[0]}`).join(', ');
             await this.sock.sendMessage(groupJid, {
                 text: `⬇️ Usuário(s) ${mentions} rebaixado(s) de admin.`,
                 mentions: targets
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Usuários rebaixados: ${targets.join(', ')}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao rebaixar usuário:`, e.message);
@@ -993,11 +993,11 @@ class GroupManagement {
         try {
             const code = await this.sock.groupInviteCode(groupJid);
             const link = `https://chat.whatsapp.com/${code}`;
-            
+
             await this.sock.sendMessage(groupJid, {
                 text: `🔗 *Link do Grupo:*\n\n${link}\n\n⚠️ Não compartilhe com pessoas não autorizadas.`
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Link gerado para ${groupJid}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao obter link:`, e.message);
@@ -1019,11 +1019,11 @@ class GroupManagement {
 
         try {
             await this.sock.groupRevokeInvite(groupJid);
-            
+
             await this.sock.sendMessage(groupJid, {
                 text: '✅ Link do grupo revogado com sucesso!\n\n🔗 O link antigo não funciona mais.'
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Link revogado para ${groupJid}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao revogar link:`, e.message);
@@ -1061,7 +1061,7 @@ class GroupManagement {
                 text: `${message}\n\n${participants.map((p: string) => `@${p.split('@')[0]}`).join(' ')}`,
                 mentions: participants
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] TagAll executado em ${groupJid}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro no tagAll:`, e.message);
@@ -1087,14 +1087,14 @@ class GroupManagement {
                 await this.sock.sendMessage(groupJid, { text: '❌ Não foi possível obter informações do grupo.' }, { quoted: m });
                 return true;
             }
-            
+
             const creationDate = metadata.creation ? new Date(metadata.creation * 1000).toLocaleDateString('pt-BR') : 'Desconhecida';
             const owner = metadata.owner ? `@${metadata.owner.split('@')[0]}` : 'Desconhecido';
-            
+
             const admins = metadata.participants
                 .filter((p: any) => p.admin === 'admin' || p.admin === 'superadmin')
                 .map((p: any) => `@${p.id.split('@')[0]}`);
-            
+
             const totalMembers = metadata.participants.length;
             const totalAdmins = admins.length;
 
@@ -1111,7 +1111,7 @@ class GroupManagement {
                 text: infoText,
                 mentions: metadata.participants.map((p: any) => p.id)
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Info obtida para ${groupJid}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao obter info:`, e.message);
@@ -1141,7 +1141,7 @@ class GroupManagement {
             const participants = metadata.participants;
 
             let text = `👥 *Lista de Membros (${participants.length})*\n\n`;
-            
+
             participants.forEach((p: any, index: number) => {
                 const admin = p.admin === 'superadmin' ? '👑 Criador' : p.admin === 'admin' ? '⭐ Admin' : '👤 Membro';
                 text += `${index + 1}. @${p.id.split('@')[0]} - ${admin}\n`;
@@ -1151,7 +1151,7 @@ class GroupManagement {
                 text: text,
                 mentions: participants.map((p: any) => p.id)
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Lista de membros enviada para ${groupJid}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao listar membros:`, e.message);
@@ -1188,7 +1188,7 @@ class GroupManagement {
             }
 
             let text = `👑 *Lista de Admins (${admins.length})*\n\n`;
-            
+
             admins.forEach((p: any, index: number) => {
                 const role = p.admin === 'superadmin' ? '👑 Criador' : '⭐ Admin';
                 text += `${index + 1}. @${p.id.split('@')[0]} - ${role}\n`;
@@ -1198,7 +1198,7 @@ class GroupManagement {
                 text: text,
                 mentions: admins.map((p: any) => p.id)
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Lista de admins enviada para ${groupJid}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao listar admins:`, e.message);
@@ -1232,11 +1232,11 @@ class GroupManagement {
 
         try {
             await this.sock.groupUpdateDescription(groupJid, description);
-            
+
             await this.sock.sendMessage(groupJid, {
                 text: '✅ Descrição do grupo atualizada com sucesso!'
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Descrição atualizada para ${groupJid}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao definir descrição:`, e.message);
@@ -1267,17 +1267,17 @@ class GroupManagement {
         try {
             const stream = await this.sock.downloadContentFromMessage(quoted.imageMessage, 'image');
             let buffer = Buffer.from([]);
-            
+
             for await (const chunk of stream) {
                 buffer = Buffer.concat([buffer, chunk]);
             }
 
             await this.sock.updateProfilePicture(groupJid, buffer);
-            
+
             await this.sock.sendMessage(groupJid, {
                 text: '✅ Foto do grupo atualizada com sucesso!'
             }, { quoted: m });
-            
+
             this.logger.info(`✅ [GroupManagement] Foto atualizada para ${groupJid}`);
         } catch (e: any) {
             this.logger.error(`❌ [GroupManagement] Erro ao definir foto:`, e.message);
@@ -1303,7 +1303,7 @@ class GroupManagement {
         // Também salvar no arquivo específico de registro
         try {
             const configPath = './temp/akira_data/group_registration_config.json';
-            
+
             let config: any = {};
             if (fs.existsSync(configPath)) {
                 const data = fs.readFileSync(configPath, 'utf8');

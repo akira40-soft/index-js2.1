@@ -1,4 +1,4 @@
-import fs from 'fs';
+﻿import fs from 'fs';
 import path from 'path';
 import ConfigManager from './ConfigManager.js';
 
@@ -127,12 +127,12 @@ class LevelSystem {
             this.logger.warn('⚠️ [LevelSystem] Socket não disponível');
             return false;
         }
-        
+
         if (typeof sock.groupUpdateDescription !== 'function') {
             this.logger.warn('⚠️ [LevelSystem] Socket não tem groupUpdateDescription');
             return false;
         }
-        
+
         return true;
     }
 
