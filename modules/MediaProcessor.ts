@@ -108,7 +108,8 @@ class MediaProcessor {
             const finalUrl = metadata.url || url;
 
             // Tenta download com yt-dlp básico
-            const bypassArgs = '--extractor-args "youtube:player_client=android,web" --no-check-certificates';
+            const clients = cookiePath ? 'web,ios' : 'android,web,ios';
+            const bypassArgs = `--extractor-args "youtube:player_client=${clients}" --no-check-certificates --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"`;
             const command = `yt-dlp ${cookieArg} ${bypassArgs} -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${finalUrl}"`;
             this.logger?.info(`📥 Executando: ${command.replace(cookieArg, '[COOKIES]')}`);
 
@@ -121,7 +122,7 @@ class MediaProcessor {
             // Se o arquivo não foi criado, tenta com ytdl-core
             if (!fs.existsSync(outputPath)) {
                 this.logger?.warn('⚠️ Arquivo não criado, tentando ytdl-core...');
-                return await this._downloadWithYtdlCore(url, 'audio', metadata);
+                return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
             }
 
             const buffer = await fs.promises.readFile(outputPath);
@@ -173,7 +174,8 @@ class MediaProcessor {
                 quality === '720' ? 'bestvideo[height<=720]+bestaudio/best[ext=m4a]/best' :
                     'bestvideo[height<=480]+bestaudio/best[ext=m4a]/best';
 
-            const bypassArgs = '--extractor-args "youtube:player_client=android,web" --no-check-certificates';
+            const clients = cookiePath ? 'web,ios' : 'android,web,ios';
+            const bypassArgs = `--extractor-args "youtube:player_client=${clients}" --no-check-certificates --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"`;
             const command = `yt-dlp ${cookieArg} ${bypassArgs} -f "${formatSelector}" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
 
             try {
@@ -181,10 +183,11 @@ class MediaProcessor {
             } catch (execErr: any) {
                 this.logger?.warn(`⚠️ yt-dlp falhou no download: ${execErr.message}`);
                 // Tenta com force-ipv4 se o erro sugerir bloqueio
-                if (execErr.message.includes('Sign in') || execErr.message.includes('403') || execErr.message.includes('410')) {
-                    this.logger?.info('🔄 Tentando com force-ipv4...');
+                if (execErr.message.includes('Sign in') || execErr.message.includes('403') || execErr.message.includes('410') || execErr.message.includes('format is not available')) {
+                    this.logger?.info('🔄 Tentando com force-ipv4 e formato simplificado...');
                     try {
-                        const ipv4Cmd = `yt-dlp --force-ipv4 ${cookieArg} ${bypassArgs} -f "${formatSelector}" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
+                        const simpleFormat = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best';
+                        const ipv4Cmd = `yt-dlp --force-ipv4 ${cookieArg} ${bypassArgs} -f "${simpleFormat}" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
                         await execAsync(ipv4Cmd, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
                     } catch (e2) { }
                 }
@@ -248,12 +251,16 @@ class MediaProcessor {
             targetUrl = `ytsearch1:${url}`;
         }
 
+        const clients = cookiePath ? 'web,ios' : 'android,web,ios';
+        const extractorArgs = `--extractor-args "youtube:player_client=${clients}"`;
+        const commonUA = '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"';
+
         // PRIORIDADE 3: yt-dlp com comandos variados
         const commands = [
-            `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android,web" --no-check-certificates --dump-json --no-download "${targetUrl}"`,
-            `yt-dlp --extractor-args "youtube:player_client=android,web" --no-check-certificates --dump-json --no-download "${targetUrl}"`,
+            `yt-dlp ${cookieArg} ${extractorArgs} --no-check-certificates ${commonUA} --dump-json --no-download "${targetUrl}"`,
+            `yt-dlp ${extractorArgs} --no-check-certificates ${commonUA} --dump-json --no-download "${targetUrl}"`,
             `yt-dlp ${cookieArg} --dump-json --no-download "${targetUrl}"`,
-            `yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --dump-json --no-download "${targetUrl}"`,
+            `yt-dlp ${commonUA} --dump-json --no-download "${targetUrl}"`,
             `yt-dlp --force-ipv4 --dump-json --no-download "${targetUrl}"`
         ];
 
