@@ -108,8 +108,8 @@ class MediaProcessor {
             const finalUrl = metadata.url || url;
 
             // Tenta download com yt-dlp básico
-            const clients = cookiePath ? 'web,ios' : 'android,web,ios';
-            const bypassArgs = `--extractor-args "youtube:player_client=${clients}" --no-check-certificates --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"`;
+            const clients = cookiePath ? 'web,mweb,tv' : 'android,web,ios,mweb';
+            const bypassArgs = `--extractor-args "youtube:player_client=${clients}" --no-check-certificates --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" --ignore-config --no-warnings`;
             const command = `yt-dlp ${cookieArg} ${bypassArgs} -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${finalUrl}"`;
             this.logger?.info(`📥 Executando: ${command.replace(cookieArg, '[COOKIES]')}`);
 
@@ -174,8 +174,8 @@ class MediaProcessor {
                 quality === '720' ? 'bestvideo[height<=720]+bestaudio/best[ext=m4a]/best' :
                     'bestvideo[height<=480]+bestaudio/best[ext=m4a]/best';
 
-            const clients = cookiePath ? 'web,ios' : 'android,web,ios';
-            const bypassArgs = `--extractor-args "youtube:player_client=${clients}" --no-check-certificates --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"`;
+            const clients = cookiePath ? 'web,mweb,tv' : 'android,web,ios,mweb';
+            const bypassArgs = `--extractor-args "youtube:player_client=${clients}" --no-check-certificates --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" --ignore-config --no-warnings`;
             const command = `yt-dlp ${cookieArg} ${bypassArgs} -f "${formatSelector}" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
 
             try {
@@ -251,9 +251,9 @@ class MediaProcessor {
             targetUrl = `ytsearch1:${url}`;
         }
 
-        const clients = cookiePath ? 'web,ios' : 'android,web,ios';
+        const clients = cookiePath ? 'web,mweb,tv' : 'android,web,ios,mweb';
         const extractorArgs = `--extractor-args "youtube:player_client=${clients}"`;
-        const commonUA = '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"';
+        const commonUA = '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"';
 
         // PRIORIDADE 3: yt-dlp com comandos variados
         const commands = [
