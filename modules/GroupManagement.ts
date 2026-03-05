@@ -84,8 +84,7 @@ class GroupManagement {
         // Relaxamos a verificação para permitir comandos mesmo com socket não 100% pronto
         if (this.sock.ws && typeof this.sock.ws.readyState === 'number' && this.sock.ws.readyState !== 1) {
             this.logger.warn('⚠️ [GroupManagement] Socket WebSocket não está aberto (readyState: ' + this.sock.ws.readyState + ')');
-            // Não retornamos false aqui - deixamos tentar enviar a mensagem mesmo assim
-            // Pois às vezes o socket ainda funciona mesmo com readyState diferente de 1
+            return false;
         }
 
         return true;
@@ -137,7 +136,10 @@ class GroupManagement {
                 this.metadataCache.set(groupJid, { data: metadata, timestamp: Date.now() });
                 return metadata;
             } catch (e: any) {
-                this.logger.error(`❌ [GroupManagement] Erro ao obter metadados (tentativa ${attempt}/${retries}):`, e.message);
+                const isConnectionClosed = e.message?.includes('Connection Closed');
+                const logLvl = isConnectionClosed ? 'warn' : 'error';
+
+                this.logger[logLvl](`❌ [GroupManagement] Erro ao obter metadados (tentativa ${attempt}/${retries}):`, e.message);
 
                 if (attempt < retries) {
                     // Delay exponencial: 1s, 2s, 4s
@@ -145,15 +147,8 @@ class GroupManagement {
                     this.logger.info(`⏳ [GroupManagement] Aguardando ${delayMs}ms antes de retry...`);
                     await new Promise(resolve => setTimeout(resolve, delayMs));
 
-                    // Tenta reconectar o socket se necessário
-                    if (e.message?.includes('Connection Closed') && this.sock?.connect) {
-                        this.logger.info('🔄 [GroupManagement] Tentando reconectar socket...');
-                        try {
-                            await this.sock.connect();
-                        } catch (connErr) {
-                            this.logger.error('❌ [GroupManagement] Falha ao reconectar:', connErr);
-                        }
-                    }
+                    // No Baileys v4+, o socket reconecta automaticamente via eventos no BotCore.
+                    // Tentar chamar sock.connect() aqui é incorreto e pode causar loops.
                 }
             }
         }

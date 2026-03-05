@@ -393,7 +393,7 @@ class BotCore {
 
     async handleImageMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean): Promise<void> {
         this.logger.info(`🖼️ [IMAGEM] ${nome}`);
-        if (ehGrupo && this.levelSystem) {
+        if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
             const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 15);
             if (xp) this.logger.info(`📈 [LEVEL] ${nome} +15 XP`);
         }
@@ -557,7 +557,7 @@ class BotCore {
                     const handled = await this.commandHandler.handle(m, { nome, numeroReal, texto, replyInfo, ehGrupo });
                     if (handled) {
                         this.logger.info(`⚡ Comando: ${texto.substring(0, 30)}`);
-                        if (ehGrupo && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
+                        if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
                             const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
                             if (xp) this.logger.info(`📈 [LEVEL] ${nome} +5 XP`);
                         }
@@ -602,7 +602,7 @@ class BotCore {
                 priority_level: replyInfo.priorityLevel || 2
             } : { is_reply: false, reply_to_bot: false };
 
-            if (ehGrupo && this.levelSystem) {
+            if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
                 const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 10);
                 if (xp) this.logger.info(`📈 [LEVEL] ${nome} +10 XP`);
             }

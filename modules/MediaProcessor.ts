@@ -92,28 +92,30 @@ class MediaProcessor {
             // Primeiro tenta obter metadados
             const metadata = await this._getYouTubeMetadataSimple(url);
             if (!metadata.sucesso) {
-                // Tenta com ytdl-core se yt-dlp falhar
-                this.logger?.warn('⚠️ yt-dlp falhou, tentando ytdl-core...');
-                return await this._downloadWithYtdlCore(url, 'audio');
+                // Tenta com ytdl-core se yt-dlp falhar na metadata (apenas se for link)
+                if (url.startsWith('http')) {
+                    this.logger?.warn('⚠️ Metadata falhou, tentando download direto com ytdl-core...');
+                    return await this._downloadWithYtdlCore(url, 'audio');
+                }
+                return { sucesso: false, error: 'Não foi possível encontrar metadados para este termo ou URL.' };
             }
 
             const outputPath = this.generateRandomFilename('mp3');
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            let targetUrl = url;
-            if (!url.startsWith('http')) {
-                targetUrl = `ytsearch1:${url}`;
-            }
+            // Usa a URL já resolvida pela metadata
+            const finalUrl = metadata.url || url;
 
             // Tenta download com yt-dlp básico
-            const command = `yt-dlp ${cookieArg} -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${targetUrl}"`;
+            const bypassArgs = '--extractor-args "youtube:player_client=android,web" --no-check-certificates';
+            const command = `yt-dlp ${cookieArg} ${bypassArgs} -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${finalUrl}"`;
             this.logger?.info(`📥 Executando: ${command.replace(cookieArg, '[COOKIES]')}`);
 
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ yt-dlp falhou: ${execErr.message}`);
+                this.logger?.warn(`⚠️ yt-dlp falhou no download: ${execErr.message}`);
             }
 
             // Se o arquivo não foi criado, tenta com ytdl-core
@@ -153,6 +155,14 @@ class MediaProcessor {
 
             // Obtém metadados
             const metadata = await this._getYouTubeMetadataSimple(url);
+            if (!metadata.sucesso) {
+                if (url.startsWith('http')) {
+                    return await this._downloadWithYtdlCore(url, 'video');
+                }
+                return { sucesso: false, error: 'Metadados não encontrados para busca.' };
+            }
+
+            const finalUrl = metadata.url || url;
 
             const outputPath = this.generateRandomFilename('mp4');
             const cookiePath = this._findCookiePath();
@@ -163,17 +173,26 @@ class MediaProcessor {
                 quality === '720' ? 'bestvideo[height<=720]+bestaudio/best[ext=m4a]/best' :
                     'bestvideo[height<=480]+bestaudio/best[ext=m4a]/best';
 
-            const command = `yt-dlp ${cookieArg} -f "${formatSelector}" --merge-output-format mp4 -o "${outputPath}" "${url}"`;
+            const bypassArgs = '--extractor-args "youtube:player_client=android,web" --no-check-certificates';
+            const command = `yt-dlp ${cookieArg} ${bypassArgs} -f "${formatSelector}" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
 
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ yt-dlp falhou: ${execErr.message}`);
+                this.logger?.warn(`⚠️ yt-dlp falhou no download: ${execErr.message}`);
+                // Tenta com force-ipv4 se o erro sugerir bloqueio
+                if (execErr.message.includes('Sign in') || execErr.message.includes('403') || execErr.message.includes('410')) {
+                    this.logger?.info('🔄 Tentando com force-ipv4...');
+                    try {
+                        const ipv4Cmd = `yt-dlp --force-ipv4 ${cookieArg} ${bypassArgs} -f "${formatSelector}" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
+                        await execAsync(ipv4Cmd, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
+                    } catch (e2) { }
+                }
             }
 
             if (!fs.existsSync(outputPath)) {
-                // Tenta com ytdl-core
-                return await this._downloadWithYtdlCore(url, 'video', metadata);
+                // Tenta com ytdl-core usando a URL resolvida
+                return await this._downloadWithYtdlCore(finalUrl, 'video', metadata);
             }
 
             const buffer = await fs.promises.readFile(outputPath);
@@ -224,7 +243,8 @@ class MediaProcessor {
         }
 
         let targetUrl = url;
-        if (!url.startsWith('http')) {
+        const isSearch = !url.startsWith('http');
+        if (isSearch) {
             targetUrl = `ytsearch1:${url}`;
         }
 
@@ -233,14 +253,17 @@ class MediaProcessor {
             `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android,web" --no-check-certificates --dump-json --no-download "${targetUrl}"`,
             `yt-dlp --extractor-args "youtube:player_client=android,web" --no-check-certificates --dump-json --no-download "${targetUrl}"`,
             `yt-dlp ${cookieArg} --dump-json --no-download "${targetUrl}"`,
-            `yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --dump-json --no-download "${targetUrl}"`
+            `yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --dump-json --no-download "${targetUrl}"`,
+            `yt-dlp --force-ipv4 --dump-json --no-download "${targetUrl}"`
         ];
 
         for (const cmd of commands) {
             try {
-                const { stdout } = await execAsync(cmd, { timeout: 60000 });
+                const { stdout } = await execAsync(cmd, { timeout: 45000 });
                 if (stdout && stdout.trim()) {
-                    const data = JSON.parse(stdout.trim());
+                    const data = JSON.parse(stdout.split('\n')[0].trim()); // Pega a primeira linha caso venha mais de um JSON
+                    const resolvedUrl = data.webpage_url || (data.id ? `https://www.youtube.com/watch?v=${data.id}` : url);
+
                     return {
                         sucesso: true,
                         titulo: data.title || 'Título desconhecido',
@@ -248,7 +271,8 @@ class MediaProcessor {
                         duracao: data.duration || 0,
                         duracaoFormatada: this._formatDuration(data.duration || 0),
                         thumbnail: data.thumbnail || '',
-                        url: data.webpage_url || url
+                        url: resolvedUrl,
+                        videoId: data.id || videoId
                     };
                 }
             } catch (err: any) {
@@ -256,45 +280,31 @@ class MediaProcessor {
             }
         }
 
-        // PRIORIDADE 4: ytdl-core (apenas se for url válida)
-        if (videoId || url.startsWith('http')) {
-            const ytdlResult = await this._getMetadataYtdlCore(url);
+        // PRIORIDADE 4: ytdl-core (apenas se for url válida ou se conseguimos extrair um ID antes)
+        const finalUrlForYtdl = (isSearch && videoId) ? `https://www.youtube.com/watch?v=${videoId}` : url;
+        if (finalUrlForYtdl.startsWith('http')) {
+            const ytdlResult = await this._getMetadataYtdlCore(finalUrlForYtdl);
             if (ytdlResult.sucesso) {
                 return ytdlResult;
             }
         }
 
-        // PRIORIDADE 5: Tentativa com force ipv4 (resolve issues de DNS)
-        try {
-            const forceIpv4Cmd = `yt-dlp --force-ipv4 --dump-json --no-download "${targetUrl}"`;
-            const { stdout } = await execAsync(forceIpv4Cmd, { timeout: 60000 });
-            if (stdout && stdout.trim()) {
-                const data = JSON.parse(stdout.trim());
-                return {
-                    sucesso: true,
-                    titulo: data.title || 'Título desconhecido',
-                    canal: data.channel || data.uploader || 'Canal desconhecido',
-                    duracao: data.duration || 0,
-                    duracaoFormatada: this._formatDuration(data.duration || 0),
-                    thumbnail: data.thumbnail || '',
-                    url: data.webpage_url || url
-                };
-            }
-        } catch (err: any) {
-            this.logger?.debug(`⚠️ yt-dlp IPv4 falhou: ${err.message}`);
+        // Ultimo recurso: retorna metadados básicos apenas se for uma URL
+        if (url.startsWith('http')) {
+            this.logger?.warn('⚠️ Todas as tentativas de metadata falharam, retornando dados básicos para URL');
+            return {
+                sucesso: true,
+                titulo: this._extractTitleFromUrl(url),
+                canal: 'Canal desconhecido',
+                duracao: 0,
+                duracaoFormatada: '0:00',
+                thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+                url: url
+            };
         }
 
-        // Ultimo recurso: retorna metadados básicos da URL
-        this.logger?.warn('⚠️ Todas as tentativas de metadata falharam, retornando dados básicos');
-        return {
-            sucesso: true,
-            titulo: this._extractTitleFromUrl(url),
-            canal: 'Canal desconhecido',
-            duracao: 0,
-            duracaoFormatada: '0:00',
-            thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-            url: url
-        };
+        this.logger?.error('❌ Falha total ao obter metadados para busca:', url);
+        return { sucesso: false, error: 'Não foi possível resolver o termo de busca em uma URL válida.' };
     }
 
     /**
