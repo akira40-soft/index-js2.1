@@ -143,11 +143,23 @@ class CommandHandler {
                 return false;
             }
 
-            const parsed = mp.parseCommand(texto);
-            if (!parsed) return false;
-
             const chatJid = m.key.remoteJid;
             const senderId = numeroReal;
+
+            const parsed = mp.parseCommand(texto);
+            if (!parsed) {
+                // Tenta interceptar como jogada de jogo ativo antes de ignorar (para não cair na IA)
+                const gameModule = this.gameSystem || (await import('./GameSystem.js')).default;
+                if (gameModule.processActiveGameInput) {
+                    const gameRes = await gameModule.processActiveGameInput(chatJid, senderId, texto);
+                    if (gameRes) {
+                        await this._reply(m, gameRes.text);
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             const command = parsed.comando.toLowerCase();
             const args = parsed.args;
             const fullArgs = parsed.textoCompleto;

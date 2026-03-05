@@ -63,6 +63,44 @@ class GameSystem {
     }
 
     /**
+     * Tenta processar mensagens curtas como jogadas de jogos ativos (sem precisar de comando explícito)
+     */
+    public async processActiveGameInput(chatId: string, senderId: string, input: string): Promise<{ text: string, finished: boolean } | null> {
+        this.cleanupGames();
+        const texto = (input || '').trim().toLowerCase();
+
+        // Tic-Tac-Toe
+        let game = this.games.get(chatId);
+        if (game && game.type === 'ttt') {
+            if (/^[1-9]$/.test(texto)) {
+                return await this.handleTicTacToe(chatId, senderId, texto);
+            }
+        }
+
+        // Hangman
+        game = this.games.get(`${chatId}_hangman`);
+        if (game && game.type === 'hangman') {
+            if (/^[a-z]$/.test(texto)) {
+                return await this.handleHangman(chatId, senderId, texto);
+            }
+        }
+
+        // RPS
+        game = this.games.get(`${chatId}_rps`);
+        if (game && game.type === 'rps' && ['pedra', 'papel', 'tesoura'].includes(texto)) {
+            return await this.handleRPS(chatId, senderId, texto);
+        }
+
+        // Guess
+        game = this.games.get(`${chatId}_guess`);
+        if (game && game.type === 'guess' && /^\d+$/.test(texto)) {
+            return await this.handleGuess(chatId, senderId, texto);
+        }
+
+        return null;
+    }
+
+    /**
      * ═══════════════════════════════════════════════════════════════════════
      * JOGO DA VELHA (TIC-TAC-TOE) - AGORA COM MODO IA!
      * ═══════════════════════════════════════════════════════════════════════

@@ -101,8 +101,13 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
+            let targetUrl = url;
+            if (!url.startsWith('http')) {
+                targetUrl = `ytsearch1:${url}`;
+            }
+
             // Tenta download com yt-dlp básico
-            const command = `yt-dlp ${cookieArg} -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${url}"`;
+            const command = `yt-dlp ${cookieArg} -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${targetUrl}"`;
             this.logger?.info(`📥 Executando: ${command.replace(cookieArg, '[COOKIES]')}`);
 
             try {
@@ -203,25 +208,32 @@ class MediaProcessor {
         this.logger?.info(`🔍 Extraindo metadados para video ID: ${videoId}`);
 
         // PRIORIDADE 1: Invidious API (mais confiável sem cookies)
-        const invidiousResult = await this._getMetadataFromInvidious(videoId);
-        if (invidiousResult.sucesso) {
-            this.logger?.info(`✅ Metadados obtidos via Invidious: ${invidiousResult.titulo}`);
-            return invidiousResult;
+        if (videoId) {
+            const invidiousResult = await this._getMetadataFromInvidious(videoId);
+            if (invidiousResult.sucesso) {
+                this.logger?.info(`✅ Metadados obtidos via Invidious: ${invidiousResult.titulo}`);
+                return invidiousResult;
+            }
+
+            // PRIORIDADE 2: Piped API
+            const pipedResult = await this._getMetadataFromPiped(videoId);
+            if (pipedResult.sucesso) {
+                this.logger?.info(`✅ Metadados obtidos via Piped: ${pipedResult.titulo}`);
+                return pipedResult;
+            }
         }
 
-        // PRIORIDADE 2: Piped API
-        const pipedResult = await this._getMetadataFromPiped(videoId);
-        if (pipedResult.sucesso) {
-            this.logger?.info(`✅ Metadados obtidos via Piped: ${pipedResult.titulo}`);
-            return pipedResult;
+        let targetUrl = url;
+        if (!url.startsWith('http')) {
+            targetUrl = `ytsearch1:${url}`;
         }
 
         // PRIORIDADE 3: yt-dlp com comandos variados
         const commands = [
-            `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android,web" --no-check-certificates --dump-json --no-download "${url}"`,
-            `yt-dlp --extractor-args "youtube:player_client=android,web" --no-check-certificates --dump-json --no-download "${url}"`,
-            `yt-dlp ${cookieArg} --dump-json --no-download "${url}"`,
-            `yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --dump-json --no-download "${url}"`
+            `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android,web" --no-check-certificates --dump-json --no-download "${targetUrl}"`,
+            `yt-dlp --extractor-args "youtube:player_client=android,web" --no-check-certificates --dump-json --no-download "${targetUrl}"`,
+            `yt-dlp ${cookieArg} --dump-json --no-download "${targetUrl}"`,
+            `yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --dump-json --no-download "${targetUrl}"`
         ];
 
         for (const cmd of commands) {
@@ -244,15 +256,17 @@ class MediaProcessor {
             }
         }
 
-        // PRIORIDADE 4: ytdl-core
-        const ytdlResult = await this._getMetadataYtdlCore(url);
-        if (ytdlResult.sucesso) {
-            return ytdlResult;
+        // PRIORIDADE 4: ytdl-core (apenas se for url válida)
+        if (videoId || url.startsWith('http')) {
+            const ytdlResult = await this._getMetadataYtdlCore(url);
+            if (ytdlResult.sucesso) {
+                return ytdlResult;
+            }
         }
 
         // PRIORIDADE 5: Tentativa com force ipv4 (resolve issues de DNS)
         try {
-            const forceIpv4Cmd = `yt-dlp --force-ipv4 --dump-json --no-download "${url}"`;
+            const forceIpv4Cmd = `yt-dlp --force-ipv4 --dump-json --no-download "${targetUrl}"`;
             const { stdout } = await execAsync(forceIpv4Cmd, { timeout: 60000 });
             if (stdout && stdout.trim()) {
                 const data = JSON.parse(stdout.trim());
