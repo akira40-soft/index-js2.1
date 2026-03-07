@@ -81,33 +81,34 @@ class MediaProcessor {
     }
 
     /**
-     * Constrói o comando yt-dlp com todos os bypasses definitivos (2025)
+     * Constrói o comando yt-dlp com bypasses para 2026
+     * NOTA: tv_embedded foi removido em 2026-01-31 (era broken)
+     * NOTA: --js-runtime node pode não ser suportado em versões antigas
      */
     private _buildYtdlpCommand(url: string, options: { type: 'audio' | 'video' | 'json', quality?: string, output?: string, isSearch?: boolean }): string {
         const cookiePath = this._findCookiePath();
         const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
         const poToken = this.config?.YT_PO_TOKEN;
 
-        // Define clientes basedos em cookies (android/ios conflitam com cookies em 2025)
-        const clients = cookiePath ? 'web,mweb,tv' : 'android,web,ios,mweb';
+        // Clientes válidos em 2026 (tv_embedded e ios_downgraded foram removidos)
+        // Com cookies: web e mweb funcionam melhor
+        // Sem cookies: android bypassa verificação de assinatura
+        const clients = cookiePath ? 'web,mweb,android' : 'android,web,mweb';
 
-        // Argumentos de extração (PO Token e Clientes)
+        // Argumentos de extração
         let extractorArgs = `youtube:player_client=${clients}`;
         if (poToken) extractorArgs += `;po_token=web+${poToken}`;
 
-        // Bypasses Críticos:
-        // 1. --js-runtime node: Resolve "Signature solving failed"
-        // 2. --force-ipv4: Evita bloqueios de datacenter (Railway/HF)
-        // 3. --no-check-certificates e UA moderno
         const bypassFlags = [
             `--extractor-args "${extractorArgs}"`,
-            '--js-runtime node',
             '--force-ipv4',
             '--no-check-certificates',
             '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"',
             '--ignore-config',
             '--no-warnings',
-            '--geo-bypass'
+            '--geo-bypass',
+            '--socket-timeout 30',
+            '--retries 3'
         ].join(' ');
 
         let actionFlags = '';
@@ -138,33 +139,42 @@ class MediaProcessor {
 
             const metadata = await this._getYouTubeMetadataSimple(url);
             if (!metadata.sucesso) {
-                if (url.startsWith('http')) {
-                    return await this._downloadWithYtdlCore(url, 'audio');
-                }
-                return { sucesso: false, error: 'Não foi possível encontrar metadados.' };
+                if (url.startsWith('http')) return await this._downloadWithYtdlCore(url, 'audio');
+                return { sucesso: false, error: 'Não foi possível encontrar música para esse nome.' };
             }
 
             const finalUrl = metadata.url || url;
             const outputPath = this.generateRandomFilename('mp3');
+            const cookiePath = this._findCookiePath();
+            const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // Tenta o comando definitivo
+            // Tentativa 1: clientes web,mweb,android com cookies
             const command = this._buildYtdlpCommand(finalUrl, { type: 'audio', output: outputPath });
             this.logger?.info(`📥 Executando (Audio): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
-
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ yt-dlp falhou com bypass padrão: ${execErr.message.substring(0, 100)}`);
+                this.logger?.warn(`⚠️ Tentativa 1 falhou: ${execErr.message.substring(0, 60)}`);
+            }
+
+            // Tentativa 2: android puro (bypassa verificação de assinatura)
+            if (!fs.existsSync(outputPath)) {
+                this.logger?.info('🔄 Tentando cliente android puro...');
+                const androidCmd = `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android" --force-ipv4 --no-check-certificates --geo-bypass -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${finalUrl}"`;
+                try {
+                    await execAsync(androidCmd, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
+                } catch (e2: any) {
+                    this.logger?.warn(`⚠️ Tentativa android falhou: ${e2.message.substring(0, 60)}`);
+                }
             }
 
             if (!fs.existsSync(outputPath)) {
-                this.logger?.warn('⚠️ Falha no yt-dlp, tentando fallback ytdl-core...');
+                this.logger?.warn('⚠️ Fallback final: ytdl-core...');
                 return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
             }
 
             const buffer = await fs.promises.readFile(outputPath);
             await this.cleanupFile(outputPath);
-
             return { sucesso: true, buffer, metadata };
         } catch (error: any) {
             this.logger?.error(`❌ Erro download audio: ${error.message}`);
@@ -189,22 +199,27 @@ class MediaProcessor {
 
             const finalUrl = metadata.url || url;
             const outputPath = this.generateRandomFilename('mp4');
+            const cookiePath = this._findCookiePath();
+            const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // Tenta o comando definitivo
+            // Tentativa 1: clientes web,mweb,android com cookies
             const command = this._buildYtdlpCommand(finalUrl, { type: 'video', quality, output: outputPath });
             this.logger?.info(`📥 Executando (Video): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
-
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ yt-dlp falhou no download vídeo: ${execErr.message.substring(0, 100)}`);
+                this.logger?.warn(`⚠️ Tentativa 1 vídeo falhou: ${execErr.message.substring(0, 60)}`);
             }
 
+            // Tentativa 2: android puro com formato simplificado
             if (!fs.existsSync(outputPath)) {
-                // Tenta retry imediato com formato ultra-simples se falhou
-                this.logger?.info('🔄 Falha no formato, tentando seletor de emergência...');
-                const emergencyCmd = `${this._buildYtdlpCommand(finalUrl, { type: 'video', output: outputPath })} -f "best"`;
-                try { await execAsync(emergencyCmd, { timeout: 300000 }); } catch (e) { }
+                this.logger?.info('🔄 Tentando cliente android puro para vídeo...');
+                const androidCmd = `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android" --force-ipv4 --no-check-certificates --geo-bypass -f "best[ext=mp4]/best" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
+                try {
+                    await execAsync(androidCmd, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
+                } catch (e2: any) {
+                    this.logger?.warn(`⚠️ Android fallback falhou: ${e2.message.substring(0, 60)}`);
+                }
             }
 
             if (!fs.existsSync(outputPath)) {
@@ -213,7 +228,6 @@ class MediaProcessor {
 
             const buffer = await fs.promises.readFile(outputPath);
             await this.cleanupFile(outputPath);
-
             return { sucesso: true, buffer, metadata };
         } catch (error: any) {
             return { sucesso: false, error: error.message };

@@ -154,8 +154,11 @@ class GameSystem {
             return { text: '❌ Nenhuma partida ativa. Use #ttt @user para multiplayer ou #ttt start para jogar contra IA!', finished: false };
         }
 
-        // Verificar se é a vez do jogador
-        if (senderId !== game.players[game.turn]) {
+        // Verificar se é a vez do jogador (Normaliza IDs para evitar erro de sufixo :1)
+        const normalizedSender = senderId.split(':')[0];
+        const normalizedPlayerInTurn = (game.players[game.turn] || '').split(':')[0];
+
+        if (normalizedSender !== normalizedPlayerInTurn) {
             return { text: '⏳ Aguarde sua vez!', finished: false };
         }
 

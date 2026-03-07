@@ -39,14 +39,14 @@ class MessageProcessor {
 
             // Se for PV (não termina com @g.us)
             if (!String(remoteJid).endsWith('@g.us')) {
-                return String(remoteJid).split('@')[0];
+                return String(remoteJid).split(':')[0].split('@')[0];
             }
 
             // Se for grupo, obtém do participant
             if (key.participant) {
                 const participant = String(key.participant);
                 if (participant.includes('@s.whatsapp.net')) {
-                    return participant.split('@')[0];
+                    return participant.split(':')[0].split('@')[0];
                 }
                 if (participant.includes('@lid')) {
                     const limpo = participant.split(':')[0];

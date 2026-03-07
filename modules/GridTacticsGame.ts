@@ -541,12 +541,22 @@ Números em sequência (1-2-3-4) dão ponto extra!
 
         // Processar jogada
         if (!isNaN(parseInt(action))) {
-            const number = action; // É string no validateMove
-            const position = parseInt(args[0] || '0');
+            const number = action;
+            const positionRaw = args[0];
 
-            if (parseInt(number) < 1 || parseInt(number) > 4 || position < 1 || position > 16) {
+            if (!positionRaw) {
                 return {
-                    text: '❌ Número deve ser 1-4 e posição 1-16!\n\n' + this.renderBoard(game.board)
+                    text: `💡 *DICA:* Para jogar, você precisa enviar o número desejado e a posição.\n` +
+                        `Exemplo: *#grid ${number} 5* (coloca o ${number} na posição 5)\n\n` +
+                        `${this.renderBoard(game.board)}`
+                };
+            }
+
+            const position = parseInt(positionRaw);
+
+            if (parseInt(number) < 1 || parseInt(number) > 4 || isNaN(position) || position < 1 || position > 16) {
+                return {
+                    text: '❌ Jogada inválida! Número deve ser 1-4 e posição de 1 a 16.\n\n' + this.renderBoard(game.board)
                 };
             }
 
