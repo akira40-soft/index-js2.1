@@ -90,10 +90,10 @@ class MediaProcessor {
         const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
         const poToken = this.config?.YT_PO_TOKEN;
 
-        // Clientes válidos em 2026 (tv_embedded e ios_downgraded foram removidos)
-        // Com cookies: web e mweb funcionam melhor
-        // Sem cookies: android bypassa verificação de assinatura
-        const clients = cookiePath ? 'web,mweb,android' : 'android,web,mweb';
+        // iOS client bypassa bot detection em IPs de servidor (2026)
+        // android_music é uma alternativa mais discreta
+        // web/mweb usados com cookies
+        const clients = cookiePath ? 'ios,ios_music,web,android' : 'ios,ios_music,android';
 
         // Argumentos de extração
         let extractorArgs = `youtube:player_client=${clients}`;
@@ -103,7 +103,7 @@ class MediaProcessor {
             `--extractor-args "${extractorArgs}"`,
             '--force-ipv4',
             '--no-check-certificates',
-            '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"',
+            '--user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"',
             '--ignore-config',
             '--no-warnings',
             '--geo-bypass',
@@ -145,12 +145,12 @@ class MediaProcessor {
             }
 
             const finalUrl = metadata.url || url;
-            const videoId = this._extractVideoId(finalUrl) || this._extractVideoId(url);
+            const videoId = metadata.videoId || this._extractVideoId(finalUrl) || this._extractVideoId(url);
             const outputPath = this.generateRandomFilename('mp3');
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 0: Download direto via Piped stream API (sem yt-dlp, sem ytdl-core)
+            // TENTATIVA 0: Download direto via Piped stream (curl, não Node)
             if (videoId) {
                 this.logger?.info('🚀 Tentando download via Piped stream API...');
                 const pipedResult = await this._downloadStreamFromPiped(videoId, outputPath);
@@ -162,34 +162,50 @@ class MediaProcessor {
                 this.logger?.warn('⚠️ Piped stream falhou, tentando yt-dlp...');
             }
 
-            // TENTATIVA 1: yt-dlp com clientes web,mweb,android
+            // TENTATIVA 1: yt-dlp com client iOS (bypassa bot detection em servidores)
             const command = this._buildYtdlpCommand(finalUrl, { type: 'audio', output: outputPath });
-            this.logger?.info(`📥 Executando (Audio): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
+            this.logger?.info(`📥 Executando (Audio iOS): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ Tentativa 1 falhou: ${execErr.message.substring(0, 60)}`);
+                this.logger?.warn(`⚠️ Tentativa iOS falhou: ${execErr.message.substring(0, 80)}`);
             }
 
-            // Tentativa 2: android puro (bypassa verificação de assinatura)
+            // TENTATIVA 2: yt-dlp android puro
             if (!fs.existsSync(outputPath)) {
                 this.logger?.info('🔄 Tentando cliente android puro...');
-                const androidCmd = `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android" --force-ipv4 --no-check-certificates --geo-bypass -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${finalUrl}"`;
+                const androidCmd = `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android" --force-ipv4 --no-check-certificates --geo-bypass --age-limit 99 -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${finalUrl}"`;
                 try {
                     await execAsync(androidCmd, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
                 } catch (e2: any) {
-                    this.logger?.warn(`⚠️ Tentativa android falhou: ${e2.message.substring(0, 60)}`);
+                    this.logger?.warn(`⚠️ Android falhou: ${e2.message.substring(0, 80)}`);
                 }
             }
 
-            if (!fs.existsSync(outputPath)) {
-                this.logger?.warn('⚠️ Fallback final: ytdl-core...');
-                return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
+            // TENTATIVA 3: SoundCloud como fallback alternativo de música
+            if (!fs.existsSync(outputPath) && !url.startsWith('http')) {
+                this.logger?.info('🎶 Tentando SoundCloud como alternativa...');
+                const scCmd = `yt-dlp "scsearch1:${url}" -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" --no-warnings`;
+                try {
+                    await execAsync(scCmd, { timeout: 120000, maxBuffer: 200 * 1024 * 1024 });
+                    if (fs.existsSync(outputPath)) {
+                        this.logger?.info('✅ SoundCloud fallback funcionou!');
+                    }
+                } catch (esc: any) {
+                    this.logger?.warn(`⚠️ SoundCloud falhou: ${esc.message.substring(0, 60)}`);
+                }
             }
 
-            const buffer = await fs.promises.readFile(outputPath);
-            await this.cleanupFile(outputPath);
-            return { sucesso: true, buffer, metadata };
+            if (fs.existsSync(outputPath)) {
+                const buffer = await fs.promises.readFile(outputPath);
+                await this.cleanupFile(outputPath);
+                return { sucesso: true, buffer, metadata };
+            }
+
+            // TENTATIVA 4: ytdl-core (ultimo recurso)
+            this.logger?.warn('⚠️ Tentativa final: ytdl-core...');
+            return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
+
         } catch (error: any) {
             this.logger?.error(`❌ Erro download audio: ${error.message}`);
             return { sucesso: false, error: error.message };
@@ -379,12 +395,13 @@ class MediaProcessor {
      * Resolve o problema de buscas por nome (ex: "kerosene") que não têm videoId
      */
     private async _searchOnInvidious(query: string): Promise<any> {
+        // Instâncias Invidious que ainda suportam API de busca em servidores (Março 2026)
         const instances = [
             'https://inv.nadeko.net',
+            'https://invidious.flokinet.to',
             'https://inv.tux.pizza',
-            'https://yewtu.be',
-            'https://invidious.nerdvpn.de',
-            'https://yt.artemislena.eu'
+            'https://invidious.privacydev.net',
+            'https://yewtu.be'
         ];
 
         for (const instance of instances) {
@@ -511,12 +528,14 @@ class MediaProcessor {
             return { sucesso: false, error: 'videoId não pode ser vazio' };
         }
 
+        // Instâncias Piped VERIFICADAS em Março 2026
+        // Removidas: adminforge.de (DESLIGADA), api.piped.yt (ENOTFOUND), lunar.icu (ECONNRESET)
         const pipedInstances = [
             'https://pipedapi.kavin.rocks',
-            'https://pipedapi.adminforge.de',
-            'https://api.piped.yt',
-            'https://piped-api.lunar.icu',
-            'https://pipedapi.tokhmi.xyz'
+            'https://pipedapi.tokhmi.xyz',
+            'https://pipedapi.qdi.fi',
+            'https://piped-api.hostux.net',
+            'https://pdapi.vern.cc'
         ];
 
         for (const instance of pipedInstances) {
