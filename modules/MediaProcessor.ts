@@ -228,11 +228,24 @@ class MediaProcessor {
             }
 
             const finalUrl = metadata.url || url;
+            const videoId = metadata.videoId || this._extractVideoId(finalUrl) || this._extractVideoId(url);
             const outputPath = this.generateRandomFilename('mp4');
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // Tentativa 1: clientes web,mweb,android com cookies
+            // TENTATIVA 0: Download direto via Piped stream de VÍDEO (curl, não Node)
+            if (videoId) {
+                this.logger?.info('🚀 Tentando download via Piped stream de VÍDEO...');
+                const pipedResult = await this._downloadVideoStreamFromPiped(videoId, outputPath, quality);
+                if (pipedResult.sucesso && fs.existsSync(outputPath)) {
+                    const buffer = await fs.promises.readFile(outputPath);
+                    await this.cleanupFile(outputPath);
+                    return { sucesso: true, buffer, metadata };
+                }
+                this.logger?.warn('⚠️ Piped video stream falhou, tentando yt-dlp...');
+            }
+
+            // Tentativa 1: clientes iOS, ios_music, web, android
             const command = this._buildYtdlpCommand(finalUrl, { type: 'video', quality, output: outputPath });
             this.logger?.info(`📥 Executando (Video): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
             try {
@@ -606,6 +619,85 @@ class MediaProcessor {
         }
 
         return { sucesso: false, error: 'Todas as instâncias Piped falharam no stream' };
+    }
+
+    /**
+     * Baixa o stream de vídeo DIRETAMENTE via Piped API
+     * Usa curl como subprocess para garantir estabilidade no download
+     */
+    private async _downloadVideoStreamFromPiped(videoId: string, outputPath: string, targetQuality: string = '720'): Promise<{ sucesso: boolean; error?: string }> {
+        if (!videoId) {
+            return { sucesso: false, error: 'videoId não pode ser vazio' };
+        }
+
+        const pipedInstances = [
+            'https://pipedapi.kavin.rocks',
+            'https://pipedapi.tokhmi.xyz',
+            'https://pipedapi.qdi.fi',
+            'https://piped-api.hostux.net',
+            'https://pdapi.vern.cc'
+        ];
+
+        for (const instance of pipedInstances) {
+            try {
+                this.logger?.info(`🌊 Piped VÍDEO stream: ${instance}/streams/${videoId}`);
+                const response = await axios.get(`${instance}/streams/${videoId}`, {
+                    timeout: 15000,
+                    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AkiraBot/1.0)' }
+                });
+
+                const data = response.data;
+                let streamUrl: string | null = null;
+
+                if (data.videoStreams && data.videoStreams.length > 0) {
+                    // Tenta achar a qualidade desejada, ou a mais próxima inferior
+                    const targetQualNum = parseInt(targetQuality) || 360;
+
+                    const validStreams = data.videoStreams.filter((s: any) => s.videoOnly === false && s.quality !== 'auto');
+
+                    if (validStreams.length > 0) {
+                        const sorted = validStreams.sort((a: any, b: any) => {
+                            const qA = parseInt(a.quality.replace('p', '')) || 0;
+                            const qB = parseInt(b.quality.replace('p', '')) || 0;
+                            // Priorizamos a qualidade mais alta que não ultrapasse o target
+                            if (qA <= targetQualNum && qB > targetQualNum) return -1;
+                            if (qB <= targetQualNum && qA > targetQualNum) return 1;
+                            return qB - qA; // Maior primeiro
+                        });
+
+                        streamUrl = sorted[0]?.url || null;
+                    }
+                }
+
+                if (!streamUrl) {
+                    this.logger?.warn(`⚠️ Piped ${instance}: sem URL de stream VÍDEO (com áudio embutido)`);
+                    continue;
+                }
+
+                // ════════════════════════════════════════════════════
+                // Usa CURL como subprocess
+                // ════════════════════════════════════════════════════
+                this.logger?.info(`📥 Baixando VÍDEO via curl: ${streamUrl.substring(0, 50)}...`);
+                // Precisamos salvar direto como destino porque a maioria dos streams Piped com video+audio é mp4
+                const curlCmd = `curl -L -s --max-time 300 --retry 3 \
+                    -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+                    -H "Referer: https://www.youtube.com/" \
+                    -o "${outputPath}" \
+                    "${streamUrl}"`;
+
+                await execAsync(curlCmd, { timeout: 320000, maxBuffer: 500 * 1024 * 1024 });
+
+                if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) {
+                    this.logger?.info(`✅ Piped VÍDEO download concluído via curl!`);
+                    return { sucesso: true };
+                }
+
+            } catch (err: any) {
+                this.logger?.warn(`⚠️ Piped VÍDEO ${instance} falhou: ${err.message?.substring(0, 60)}`);
+            }
+        }
+
+        return { sucesso: false, error: 'Todas as instâncias falharam' };
     }
 
     /**

@@ -108,24 +108,28 @@ class GameSystem {
     public async handleTicTacToe(chatId: string, senderId: string, input: string, opponentId?: string): Promise<{ text: string, finished: boolean }> {
         let game = this.games.get(chatId);
 
+        // Normalize IDs to prevent device suffix mismatches (e.g. :1, :38)
+        const normalizedSenderId = senderId.split(':')[0] + (senderId.includes('@') ? '@' + senderId.split('@')[1] : '');
+        let normalizedOpponentId = opponentId ? (opponentId.split(':')[0] + (opponentId.includes('@') ? '@' + opponentId.split('@')[1] : '')) : undefined;
+
         // Iniciar novo jogo - AGORA SUPORTA MODO IA
-        if (input === 'start' || (!game && opponentId)) {
+        if (input === 'start' || (!game && normalizedOpponentId)) {
             if (game) {
                 return { text: '⚠️ Já existe uma partida em andamento neste chat!', finished: false };
             }
 
             // MODO IA: Se não mencionar ninguém, joga contra a Akira
-            const isAIMode = !opponentId;
+            const isAIMode = !normalizedOpponentId;
             if (isAIMode) {
-                opponentId = 'akira-ai@akira.bot'; // ID especial para IA
-            } else if (!opponentId) {
+                normalizedOpponentId = 'akira-ai@akira.bot'; // ID especial para IA
+            } else if (!normalizedOpponentId) {
                 return { text: '❌ Mencione alguém para jogar ou use #ttt start para jogar contra mim (Akira)!', finished: false };
             }
 
             game = {
                 type: 'ttt',
                 board: Array(9).fill(null),
-                players: [senderId, opponentId],
+                players: [normalizedSenderId, normalizedOpponentId],
                 turn: 0, // Sempre começa com o humano
                 symbols: ['❌', '⭕'],
                 isAIMode: isAIMode,
@@ -137,11 +141,11 @@ class GameSystem {
 
             this.games.set(chatId, game);
 
-            const opponentDisplay = isAIMode ? '🤖 *Akira (IA)*' : `@${opponentId.split('@')[0]}`;
+            const opponentDisplay = isAIMode ? '🤖 *Akira (IA)*' : `@${normalizedOpponentId.split('@')[0]}`;
 
             return {
                 text: `🎮 *JOGO DA VELHA ${isAIMode ? 'VS IA' : 'MULTIPLAYER'} INICIADO!*\n\n` +
-                    `❌: @${senderId.split('@')[0]} *(Você)*\n` +
+                    `❌: @${normalizedSenderId.split('@')[0]} *(Você)*\n` +
                     `${isAIMode ? '⭕' : '⭕'}: ${opponentDisplay}\n\n` +
                     `${this.renderBoard(game.board)}\n\n` +
                     `Vez de: @${game.players[game.turn].split('@')[0]} ${isAIMode ? '(Você)' : ''}\n` +
@@ -154,13 +158,11 @@ class GameSystem {
             return { text: '❌ Nenhuma partida ativa. Use #ttt @user para multiplayer ou #ttt start para jogar contra IA!', finished: false };
         }
 
-        // Verificar se é a vez do jogador (Normaliza IDs para evitar erro de sufixo :1)
-        const normalizedSender = senderId.split(':')[0];
-        const normalizedPlayerInTurn = (game.players[game.turn] || '').split(':')[0];
-
-        if (normalizedSender !== normalizedPlayerInTurn) {
+        // Verificar se é a vez do jogador (Usando IDs já normalizados)
+        if (normalizedSenderId !== game.players[game.turn]) {
             return { text: '⏳ Aguarde sua vez!', finished: false };
         }
+
 
         const move = parseInt(input) - 1;
         if (isNaN(move) || move < 0 || move > 8 || game.board[move] !== null) {
