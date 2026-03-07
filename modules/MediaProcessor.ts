@@ -108,7 +108,8 @@ class MediaProcessor {
             '--no-warnings',
             '--geo-bypass',
             '--socket-timeout 30',
-            '--retries 3'
+            '--retries 3',
+            '--age-limit 99'
         ].join(' ');
 
         let actionFlags = '';
@@ -252,33 +253,54 @@ class MediaProcessor {
      * Tenta múltiplas fontes: yt-dlp, Invidious, Piped, ytdl-core
      */
     private async _getYouTubeMetadataSimple(url: string): Promise<any> {
-        const cookiePath = this._findCookiePath();
-        const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
+        // Extrai video ID da URL (apenas funciona se for uma URL válida do YouTube)
+        let videoId = this._extractVideoId(url);
+        const isSearch = !url.startsWith('http');
 
-        // Extrai video ID da URL
-        const videoId = this._extractVideoId(url);
-        this.logger?.info(`🔍 Extraindo metadados para video ID: ${videoId}`);
+        // SE for uma busca por nome (não URL), precisamos resolver o nome → videoId primeiro
+        if (isSearch && !videoId) {
+            this.logger?.info(`🔍 Buscando "${url}" no Invidious...`);
+            const searchResult = await this._searchOnInvidious(url);
+            if (searchResult.sucesso && searchResult.videoId) {
+                videoId = searchResult.videoId;
+                this.logger?.info(`✅ Encontrado via busca: ${searchResult.titulo} (${videoId})`);
+                // Retorna direto com todos os metadados da busca
+                return {
+                    sucesso: true,
+                    titulo: searchResult.titulo,
+                    canal: searchResult.canal,
+                    duracao: searchResult.duracao,
+                    duracaoFormatada: searchResult.duracaoFormatada,
+                    thumbnail: searchResult.thumbnail,
+                    url: `https://www.youtube.com/watch?v=${videoId}`,
+                    videoId
+                };
+            }
+            this.logger?.warn(`⚠️ Busca Invidious falhou para "${url}", tentando yt-dlp search...`);
+        } else {
+            this.logger?.info(`🔍 Extraindo metadados para video ID: ${videoId || '(URL sem ID)'}`);
+        }
 
-        // PRIORIDADE 1: Invidious API (mais confiável sem cookies)
+        // PRIORIDADE 1: Invidious API (direto pelo ID, se temos o ID)
         if (videoId) {
             const invidiousResult = await this._getMetadataFromInvidious(videoId);
             if (invidiousResult.sucesso) {
-                this.logger?.info(`✅ Metadados obtidos via Invidious: ${invidiousResult.titulo}`);
-                return invidiousResult;
+                this.logger?.info(`✅ Metadados via Invidious: ${invidiousResult.titulo}`);
+                return { ...invidiousResult, videoId };
             }
 
             // PRIORIDADE 2: Piped API
             const pipedResult = await this._getMetadataFromPiped(videoId);
             if (pipedResult.sucesso) {
-                this.logger?.info(`✅ Metadados obtidos via Piped: ${pipedResult.titulo}`);
-                return pipedResult;
+                this.logger?.info(`✅ Metadados via Piped: ${pipedResult.titulo}`);
+                return { ...pipedResult, videoId };
             }
         }
 
-        const isSearch = !url.startsWith('http');
+        // PRIORIDADE 3: yt-dlp (busca ou URL)
         const commands = [
             this._buildYtdlpCommand(url, { type: 'json', isSearch }),
-            `yt-dlp --dump-json --no-download ${isSearch ? `ytsearch1:${url}` : url}` // Fallback simplificado
+            `yt-dlp --dump-json --no-download ${isSearch ? `ytsearch1:${url}` : url}`
         ];
 
         for (const cmd of commands) {
@@ -287,6 +309,7 @@ class MediaProcessor {
                 if (stdout && stdout.trim()) {
                     const data = JSON.parse(stdout.split('\n')[0].trim());
                     const resolvedUrl = data.webpage_url || (data.id ? `https://www.youtube.com/watch?v=${data.id}` : url);
+                    const resolvedId = data.id || videoId;
 
                     return {
                         sucesso: true,
@@ -296,39 +319,31 @@ class MediaProcessor {
                         duracaoFormatada: this._formatDuration(data.duration || 0),
                         thumbnail: data.thumbnail || '',
                         url: resolvedUrl,
-                        videoId: data.id || videoId
+                        videoId: resolvedId
                     };
                 }
             } catch (err: any) {
-                this.logger?.debug(`⚠️ Tentativa metadata falhou: ${err.message.substring(0, 50)}`);
+                this.logger?.debug(`⚠️ yt-dlp metadata falhou: ${err.message.substring(0, 50)}`);
             }
         }
 
-        // PRIORIDADE 4: ytdl-core (apenas se for url válida ou se conseguimos extrair um ID antes)
-        const finalUrlForYtdl = (isSearch && videoId) ? `https://www.youtube.com/watch?v=${videoId}` : url;
-        if (finalUrlForYtdl.startsWith('http')) {
-            const ytdlResult = await this._getMetadataYtdlCore(finalUrlForYtdl);
-            if (ytdlResult.sucesso) {
-                return ytdlResult;
-            }
-        }
-
-        // Ultimo recurso: retorna metadados básicos apenas se for uma URL
+        // Último recurso: URL direta sem metadata completo
         if (url.startsWith('http')) {
-            this.logger?.warn('⚠️ Todas as tentativas de metadata falharam, retornando dados básicos para URL');
+            this.logger?.warn('⚠️ Todas as fontes de metadata falharam. Usando dados mínimos.');
             return {
                 sucesso: true,
                 titulo: this._extractTitleFromUrl(url),
                 canal: 'Canal desconhecido',
                 duracao: 0,
                 duracaoFormatada: '0:00',
-                thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-                url: url
+                thumbnail: videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : '',
+                url: url,
+                videoId
             };
         }
 
-        this.logger?.error('❌ Falha total ao obter metadados para busca:', url);
-        return { sucesso: false, error: 'Não foi possível resolver o termo de busca em uma URL válida.' };
+        this.logger?.error(`❌ Falha total: não foi possível resolver "${url}"`);
+        return { sucesso: false, error: 'Não foi possível encontrar o conteúdo solicitado.' };
     }
 
     /**
@@ -357,6 +372,50 @@ class MediaProcessor {
         } catch {
             return 'Vídeo do YouTube';
         }
+    }
+
+    /**
+     * Busca um vídeo por nome no Invidious e retorna o primeiro resultado com videoId e metadados
+     * Resolve o problema de buscas por nome (ex: "kerosene") que não têm videoId
+     */
+    private async _searchOnInvidious(query: string): Promise<any> {
+        const instances = [
+            'https://inv.nadeko.net',
+            'https://inv.tux.pizza',
+            'https://yewtu.be',
+            'https://invidious.nerdvpn.de',
+            'https://yt.artemislena.eu'
+        ];
+
+        for (const instance of instances) {
+            try {
+                const response = await axios.get(`${instance}/api/v1/search`, {
+                    params: { q: query, type: 'video', sort_by: 'relevance' },
+                    timeout: 10000,
+                    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AkiraBot/1.0)' }
+                });
+
+                const results = response.data;
+                if (Array.isArray(results) && results.length > 0) {
+                    const first = results.find((r: any) => r.type === 'video') || results[0];
+                    if (first && first.videoId) {
+                        return {
+                            sucesso: true,
+                            videoId: first.videoId,
+                            titulo: first.title || query,
+                            canal: first.author || 'Desconhecido',
+                            duracao: first.lengthSeconds || 0,
+                            duracaoFormatada: this._formatDuration(first.lengthSeconds || 0),
+                            thumbnail: first.videoThumbnails?.[0]?.url || `https://img.youtube.com/vi/${first.videoId}/maxresdefault.jpg`
+                        };
+                    }
+                }
+            } catch (err: any) {
+                this.logger?.debug(`⚠️ Invidious search ${instance}: ${err.message?.substring(0, 40)}`);
+            }
+        }
+
+        return { sucesso: false };
     }
 
     /**
@@ -444,9 +503,14 @@ class MediaProcessor {
 
     /**
      * Baixa o stream de áudio DIRETAMENTE via Piped API
-     * Não usa yt-dlp nem ytdl-core — acessa URLs de stream que o Piped expõe
+     * Usa curl como subprocess (não via Node.js puro) para melhor compatibilidade
+     * e bypass de limitações da camada HTTP do Node.js
      */
     private async _downloadStreamFromPiped(videoId: string, outputPath: string): Promise<{ sucesso: boolean; error?: string }> {
+        if (!videoId) {
+            return { sucesso: false, error: 'videoId não pode ser vazio' };
+        }
+
         const pipedInstances = [
             'https://pipedapi.kavin.rocks',
             'https://pipedapi.adminforge.de',
@@ -457,18 +521,21 @@ class MediaProcessor {
 
         for (const instance of pipedInstances) {
             try {
-                this.logger?.info(`🌊 Piped stream: ${instance}`);
+                this.logger?.info(`🌊 Piped stream: ${instance}/streams/${videoId}`);
                 const response = await axios.get(`${instance}/streams/${videoId}`, {
                     timeout: 15000,
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+                    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AkiraBot/1.0)' }
                 });
 
                 const data = response.data;
                 let streamUrl: string | null = null;
+                let mimeType = 'audio/webm';
 
                 if (data.audioStreams && data.audioStreams.length > 0) {
                     const sorted = [...data.audioStreams].sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
-                    streamUrl = sorted.find((s: any) => s.url)?.url || null;
+                    const best = sorted.find((s: any) => s.url);
+                    streamUrl = best?.url || null;
+                    mimeType = best?.mimeType || 'audio/webm';
                 }
 
                 if (!streamUrl) {
@@ -476,22 +543,30 @@ class MediaProcessor {
                     continue;
                 }
 
-                this.logger?.info(`📥 Baixando stream de áudio via Piped...`);
-                const streamResponse = await axios.get(streamUrl, {
-                    responseType: 'arraybuffer',
-                    timeout: 300000,
-                    maxContentLength: 300 * 1024 * 1024,
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        'Referer': 'https://www.youtube.com/'
-                    }
-                });
+                // Determina extensão pelo MIME type
+                const rawExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
+                const rawPath = outputPath.replace('.mp3', `.${rawExt}`);
 
-                const rawBuffer = Buffer.from(streamResponse.data);
-                const rawPath = outputPath.replace('.mp3', '.webm');
-                await fs.promises.writeFile(rawPath, rawBuffer);
+                // ════════════════════════════════════════════════════
+                // Usa CURL como subprocess para download (não via Node)
+                // Isso bypassa limitações do Node.js HTTP e é mais robusto
+                // ════════════════════════════════════════════════════
+                this.logger?.info(`📥 Baixando via curl: ${streamUrl.substring(0, 60)}...`);
+                const curlCmd = `curl -L -s --max-time 300 --retry 3 \
+                    -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+                    -H "Referer: https://www.youtube.com/" \
+                    -o "${rawPath}" \
+                    "${streamUrl}"`;
+
+                await execAsync(curlCmd, { timeout: 320000, maxBuffer: 500 * 1024 * 1024 });
+
+                if (!fs.existsSync(rawPath) || fs.statSync(rawPath).size < 1000) {
+                    this.logger?.warn(`⚠️ curl baixou arquivo vazio ou inválido`);
+                    continue;
+                }
 
                 // Converter para MP3 via ffmpeg
+                this.logger?.info(`🎵 Convertendo para MP3 via ffmpeg...`);
                 await new Promise<void>((resolve, reject) => {
                     ffmpeg(rawPath)
                         .toFormat('mp3')
@@ -503,11 +578,11 @@ class MediaProcessor {
                 });
 
                 await this.cleanupFile(rawPath);
-                this.logger?.info(`✅ Piped stream download concluído!`);
+                this.logger?.info(`✅ Piped + curl download concluído!`);
                 return { sucesso: true };
 
             } catch (err: any) {
-                this.logger?.warn(`⚠️ Piped stream ${instance} falhou: ${err.message?.substring(0, 50)}`);
+                this.logger?.warn(`⚠️ Piped stream ${instance} falhou: ${err.message?.substring(0, 60)}`);
             }
         }
 

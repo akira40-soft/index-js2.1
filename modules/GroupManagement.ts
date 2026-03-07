@@ -111,7 +111,7 @@ class GroupManagement {
 
         // Verifica se o bot está realmente logado (Baileys preenche sock.user após o bind)
         if (!this.sock.user || !this.sock.user.id) {
-            this.logger.warn('⚠️ [GroupManagement] Bot ainda não está autenticado (sock.user ausente)');
+            this.logger.debug('🔍 [GroupManagement] sock.user ausente (normal durante aquecimento pós-conexão)');
             return false;
         }
 
