@@ -20,7 +20,8 @@ class GroupManagement {
     public scheduledActions: any;
     public moderationSystem: any;
     private metadataCache: Map<string, { data: any; timestamp: number }>;
-    private readonly CACHE_TTL = 30000; // 30 segundos
+    private adminCache: Map<string, { admins: string[]; timestamp: number }>;
+    private readonly CACHE_TTL = 120000; // 2 minutos
 
     /**
      * Cria uma lista de alvos a partir da mensagem, incluindo mentions e
@@ -51,6 +52,7 @@ class GroupManagement {
         this.logger = console;
         this.moderationSystem = moderationSystem;
         this.metadataCache = new Map();
+        this.adminCache = new Map();
 
         this.groupsDataPath = path.join(this.config.DATABASE_FOLDER, 'group_settings.json');
         this.scheduledActionsPath = path.join(this.config.DATABASE_FOLDER, 'scheduled_actions.json');
@@ -59,6 +61,26 @@ class GroupManagement {
         this.scheduledActions = this.loadScheduledActions();
 
         this.startScheduledActionsChecker();
+    }
+
+    /**
+     * Obtém administradores do grupo com cache
+     */
+    private async _getGroupAdmins(groupJid: string): Promise<string[]> {
+        const cached = this.adminCache.get(groupJid);
+        if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
+            return cached.admins;
+        }
+
+        const metadata = await this._getGroupMetadata(groupJid);
+        if (!metadata || !metadata.participants) return cached?.admins || [];
+
+        const admins = metadata.participants
+            .filter((p: any) => p.admin === 'admin' || p.admin === 'superadmin')
+            .map((p: any) => p.id);
+
+        this.adminCache.set(groupJid, { admins, timestamp: Date.now() });
+        return admins;
     }
 
     setSocket(sock: any) {
@@ -128,9 +150,11 @@ class GroupManagement {
 
         for (let attempt = 1; attempt <= retries; attempt++) {
             try {
-                // Verifica novamente antes de cada tentativa
                 if (!this._checkSocket()) {
-                    this.logger.warn(`⚠️ [GroupManagement] Tentativa ${attempt}: Socket não pronto`);
+                    if (cached) {
+                        this.logger?.warn(`⚠️ [GroupManagement] Socket não pronto, usando cache expirado como emergência.`);
+                        return cached.data;
+                    }
                     if (attempt < retries) {
                         await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
                         continue;
@@ -140,6 +164,13 @@ class GroupManagement {
 
                 const metadata = await this.sock.groupMetadata(groupJid);
                 this.metadataCache.set(groupJid, { data: metadata, timestamp: Date.now() });
+
+                // Atualiza cache de admins também
+                const admins = metadata.participants
+                    .filter((p: any) => p.admin || p.isAdmin || p.isSuperAdmin)
+                    .map((p: any) => p.id);
+                this.adminCache.set(groupJid, { admins, timestamp: Date.now() });
+
                 return metadata;
             } catch (e: any) {
                 const isConnectionClosed = e.message?.includes('Connection Closed');
@@ -208,6 +239,7 @@ class GroupManagement {
      * Carrega ações programadas do arquivo
      */
     loadScheduledActions(): any {
+
         try {
             if (fs.existsSync(this.scheduledActionsPath)) {
                 const data = fs.readFileSync(this.scheduledActionsPath, 'utf8');
@@ -972,11 +1004,8 @@ class GroupManagement {
      * Verifica se um usuário é admin do grupo
      */
     async isUserAdmin(groupJid: string, userJid: string): Promise<boolean> {
-        const metadata = await this._getGroupMetadata(groupJid);
-        if (!metadata) return false;
-
-        const participant = metadata.participants.find((p: any) => p.id === userJid);
-        return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
+        const admins = await this._getGroupAdmins(groupJid);
+        return admins.includes(userJid);
     }
 
     // ═════════════════════════════════════════════════════════════════

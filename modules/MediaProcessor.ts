@@ -81,6 +81,53 @@ class MediaProcessor {
     }
 
     /**
+     * Constrói o comando yt-dlp com todos os bypasses definitivos (2025)
+     */
+    private _buildYtdlpCommand(url: string, options: { type: 'audio' | 'video' | 'json', quality?: string, output?: string, isSearch?: boolean }): string {
+        const cookiePath = this._findCookiePath();
+        const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
+        const poToken = this.config?.YT_PO_TOKEN;
+
+        // Define clientes basedos em cookies (android/ios conflitam com cookies em 2025)
+        const clients = cookiePath ? 'web,mweb,tv' : 'android,web,ios,mweb';
+
+        // Argumentos de extração (PO Token e Clientes)
+        let extractorArgs = `youtube:player_client=${clients}`;
+        if (poToken) extractorArgs += `;po_token=web+${poToken}`;
+
+        // Bypasses Críticos:
+        // 1. --js-runtime node: Resolve "Signature solving failed"
+        // 2. --force-ipv4: Evita bloqueios de datacenter (Railway/HF)
+        // 3. --no-check-certificates e UA moderno
+        const bypassFlags = [
+            `--extractor-args "${extractorArgs}"`,
+            '--js-runtime node',
+            '--force-ipv4',
+            '--no-check-certificates',
+            '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"',
+            '--ignore-config',
+            '--no-warnings',
+            '--geo-bypass'
+        ].join(' ');
+
+        let actionFlags = '';
+        if (options.type === 'audio') {
+            actionFlags = `-x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
+        } else if (options.type === 'video') {
+            const quality = options.quality || '720';
+            const formatSelector = quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best[ext=m4a]/best' :
+                quality === '720' ? 'bestvideo[height<=720]+bestaudio/best[ext=m4a]/best' :
+                    'bestvideo[height<=480]+bestaudio/best[ext=m4a]/best';
+            actionFlags = `-f "${formatSelector}" --merge-output-format mp4 -o "${options.output}"`;
+        } else if (options.type === 'json') {
+            actionFlags = '--dump-json --no-download';
+        }
+
+        const target = options.isSearch ? `ytsearch1:${url}` : url;
+        return `yt-dlp ${cookieArg} ${bypassFlags} ${actionFlags} "${target}"`;
+    }
+
+    /**
      * ═══════════════════════════════════════════════════════════════════════
      * DOWNLOAD DE ÁUDIO DO YOUTUBE - VERSÃO SIMPLIFICADA
      * ═══════════════════════════════════════════════════════════════════════
@@ -89,58 +136,38 @@ class MediaProcessor {
         try {
             this.logger?.info(`🎵 Download áudio: ${url}`);
 
-            // Primeiro tenta obter metadados
             const metadata = await this._getYouTubeMetadataSimple(url);
             if (!metadata.sucesso) {
-                // Tenta com ytdl-core se yt-dlp falhar na metadata (apenas se for link)
                 if (url.startsWith('http')) {
-                    this.logger?.warn('⚠️ Metadata falhou, tentando download direto com ytdl-core...');
                     return await this._downloadWithYtdlCore(url, 'audio');
                 }
-                return { sucesso: false, error: 'Não foi possível encontrar metadados para este termo ou URL.' };
+                return { sucesso: false, error: 'Não foi possível encontrar metadados.' };
             }
 
-            const outputPath = this.generateRandomFilename('mp3');
-            const cookiePath = this._findCookiePath();
-            const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
-
-            // Usa a URL já resolvida pela metadata
             const finalUrl = metadata.url || url;
+            const outputPath = this.generateRandomFilename('mp3');
 
-            // Tenta download com yt-dlp básico
-            const clients = cookiePath ? 'web,mweb,tv' : 'android,web,ios,mweb';
-            const bypassArgs = `--extractor-args "youtube:player_client=${clients}" --no-check-certificates --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" --ignore-config --no-warnings`;
-            const command = `yt-dlp ${cookieArg} ${bypassArgs} -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${finalUrl}"`;
-            this.logger?.info(`📥 Executando: ${command.replace(cookieArg, '[COOKIES]')}`);
+            // Tenta o comando definitivo
+            const command = this._buildYtdlpCommand(finalUrl, { type: 'audio', output: outputPath });
+            this.logger?.info(`📥 Executando (Audio): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
 
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ yt-dlp falhou no download: ${execErr.message}`);
+                this.logger?.warn(`⚠️ yt-dlp falhou com bypass padrão: ${execErr.message.substring(0, 100)}`);
             }
 
-            // Se o arquivo não foi criado, tenta com ytdl-core
             if (!fs.existsSync(outputPath)) {
-                this.logger?.warn('⚠️ Arquivo não criado, tentando ytdl-core...');
+                this.logger?.warn('⚠️ Falha no yt-dlp, tentando fallback ytdl-core...');
                 return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
             }
 
             const buffer = await fs.promises.readFile(outputPath);
             await this.cleanupFile(outputPath);
 
-            return {
-                sucesso: true,
-                buffer,
-                metadata: {
-                    titulo: metadata.titulo,
-                    canal: metadata.canal,
-                    duracao: metadata.duracao,
-                    duracaoFormatada: metadata.duracaoFormatada,
-                    thumbnail: metadata.thumbnail
-                }
-            };
+            return { sucesso: true, buffer, metadata };
         } catch (error: any) {
-            this.logger?.error(`❌ Erro no download: ${error.message}`);
+            this.logger?.error(`❌ Erro download audio: ${error.message}`);
             return { sucesso: false, error: error.message };
         }
     }
@@ -154,64 +181,40 @@ class MediaProcessor {
         try {
             this.logger?.info(`🎬 Download vídeo: ${url} (qualidade: ${quality})`);
 
-            // Obtém metadados
             const metadata = await this._getYouTubeMetadataSimple(url);
             if (!metadata.sucesso) {
-                if (url.startsWith('http')) {
-                    return await this._downloadWithYtdlCore(url, 'video');
-                }
-                return { sucesso: false, error: 'Metadados não encontrados para busca.' };
+                if (url.startsWith('http')) return await this._downloadWithYtdlCore(url, 'video');
+                return { sucesso: false, error: 'Metadados não encontrados.' };
             }
 
             const finalUrl = metadata.url || url;
-
             const outputPath = this.generateRandomFilename('mp4');
-            const cookiePath = this._findCookiePath();
-            const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // Formato de vídeo
-            const formatSelector = quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best[ext=m4a]/best' :
-                quality === '720' ? 'bestvideo[height<=720]+bestaudio/best[ext=m4a]/best' :
-                    'bestvideo[height<=480]+bestaudio/best[ext=m4a]/best';
-
-            const clients = cookiePath ? 'web,mweb,tv' : 'android,web,ios,mweb';
-            const bypassArgs = `--extractor-args "youtube:player_client=${clients}" --no-check-certificates --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" --ignore-config --no-warnings`;
-            const command = `yt-dlp ${cookieArg} ${bypassArgs} -f "${formatSelector}" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
+            // Tenta o comando definitivo
+            const command = this._buildYtdlpCommand(finalUrl, { type: 'video', quality, output: outputPath });
+            this.logger?.info(`📥 Executando (Video): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
 
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ yt-dlp falhou no download: ${execErr.message}`);
-                // Tenta com force-ipv4 se o erro sugerir bloqueio
-                if (execErr.message.includes('Sign in') || execErr.message.includes('403') || execErr.message.includes('410') || execErr.message.includes('format is not available')) {
-                    this.logger?.info('🔄 Tentando com force-ipv4 e formato simplificado...');
-                    try {
-                        const simpleFormat = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best';
-                        const ipv4Cmd = `yt-dlp --force-ipv4 ${cookieArg} ${bypassArgs} -f "${simpleFormat}" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
-                        await execAsync(ipv4Cmd, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
-                    } catch (e2) { }
-                }
+                this.logger?.warn(`⚠️ yt-dlp falhou no download vídeo: ${execErr.message.substring(0, 100)}`);
             }
 
             if (!fs.existsSync(outputPath)) {
-                // Tenta com ytdl-core usando a URL resolvida
+                // Tenta retry imediato com formato ultra-simples se falhou
+                this.logger?.info('🔄 Falha no formato, tentando seletor de emergência...');
+                const emergencyCmd = `${this._buildYtdlpCommand(finalUrl, { type: 'video', output: outputPath })} -f "best"`;
+                try { await execAsync(emergencyCmd, { timeout: 300000 }); } catch (e) { }
+            }
+
+            if (!fs.existsSync(outputPath)) {
                 return await this._downloadWithYtdlCore(finalUrl, 'video', metadata);
             }
 
             const buffer = await fs.promises.readFile(outputPath);
             await this.cleanupFile(outputPath);
 
-            return {
-                sucesso: true,
-                buffer,
-                metadata: {
-                    titulo: metadata.titulo,
-                    canal: metadata.canal,
-                    duracao: metadata.duracao,
-                    duracaoFormatada: metadata.duracaoFormatada,
-                    thumbnail: metadata.thumbnail
-                }
-            };
+            return { sucesso: true, buffer, metadata };
         } catch (error: any) {
             return { sucesso: false, error: error.message };
         }
@@ -245,30 +248,17 @@ class MediaProcessor {
             }
         }
 
-        let targetUrl = url;
         const isSearch = !url.startsWith('http');
-        if (isSearch) {
-            targetUrl = `ytsearch1:${url}`;
-        }
-
-        const clients = cookiePath ? 'web,mweb,tv' : 'android,web,ios,mweb';
-        const extractorArgs = `--extractor-args "youtube:player_client=${clients}"`;
-        const commonUA = '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"';
-
-        // PRIORIDADE 3: yt-dlp com comandos variados
         const commands = [
-            `yt-dlp ${cookieArg} ${extractorArgs} --no-check-certificates ${commonUA} --dump-json --no-download "${targetUrl}"`,
-            `yt-dlp ${extractorArgs} --no-check-certificates ${commonUA} --dump-json --no-download "${targetUrl}"`,
-            `yt-dlp ${cookieArg} --dump-json --no-download "${targetUrl}"`,
-            `yt-dlp ${commonUA} --dump-json --no-download "${targetUrl}"`,
-            `yt-dlp --force-ipv4 --dump-json --no-download "${targetUrl}"`
+            this._buildYtdlpCommand(url, { type: 'json', isSearch }),
+            `yt-dlp --dump-json --no-download ${isSearch ? `ytsearch1:${url}` : url}` // Fallback simplificado
         ];
 
         for (const cmd of commands) {
             try {
                 const { stdout } = await execAsync(cmd, { timeout: 45000 });
                 if (stdout && stdout.trim()) {
-                    const data = JSON.parse(stdout.split('\n')[0].trim()); // Pega a primeira linha caso venha mais de um JSON
+                    const data = JSON.parse(stdout.split('\n')[0].trim());
                     const resolvedUrl = data.webpage_url || (data.id ? `https://www.youtube.com/watch?v=${data.id}` : url);
 
                     return {
@@ -283,7 +273,7 @@ class MediaProcessor {
                     };
                 }
             } catch (err: any) {
-                this.logger?.debug(`⚠️ Tentativa yt-dlp falhou: ${err.message.substring(0, 50)}`);
+                this.logger?.debug(`⚠️ Tentativa metadata falhou: ${err.message.substring(0, 50)}`);
             }
         }
 
@@ -648,7 +638,7 @@ class MediaProcessor {
             for (const tryType of typesToTry) {
                 if (success) break;
 
-                for (let attempt = 1; attempt <= 2; attempt++) {
+                for (let attempt = 1; attempt <= 3; attempt++) {
                     try {
                         let stream;
                         try {
@@ -656,7 +646,7 @@ class MediaProcessor {
                         } catch (err: any) {
                             if (err.message?.includes('bad decrypt') || err.message?.includes('1C800064')) {
                                 this.logger?.warn(`⚠️ Decrypt falhou com tipo '${tryType}'. Tentando outro tipo...`);
-                                break; // Quebra o loop de attempt para pular para o próximo tipo
+                                break;
                             }
                             throw err;
                         }
@@ -665,17 +655,18 @@ class MediaProcessor {
                         for await (const chunk of stream as any) {
                             buffer = Buffer.concat([buffer, chunk]);
                         }
+
                         if (buffer.length > 0) {
                             success = true;
-                            // Se um tipo não inicial foi bem sucedido, notifica log
                             if (tryType !== finalMimeType) {
                                 this.logger?.info(`✅ Download mídia sucedeu usando tipo alternativo: ${tryType}`);
                             }
                             break;
                         }
                     } catch (err: any) {
-                        this.logger?.warn(`⚠️ Tentativa ${attempt} (tipo: ${tryType}) falhou: ${err.message}`);
-                        await new Promise(r => setTimeout(r, 1000));
+                        const backoff = Math.pow(2, attempt) * 1000;
+                        this.logger?.warn(`⚠️ Tentativa ${attempt} (tipo: ${tryType}) falhou: ${err.message}. Retrying in ${backoff}ms...`);
+                        await new Promise(r => setTimeout(r, backoff));
                     }
                 }
             }
