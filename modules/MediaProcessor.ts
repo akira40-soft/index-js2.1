@@ -302,7 +302,10 @@ class MediaProcessor {
                     duracaoFormatada: searchResult.duracaoFormatada,
                     thumbnail: searchResult.thumbnail,
                     url: `https://www.youtube.com/watch?v=${videoId}`,
-                    videoId
+                    videoId,
+                    visualizacoes: searchResult.visualizacoes || 'N/A',
+                    curtidas: searchResult.curtidas || 'N/A',
+                    dataPublicacao: searchResult.dataPublicacao || 'N/A'
                 };
             }
             this.logger?.warn(`⚠️ Busca Invidious falhou para "${url}", tentando yt-dlp search...`);
@@ -348,7 +351,10 @@ class MediaProcessor {
                         duracaoFormatada: this._formatDuration(data.duration || 0),
                         thumbnail: data.thumbnail || '',
                         url: resolvedUrl,
-                        videoId: resolvedId
+                        videoId: resolvedId,
+                        visualizacoes: this._formatStats(data.view_count),
+                        curtidas: this._formatStats(data.like_count),
+                        dataPublicacao: this._formatDate(data.upload_date)
                     };
                 }
             } catch (err: any) {
@@ -367,7 +373,10 @@ class MediaProcessor {
                 duracaoFormatada: '0:00',
                 thumbnail: videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : '',
                 url: url,
-                videoId
+                videoId,
+                visualizacoes: 'N/A',
+                curtidas: 'N/A',
+                dataPublicacao: 'N/A'
             };
         }
 
@@ -436,7 +445,10 @@ class MediaProcessor {
                             canal: first.author || 'Desconhecido',
                             duracao: first.lengthSeconds || 0,
                             duracaoFormatada: this._formatDuration(first.lengthSeconds || 0),
-                            thumbnail: first.videoThumbnails?.[0]?.url || `https://img.youtube.com/vi/${first.videoId}/maxresdefault.jpg`
+                            thumbnail: first.videoThumbnails?.[0]?.url || `https://img.youtube.com/vi/${first.videoId}/maxresdefault.jpg`,
+                            visualizacoes: this._formatStats(first.viewCount),
+                            dataPublicacao: first.publishedText || 'N/A',
+                            curtidas: 'N/A' // Busca geralmente não traz likes
                         };
                     }
                 }
@@ -478,8 +490,9 @@ class MediaProcessor {
                         duracaoFormatada: this._formatDuration(data.lengthSeconds || 0),
                         thumbnail: data.thumbnails?.[data.thumbnails?.length - 1]?.url || '',
                         url: `https://youtube.com/watch?v=${videoId}`,
-                        views: data.viewCount,
-                        published: data.published
+                        visualizacoes: this._formatStats(data.viewCount),
+                        curtidas: this._formatStats(data.likeCount),
+                        dataPublicacao: data.publishedText || 'N/A'
                     };
                 }
             } catch (err: any) {
@@ -496,10 +509,10 @@ class MediaProcessor {
     private async _getMetadataFromPiped(videoId: string): Promise<any> {
         const pipedInstances = [
             'https://pipedapi.kavin.rocks',
-            'https://pipedapi.adminforge.de',
-            'https://api.piped.yt',
-            'https://piped-api.lunar.icu',
-            'https://pipedapi.tokhmi.xyz'
+            'https://pipedapi.tokhmi.xyz',
+            'https://pipedapi.qdi.fi',
+            'https://piped-api.hostux.net',
+            'https://pdapi.vern.cc'
         ];
 
         for (const instance of pipedInstances) {
@@ -519,12 +532,13 @@ class MediaProcessor {
                         duracaoFormatada: this._formatDuration(data.duration || 0),
                         thumbnail: data.thumbnailUrl || '',
                         url: `https://youtube.com/watch?v=${videoId}`,
-                        views: data.views,
-                        uploadedDate: data.uploadedDate
+                        visualizacoes: this._formatStats(data.views),
+                        curtidas: this._formatStats(data.likes),
+                        dataPublicacao: data.uploadDate || 'N/A'
                     };
                 }
             } catch (err: any) {
-                this.logger?.debug(`⚠️ Piped ${instance} falhou: ${err.message.substring(0, 30)}`);
+                this.logger?.debug(`⚠️ Piped ${instance} falhou: ${err.message?.substring(0, 30)}`);
             }
         }
 
@@ -1331,6 +1345,33 @@ class MediaProcessor {
         } catch (error: any) {
             return { sucesso: false, error: error.message };
         }
+    }
+
+    /**
+     * Formata números grandes (visualizações, curtidas) para formato K, M, B
+     */
+    private _formatStats(num: number | string | undefined): string {
+        if (num === undefined || num === null || num === '') return 'N/A';
+        const n = Number(num);
+        if (isNaN(n)) return String(num);
+        if (n >= 1000000000) return (n / 1000000000).toFixed(1) + 'B';
+        if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+        if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+        return n.toString();
+    }
+
+    /**
+     * Formata datas como YYYYMMDD para visualização mais amigável
+     */
+    private _formatDate(dateStr: string | undefined): string {
+        if (!dateStr || typeof dateStr !== 'string') return 'N/A';
+        if (dateStr.length === 8 && /^\d{8}$/.test(dateStr)) {
+            const year = dateStr.substring(0, 4);
+            const month = dateStr.substring(4, 6);
+            const day = dateStr.substring(6, 8);
+            return `${day}/${month}/${year}`;
+        }
+        return dateStr;
     }
 }
 
