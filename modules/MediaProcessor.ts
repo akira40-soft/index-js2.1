@@ -144,11 +144,24 @@ class MediaProcessor {
             }
 
             const finalUrl = metadata.url || url;
+            const videoId = this._extractVideoId(finalUrl) || this._extractVideoId(url);
             const outputPath = this.generateRandomFilename('mp3');
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // Tentativa 1: clientes web,mweb,android com cookies
+            // TENTATIVA 0: Download direto via Piped stream API (sem yt-dlp, sem ytdl-core)
+            if (videoId) {
+                this.logger?.info('🚀 Tentando download via Piped stream API...');
+                const pipedResult = await this._downloadStreamFromPiped(videoId, outputPath);
+                if (pipedResult.sucesso && fs.existsSync(outputPath)) {
+                    const buffer = await fs.promises.readFile(outputPath);
+                    await this.cleanupFile(outputPath);
+                    return { sucesso: true, buffer, metadata };
+                }
+                this.logger?.warn('⚠️ Piped stream falhou, tentando yt-dlp...');
+            }
+
+            // TENTATIVA 1: yt-dlp com clientes web,mweb,android
             const command = this._buildYtdlpCommand(finalUrl, { type: 'audio', output: outputPath });
             this.logger?.info(`📥 Executando (Audio): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
             try {
@@ -350,13 +363,13 @@ class MediaProcessor {
      * Obtém metadados via Invidious API
      */
     private async _getMetadataFromInvidious(videoId: string): Promise<any> {
-        // Lista de instâncias Invidious públicas e atualizadas (2025)
+        // Instâncias Invidious ativas e confiáveis (Março 2026)
         const invidiousInstances = [
+            'https://inv.tux.pizza',
             'https://invidious.nerdvpn.de',
             'https://invidious.privacydev.net',
-            'https://inv.tux.pizza',
-            'https://invidious.perennialte.ch',
-            'https://yewtu.be'
+            'https://yewtu.be',
+            'https://invidious.fdn.fr'
         ];
 
         for (const instance of invidiousInstances) {
@@ -394,9 +407,10 @@ class MediaProcessor {
     private async _getMetadataFromPiped(videoId: string): Promise<any> {
         const pipedInstances = [
             'https://pipedapi.kavin.rocks',
-            'https://api.piped.yt',
             'https://pipedapi.adminforge.de',
-            'https://piped-api.lunar.icu'
+            'https://api.piped.yt',
+            'https://piped-api.lunar.icu',
+            'https://pipedapi.tokhmi.xyz'
         ];
 
         for (const instance of pipedInstances) {
@@ -426,6 +440,78 @@ class MediaProcessor {
         }
 
         return { sucesso: false, error: 'Todas as instâncias Piped falharam' };
+    }
+
+    /**
+     * Baixa o stream de áudio DIRETAMENTE via Piped API
+     * Não usa yt-dlp nem ytdl-core — acessa URLs de stream que o Piped expõe
+     */
+    private async _downloadStreamFromPiped(videoId: string, outputPath: string): Promise<{ sucesso: boolean; error?: string }> {
+        const pipedInstances = [
+            'https://pipedapi.kavin.rocks',
+            'https://pipedapi.adminforge.de',
+            'https://api.piped.yt',
+            'https://piped-api.lunar.icu',
+            'https://pipedapi.tokhmi.xyz'
+        ];
+
+        for (const instance of pipedInstances) {
+            try {
+                this.logger?.info(`🌊 Piped stream: ${instance}`);
+                const response = await axios.get(`${instance}/streams/${videoId}`, {
+                    timeout: 15000,
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+                });
+
+                const data = response.data;
+                let streamUrl: string | null = null;
+
+                if (data.audioStreams && data.audioStreams.length > 0) {
+                    const sorted = [...data.audioStreams].sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+                    streamUrl = sorted.find((s: any) => s.url)?.url || null;
+                }
+
+                if (!streamUrl) {
+                    this.logger?.warn(`⚠️ Piped ${instance}: sem URL de stream de áudio`);
+                    continue;
+                }
+
+                this.logger?.info(`📥 Baixando stream de áudio via Piped...`);
+                const streamResponse = await axios.get(streamUrl, {
+                    responseType: 'arraybuffer',
+                    timeout: 300000,
+                    maxContentLength: 300 * 1024 * 1024,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Referer': 'https://www.youtube.com/'
+                    }
+                });
+
+                const rawBuffer = Buffer.from(streamResponse.data);
+                const rawPath = outputPath.replace('.mp3', '.webm');
+                await fs.promises.writeFile(rawPath, rawBuffer);
+
+                // Converter para MP3 via ffmpeg
+                await new Promise<void>((resolve, reject) => {
+                    ffmpeg(rawPath)
+                        .toFormat('mp3')
+                        .audioCodec('libmp3lame')
+                        .audioBitrate('192k')
+                        .on('end', () => resolve())
+                        .on('error', (err: Error) => reject(err))
+                        .save(outputPath);
+                });
+
+                await this.cleanupFile(rawPath);
+                this.logger?.info(`✅ Piped stream download concluído!`);
+                return { sucesso: true };
+
+            } catch (err: any) {
+                this.logger?.warn(`⚠️ Piped stream ${instance} falhou: ${err.message?.substring(0, 50)}`);
+            }
+        }
+
+        return { sucesso: false, error: 'Todas as instâncias Piped falharam no stream' };
     }
 
     /**

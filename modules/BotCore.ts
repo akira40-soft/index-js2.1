@@ -9,6 +9,9 @@
 import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay, Browsers, getContentType } from '@whiskeysockets/baileys';
 import fs from 'fs';
 import pino from 'pino';
+import { exec } from 'child_process';
+import util from 'util';
+const _execAsync = util.promisify(exec);
 
 import ConfigManager from './ConfigManager.js';
 import APIClient from './APIClient.js';
@@ -106,9 +109,31 @@ class BotCore {
         await this.connect();
     }
 
+    /**
+     * Auto-atualiza o yt-dlp em background para garantir downloads funcionando
+     * Essencial para Railway onde o build envelhece mas o bot continua rodando
+     */
+    private async _selfUpdateYtdlp(): Promise<void> {
+        try {
+            this.logger.info('🔄 [yt-dlp] Verificando atualizações...');
+            const { stdout } = await _execAsync('yt-dlp -U 2>&1', { timeout: 120000 });
+            if (stdout.includes('up to date')) {
+                this.logger.info('✅ [yt-dlp] Já está atualizado');
+            } else {
+                this.logger.info('✅ [yt-dlp] Atualizado com sucesso!');
+            }
+        } catch (err: any) {
+            // Falha silenciosa — não bloqueia o startup
+            this.logger.warn(`⚠️ [yt-dlp] Não foi possível atualizar: ${err.message?.substring(0, 80)}`);
+        }
+    }
+
     async initializeComponents() {
         try {
             this.logger.debug('🔧 Inicializando componentes..');
+
+            // Auto-atualiza yt-dlp em background (não bloqueia o startup)
+            this._selfUpdateYtdlp().catch(() => { });
 
             this.apiClient = new APIClient(this.logger);
             this.audioProcessor = new AudioProcessor(this.logger);
@@ -241,6 +266,11 @@ class BotCore {
                     this.reconnectAttempts = 0;
                     this.currentQR = null;
                     this.connectionStartTime = Date.now();
+
+                    // Warm-up delay: Aguarda 3s para o socket estabilizar antes de permitir comandos pesados
+                    this.logger.info('⏳ Aguardando warm-up de 3s...');
+                    await delay(3000);
+
                     this._updateComponentsSocket(this.sock);
                     this.BOT_JID = this.sock.user?.id;
                     this.logger.info(`🤖 Logado como: ${this.BOT_JID}`);
