@@ -96,8 +96,6 @@ class MediaProcessor {
         const clients = options.clientOverride || 'android_vr,ios,android,web_embedded,tv,web';
 
         let extractorArgs = `youtube:player_client=${clients}`;
-        // formats=missing_pot: habilita formatos "quebrados" que o yt-dlp normalmente pula
-        extractorArgs += ',formats=missing_pot';
         if (poToken) extractorArgs += `;po_token=web+${poToken}`;
 
         const bypassFlags = [
@@ -111,7 +109,6 @@ class MediaProcessor {
             '--no-warnings',
             '--no-playlist',
             '--geo-bypass',
-            '--age-limit 99',
             '--socket-timeout 20',
             '--retries 2'
         ].filter(Boolean).join(' ');
