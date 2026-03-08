@@ -103,12 +103,16 @@ class MediaProcessor {
             jsRuntime,
             '--force-ipv4',
             '--no-check-certificates',
+            // User-Agent autêntico com suporte a cookies de sessão
             '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"',
+            '--add-header "Accept-Language:en-US,en;q=0.9"',
+            '--add-header "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"',
             '--ignore-config',
             '--no-warnings',
             '--no-playlist',
             '--geo-bypass',
-            '--max-filesize 64M', // Limite de segurança para WhatsApp
+            '--age-limit 99',  // Essencial para vídeos com restrição de idade (erro 152)
+            '--max-filesize 64M',
             '--socket-timeout 20',
             '--retries 2'
         ].filter(Boolean).join(' ');
@@ -635,12 +639,13 @@ class MediaProcessor {
             return { sucesso: false, error: 'videoId não pode ser vazio' };
         }
 
+        // Instâncias Piped VERIFICADAS (Março 2026)
         const pipedInstances = [
             'https://pipedapi.kavin.rocks',
             'https://pipedapi.tokhmi.xyz',
-            'https://pipedapi.qdi.fi',
-            'https://piped-api.hostux.net',
-            'https://pdapi.vern.cc'
+            'https://pipedapi.syncpundit.io',
+            'https://api.piped.projectsegfau.lt',
+            'https://watchapi.whatever.social'
         ];
 
         for (const instance of pipedInstances) {
@@ -760,7 +765,8 @@ class MediaProcessor {
             'https://inv.nadeko.net',
             'https://invidious.flokinet.to',
             'https://yt.artemislena.eu',
-            'https://invidious.privacydev.net'
+            'https://invidious.nerdvpn.de',
+            'https://invidious.v0l.io'
         ];
 
         for (const instance of instances) {
@@ -768,7 +774,13 @@ class MediaProcessor {
                 this.logger?.info(`🔌 Invidious Proxy: ${instance}/api/v1/videos/${videoId}`);
                 const resp = await axios.get(`${instance}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`, {
                     timeout: 12000,
-                    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AkiraBot/1.0)' }
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                        'Accept': 'application/json',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Origin': instance,
+                        'Referer': `${instance}/watch?v=${videoId}`
+                    }
                 });
 
                 const data = resp.data;
