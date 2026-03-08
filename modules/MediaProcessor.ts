@@ -84,7 +84,7 @@ class MediaProcessor {
      * Constrói o comando yt-dlp seguindo as NORMAS TÉCNICAS de 2026
      * Usa Deno como runtime JS para decifrar assinaturas complexas (SABR/DPI)
      */
-    private _buildYtdlpCommand(url: string, options: { type: 'audio' | 'video' | 'json', quality?: string, output?: string, isSearch?: boolean, clientOverride?: string, formatOverride?: string }): string {
+    private _buildYtdlpCommand(url: string, options: { type: 'audio' | 'video' | 'json', output?: string, isSearch?: boolean, clientOverride?: string }): string {
         const cookiePath = this._findCookiePath();
         const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
         const poToken = this.config?.YT_PO_TOKEN;
@@ -93,11 +93,10 @@ class MediaProcessor {
         const jsRuntime = fs.existsSync('/usr/local/bin/deno') || fs.existsSync('/root/.deno/bin/deno') ? '--js-runtime deno' : '';
 
         // Clientes normatizados em ordem de prioridade
-        const clients = options.clientOverride || 'ios,web_embedded,android_embedded,tv,web';
+        const clients = options.clientOverride || 'android_vr,ios,android,web_embedded,tv,web';
 
         let extractorArgs = `youtube:player_client=${clients}`;
         // formats=missing_pot: habilita formatos "quebrados" que o yt-dlp normalmente pula
-        // Essencial para bypass de shadow-block em IPs de datacenter (docs yt-dlp 2025)
         extractorArgs += ',formats=missing_pot';
         if (poToken) extractorArgs += `;po_token=web+${poToken}`;
 
@@ -108,8 +107,6 @@ class MediaProcessor {
             '--no-check-certificates',
             '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"',
             '--add-header "Accept-Language:en-US,en;q=0.9"',
-            // REMOVIDO: --add-header Accept HTML (yt-dlp usa JSON internamente, HTML header quebrava)
-            // REMOVIDO: --max-filesize 64M (bloqueava TODOS os formatos quando tamnho é desconhecido no shadow-block)
             '--ignore-config',
             '--no-warnings',
             '--no-playlist',
@@ -121,24 +118,13 @@ class MediaProcessor {
 
         let actionFlags = '';
         if (options.type === 'audio') {
-            // ba = bestaudio (audio-only) — NÃO usar ba* (aviso da doc oficial)
-            // Cascata: M4A nativo > qualquer audio-only > formato combinado
-            const format = options.formatOverride || 'ba[ext=m4a]/ba/b';
-            actionFlags = `-f "${format}" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
+            // ba/b: Tenta pegar só o áudio. Se não conseguir, baixa o melhor vídeo+áudio e extrai
+            actionFlags = `-f "ba/b" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
         } else if (options.type === 'video') {
-            const quality = options.quality || '720';
-            // Padrão oficial da doc yt-dlp: bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4] / bv*+ba/b
-            // bv* (com asterisco) inclui formatos que possam ter áudio. bv (sem) = video-only
-            // 22 = formato progressivo 720p (MP4 com áudio embutido, mais compatível)
-            // 18 = formato progressivo 360p (MP4 com áudio embutido, mais compatível)
-            const format = options.formatOverride || (
-                quality === '1080'
-                    ? 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=1080]+ba/b'
-                    : quality === '720'
-                        ? '22/bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=720]+ba/b'
-                        : '18/bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=480]+ba/b'
-            );
-            actionFlags = `-f "${format}" --merge-output-format mp4 -o "${options.output}"`;
+            // SEM STRING DE FORMATO (-f): Deixa o yt-dlp usar o padrão oficial (bv*+ba/b)
+            // Apenas garantimos que o container final seja MP4 (compatível com WhatsApp)
+            // e forçamos o re-encode de áudio se for muito fora do padrão, mas "--merge-output-format" dá conta
+            actionFlags = `--merge-output-format mp4 -o "${options.output}"`;
         } else if (options.type === 'json') {
             actionFlags = '--dump-json --no-download';
         }
@@ -167,22 +153,16 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
 
             // ================================================================
-            // GAMBIARRAS ANTI-BLOQUEIO: 6 tentativas rotacionando clientes
-            // Cada cliente representa uma persona diferente para o YouTube
+            // GAMBIARRAS ANTI-BLOQUEIO: Rotação Pura de Clientes (Sem Format Override)
+            // O yt-dlp fará sua mágica nativa para encontrar o melhor áudio
             // ================================================================
             const tentativas = [
-                // Cliente 1: iPhone — M4A nativo (audio-only)
-                { cliente: 'ios', formato: 'ba[ext=m4a]/ba/b', sleepMs: 0 },
-                // Cliente 2: Android VR — MAIS EFICAZ contra shadow-block em datacenter (yt-dlp 2025)
-                { cliente: 'android_vr', formato: 'ba/b', sleepMs: 1000 },
-                // Cliente 3: Android — qualquer audio-only
-                { cliente: 'android', formato: 'ba/b', sleepMs: 1500 },
-                // Cliente 4: Web Embutido — bypassa age-gate (erro 152)
-                { cliente: 'web_embedded', formato: 'ba/b', sleepMs: 2000 },
-                // Cliente 5: TV — compatível com datacenters
-                { cliente: 'tv', formato: 'ba/b', sleepMs: 2500 },
-                // Cliente 6: Todos juntos — aceita qualquer formato
-                { cliente: 'ios,android_vr,android,web', formato: 'b', sleepMs: 3000 }
+                { cliente: 'android_vr', sleepMs: 0 },
+                { cliente: 'ios', sleepMs: 1500 },
+                { cliente: 'android', sleepMs: 2000 },
+                { cliente: 'web_embedded', sleepMs: 2500 },
+                { cliente: 'tv', sleepMs: 3000 },
+                { cliente: 'ios,android_vr,web,tv', sleepMs: 3500 } // Super-combo
             ];
 
             for (let i = 0; i < tentativas.length; i++) {
@@ -194,8 +174,7 @@ class MediaProcessor {
                 const cmd = this._buildYtdlpCommand(finalUrl, {
                     type: 'audio',
                     output: outputPath,
-                    clientOverride: t.cliente,
-                    formatOverride: t.formato
+                    clientOverride: t.cliente
                 });
                 try {
                     await execAsync(cmd, { timeout: 180000, maxBuffer: 150 * 1024 * 1024 });
@@ -240,34 +219,16 @@ class MediaProcessor {
             const outputPath = this.generateRandomFilename('mp4');
 
             // ================================================================
-            // GAMBIARRAS ANTI-BLOQUEIO: rotacionando clientes e formatos
+            // GAMBIARRAS ANTI-BLOQUEIO: Rotação Pura de Clientes (Sem Format Override)
+            // O yt-dlp fará a seleção nativa e juntará tudo em MP4
             // ================================================================
-            const q = parseInt(quality) || 720;
-            // Cascata de formatos: progressive > mux mp4 > qualquer coisa
-            const fmtCascade: Record<string, string> = {
-                // Padrão oficial yt-dlp: bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4] / bv*+ba/b
-                // bv* (COM asterisco) = best que CONTÉM vídeo (pode ter áudio também)
-                // bv (SEM asterisco) = best video-ONLY (sem áudio)
-                '1080': 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=1080]+ba/b',
-                '720': '22/bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=720]+ba/b',
-                '480': '18/bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=480]+ba/b',
-                'best': 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b'
-            };
-            const formatoPrincipal = fmtCascade[quality] || fmtCascade['720'];
-
             const tentativas = [
-                // Cliente 1: iPhone — formato progressivo 720p (mp4 nativo)
-                { cliente: 'ios', formato: formatoPrincipal, sleepMs: 0 },
-                // Cliente 2: Android VR — MAIS EFICAZ contra shadow-block em datacenter (yt-dlp 2025)
-                { cliente: 'android_vr', formato: '22/18/bv*+ba/b', sleepMs: 1000 },
-                // Cliente 3: Android — Progressive (formato 22 = 720p, 18 = 360p)
-                { cliente: 'android', formato: '22/18/bv*[ext=mp4]+ba/b[ext=mp4]/b', sleepMs: 1500 },
-                // Cliente 4: Web Embutido — bypassa age-gate (erro 152)
-                { cliente: 'web_embedded', formato: '22/18/bv*+ba/b', sleepMs: 2000 },
-                // Cliente 5: TV — aceita melhor em datacenters
-                { cliente: 'tv', formato: '22/18/bv*[ext=mp4]+ba/b', sleepMs: 2500 },
-                // Cliente 6: Todos juntos — aceita qualquer formato disponível
-                { cliente: 'ios,android_vr,android,web', formato: 'b', sleepMs: 3000 }
+                { cliente: 'android_vr', sleepMs: 0 },
+                { cliente: 'ios', sleepMs: 1500 },
+                { cliente: 'android', sleepMs: 2000 },
+                { cliente: 'web_embedded', sleepMs: 2500 },
+                { cliente: 'tv', sleepMs: 3000 },
+                { cliente: 'ios,android_vr,web,mweb', sleepMs: 3500 } // Super-combo final
             ];
 
             for (let i = 0; i < tentativas.length; i++) {
@@ -278,10 +239,8 @@ class MediaProcessor {
                 this.logger?.info(`[VÍDEO ${i + 1}/${tentativas.length}] Cliente: ${t.cliente}`);
                 const cmd = this._buildYtdlpCommand(finalUrl, {
                     type: 'video',
-                    quality,
                     output: outputPath,
-                    clientOverride: t.cliente,
-                    formatOverride: t.formato
+                    clientOverride: t.cliente
                 });
                 try {
                     await execAsync(cmd, { timeout: 360000, maxBuffer: 500 * 1024 * 1024 });
