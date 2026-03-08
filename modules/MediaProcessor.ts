@@ -108,7 +108,8 @@ class MediaProcessor {
             '--geo-bypass',
             '--socket-timeout 30',
             '--retries 3',
-            '--age-limit 99'
+            '--age-limit 99',
+            '--youtube-include-dash-manifest'
         ].join(' ');
 
         let actionFlags = '';
@@ -153,13 +154,13 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 1: yt-dlp Enterprise Stability Loop (v4)
+            // TENTATIVA 1: yt-dlp Enterprise Stability Loop (v4.1)
             const attempts = [
                 { id: '1', client: 'ios', format: 'ba/b' },
-                { id: '2', client: 'tv', format: 'ba/b' },
-                { id: '3', client: 'mweb', format: 'ba/b' },
-                { id: '4', client: 'web,android', format: 'bestaudio/best' },
-                { id: '5', client: 'android', format: 'b' }
+                { id: '2', client: 'web_embedded', format: 'ba/b' },
+                { id: '3', client: 'android_embedded', format: 'ba/b' },
+                { id: '4', client: 'tv', format: 'ba/b' },
+                { id: '5', client: 'mweb', format: 'ba/b' }
             ];
 
             for (const attempt of attempts) {
@@ -259,13 +260,13 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 1: yt-dlp Enterprise Stability Loop (v4)
+            // TENTATIVA 1: yt-dlp Enterprise Stability Loop (v4.1)
             const attempts = [
                 { id: '1', client: 'ios', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' : '22/18/best' },
-                { id: '2', client: 'tv', format: '22/18/best' },
-                { id: '3', client: 'mweb', format: '22/18/18/best' },
-                { id: '4', client: 'web,android', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' : '22/18/best/bestvideo+bestaudio' },
-                { id: '5', client: 'android', format: 'best' }
+                { id: '2', client: 'web_embedded', format: '22/18/best' },
+                { id: '3', client: 'android_embedded', format: '22/18/best' },
+                { id: '4', client: 'tv', format: '22/18/best' },
+                { id: '5', client: 'web,android', format: '22/18/best/bestvideo+bestaudio' }
             ];
 
             for (const attempt of attempts) {
