@@ -729,13 +729,44 @@ class MediaProcessor {
     }
 
     /**
+     * Cria agente com cookies para o @distube/ytdl-core
+     */
+    private async _createYtdlAgent(): Promise<any> {
+        const cookiePath = this._findCookiePath();
+        if (!cookiePath) return undefined;
+        try {
+            const ytdl = await import('@distube/ytdl-core').then(m => m.default || m);
+            const content = await fs.promises.readFile(cookiePath, 'utf8');
+            const cookies = content.split('\n')
+                .filter(l => !l.startsWith('#') && l.trim())
+                .map(line => {
+                    const parts = line.split('\t');
+                    return {
+                        domain: parts[0],
+                        path: parts[2],
+                        secure: parts[3] === 'TRUE',
+                        name: parts[5],
+                        value: parts[6]
+                    };
+                });
+            return ytdl.createAgent(cookies);
+        } catch (e: any) {
+            this.logger?.warn(`⚠️ Erro ao criar agent de cookies ytdl: ${e.message}`);
+            return undefined;
+        }
+    }
+
+    /**
      * Obtém metadados usando ytdl-core
      */
     private async _getMetadataYtdlCore(url: string): Promise<any> {
         try {
             const ytdl = await import('@distube/ytdl-core').then(m => m.default || m);
 
-            const info = await ytdl.getInfo(url);
+            const agent = await this._createYtdlAgent();
+            const options = agent ? { agent } : {};
+
+            const info = await ytdl.getInfo(url, options);
             const videoDetails = info.videoDetails;
 
             return {
@@ -762,7 +793,10 @@ class MediaProcessor {
 
             const ytdl = await import('@distube/ytdl-core').then(m => m.default || m);
 
-            const info = await ytdl.getInfo(url);
+            const agent = await this._createYtdlAgent();
+            const options = agent ? { agent } : {};
+
+            const info = await ytdl.getInfo(url, options);
             const formats = info.formats;
 
             let format;
@@ -776,11 +810,18 @@ class MediaProcessor {
                 return { sucesso: false, error: 'Não foi possível obter URL de download' };
             }
 
+            // Pega string de cookies pro axios como segurança, se existir.
+            let cookieHeader = '';
+            if (agent && agent.jar && typeof agent.jar.getCookieStringSync === 'function') {
+                cookieHeader = agent.jar.getCookieStringSync(format.url) || '';
+            }
+
             // Download usando axios
             const response = await axios.get(format.url, {
                 responseType: 'arraybuffer',
                 timeout: 300000,
-                maxContentLength: 500 * 1024 * 1024
+                maxContentLength: 500 * 1024 * 1024,
+                headers: cookieHeader ? { 'Cookie': cookieHeader } : {}
             });
 
             let buffer = Buffer.from(response.data);
