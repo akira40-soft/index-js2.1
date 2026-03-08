@@ -150,18 +150,6 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 0: Download direto via Piped stream (curl, não Node)
-            if (videoId) {
-                this.logger?.info('🚀 Tentando download via Piped stream API...');
-                const pipedResult = await this._downloadStreamFromPiped(videoId, outputPath);
-                if (pipedResult.sucesso && fs.existsSync(outputPath)) {
-                    const buffer = await fs.promises.readFile(outputPath);
-                    await this.cleanupFile(outputPath);
-                    return { sucesso: true, buffer, metadata };
-                }
-                this.logger?.warn('⚠️ Piped stream falhou, tentando yt-dlp...');
-            }
-
             // TENTATIVA 1: yt-dlp com client iOS (bypassa bot detection em servidores)
             const command = this._buildYtdlpCommand(finalUrl, { type: 'audio', output: outputPath });
             this.logger?.info(`📥 Executando (Audio iOS): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
@@ -182,15 +170,24 @@ class MediaProcessor {
                 }
             }
 
-            // TENTATIVA 3: SoundCloud como fallback alternativo de música
+            // TENTATIVA 3: Download direto via Piped stream local
+            if (!fs.existsSync(outputPath) && videoId) {
+                this.logger?.info('🚀 Tentando fallback de API pública (Piped stream)...');
+                const pipedResult = await this._downloadStreamFromPiped(videoId, outputPath);
+                if (pipedResult.sucesso && fs.existsSync(outputPath)) {
+                    const buffer = await fs.promises.readFile(outputPath);
+                    await this.cleanupFile(outputPath);
+                    return { sucesso: true, buffer, metadata };
+                }
+                this.logger?.warn('⚠️ Fallback do Piped stream falhou');
+            }
+
+            // TENTATIVA 4: SoundCloud como alternativa final
             if (!fs.existsSync(outputPath) && !url.startsWith('http')) {
                 this.logger?.info('🎶 Tentando SoundCloud como alternativa...');
                 const scCmd = `yt-dlp "scsearch1:${url}" -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" --no-warnings`;
                 try {
                     await execAsync(scCmd, { timeout: 120000, maxBuffer: 200 * 1024 * 1024 });
-                    if (fs.existsSync(outputPath)) {
-                        this.logger?.info('✅ SoundCloud fallback funcionou!');
-                    }
                 } catch (esc: any) {
                     this.logger?.warn(`⚠️ SoundCloud falhou: ${esc.message.substring(0, 60)}`);
                 }
@@ -202,8 +199,8 @@ class MediaProcessor {
                 return { sucesso: true, buffer, metadata };
             }
 
-            // TENTATIVA 4: ytdl-core (ultimo recurso)
-            this.logger?.warn('⚠️ Tentativa final: ytdl-core...');
+            // TENTATIVA 5: @distube/ytdl-core wrapper (ultimo recurso)
+            this.logger?.warn('⚠️ Tentativa final: ytdl-core wrapper...');
             return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
 
         } catch (error: any) {
@@ -233,30 +230,18 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 0: Download direto via Piped stream de VÍDEO (curl, não Node)
-            if (videoId) {
-                this.logger?.info('🚀 Tentando download via Piped stream de VÍDEO...');
-                const pipedResult = await this._downloadVideoStreamFromPiped(videoId, outputPath, quality);
-                if (pipedResult.sucesso && fs.existsSync(outputPath)) {
-                    const buffer = await fs.promises.readFile(outputPath);
-                    await this.cleanupFile(outputPath);
-                    return { sucesso: true, buffer, metadata };
-                }
-                this.logger?.warn('⚠️ Piped video stream falhou, tentando yt-dlp...');
-            }
-
-            // Tentativa 1: clientes iOS, ios_music, web, android
+            // TENTATIVA 1: clientes iOS, ios_music, web, android (Nativo do Sistema Docker)
             const command = this._buildYtdlpCommand(finalUrl, { type: 'video', quality, output: outputPath });
-            this.logger?.info(`📥 Executando (Video): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
+            this.logger?.info(`📥 Executando nativamente (Video yt-dlp): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ Tentativa 1 vídeo falhou: ${execErr.message.substring(0, 60)}`);
+                this.logger?.warn(`⚠️ Tentativa 1 (yt-dlp) falhou: ${execErr.message.substring(0, 60)}`);
             }
 
-            // Tentativa 2: android puro com formato simplificado
+            // TENTATIVA 2: android puro com formato simplificado via Binário Docker
             if (!fs.existsSync(outputPath)) {
-                this.logger?.info('🔄 Tentando cliente android puro para vídeo...');
+                this.logger?.info('🔄 Tentando fallback nativo android puro...');
                 const androidCmd = `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android" --force-ipv4 --no-check-certificates --geo-bypass -f "best[ext=mp4]/best" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
                 try {
                     await execAsync(androidCmd, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
@@ -265,7 +250,20 @@ class MediaProcessor {
                 }
             }
 
+            // TENTATIVA 3: Download proxy Muxing Piped stream de VÍDEO
+            if (!fs.existsSync(outputPath) && videoId) {
+                this.logger?.info('🚀 Tentando download fallback em Nuvem pela PAPI...');
+                const pipedResult = await this._downloadVideoStreamFromPiped(videoId, outputPath, quality);
+                if (pipedResult.sucesso && fs.existsSync(outputPath)) {
+                    const buffer = await fs.promises.readFile(outputPath);
+                    await this.cleanupFile(outputPath);
+                    return { sucesso: true, buffer, metadata };
+                }
+                this.logger?.warn('⚠️ Piped video stream fallback falhou, indo para última via...');
+            }
+
             if (!fs.existsSync(outputPath)) {
+                this.logger?.warn('⚠️ Tentativa final: @distube proxy wrapper...');
                 return await this._downloadWithYtdlCore(finalUrl, 'video', metadata);
             }
 
@@ -416,44 +414,27 @@ class MediaProcessor {
      * Busca um vídeo por nome nas APIs públicas (Piped)
      */
     private async _searchYouTubeFallback(query: string): Promise<any> {
-        const pipedInstances = [
-            'https://pipedapi.kavin.rocks',
-            'https://pipedapi.tokhmi.xyz',
-            'https://pipedapi.qdi.fi',
-            'https://pdapi.vern.cc'
-        ];
-
-        for (const instance of pipedInstances) {
-            try {
-                const url = `${instance}/search?q=${encodeURIComponent(query)}&filter=all`;
-                const response = await axios.get(url, {
-                    timeout: 10000,
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-                });
-
-                const results = response.data?.items;
-                if (Array.isArray(results) && results.length > 0) {
-                    // Pega o primeiro item que for 'stream' (vídeo)
-                    const first = results.find((r: any) => r.type === 'stream');
-                    if (first && first.url) {
-                        const videoId = first.url.replace('/watch?v=', '');
-                        return {
-                            sucesso: true,
-                            videoId: videoId,
-                            titulo: first.title || query,
-                            canal: first.uploaderName || 'Desconhecido',
-                            duracao: first.duration || 0,
-                            duracaoFormatada: this._formatDuration(first.duration || 0),
-                            thumbnail: first.thumbnail || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-                            visualizacoes: this._formatStats(first.views),
-                            dataPublicacao: first.uploadedDate || 'N/A',
-                            curtidas: 'N/A'
-                        };
-                    }
-                }
-            } catch (err: any) {
-                this.logger?.debug(`⚠️ Piped Search ${instance}: ${err.message?.substring(0, 40)}`);
+        try {
+            const yts = await import('yt-search').then(m => m.default || m);
+            const r = await yts(query);
+            const videos = r.videos.slice(0, 1);
+            if (videos.length > 0) {
+                const first = videos[0];
+                return {
+                    sucesso: true,
+                    videoId: first.videoId,
+                    titulo: first.title,
+                    canal: first.author?.name || 'Desconhecido',
+                    duracao: first.seconds,
+                    duracaoFormatada: first.timestamp,
+                    thumbnail: first.thumbnail || `https://img.youtube.com/vi/${first.videoId}/maxresdefault.jpg`,
+                    visualizacoes: this._formatStats(first.views),
+                    dataPublicacao: first.ago || 'N/A',
+                    curtidas: 'N/A'
+                };
             }
+        } catch (err: any) {
+            this.logger?.debug(`⚠️ yt-search falhou: ${err.message?.substring(0, 40)}`);
         }
 
         return { sucesso: false };
@@ -752,7 +733,7 @@ class MediaProcessor {
      */
     private async _getMetadataYtdlCore(url: string): Promise<any> {
         try {
-            const ytdl = await import('ytdl-core').then(m => m.default || m);
+            const ytdl = await import('@distube/ytdl-core').then(m => m.default || m);
 
             const info = await ytdl.getInfo(url);
             const videoDetails = info.videoDetails;
@@ -777,9 +758,9 @@ class MediaProcessor {
      */
     private async _downloadWithYtdlCore(url: string, type: 'audio' | 'video', metadata?: any): Promise<{ sucesso: boolean; buffer?: Buffer; error?: string; metadata?: any }> {
         try {
-            this.logger?.info(`📥 Usando ytdl-core para ${type}...`);
+            this.logger?.info(`📥 Usando @distube/ytdl-core para ${type}...`);
 
-            const ytdl = await import('ytdl-core').then(m => m.default || m);
+            const ytdl = await import('@distube/ytdl-core').then(m => m.default || m);
 
             const info = await ytdl.getInfo(url);
             const formats = info.formats;
