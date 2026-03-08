@@ -18,6 +18,16 @@ class GameSystem {
     }
 
     /**
+     * Normaliza IDs do WhatsApp removendo sufixos de dispositivo e domínios desnecessários
+     * Formato final: número@s.whatsapp.net
+     */
+    private _normalizeId(id: string | null | undefined): string {
+        if (!id) return '';
+        const clean = id.split('@')[0].split(':')[0];
+        return `${clean.replace(/\D/g, '')}@s.whatsapp.net`;
+    }
+
+    /**
      * Remove duplicatas e limpa o map de jogos periodicamente
      */
     private cleanupGames() {
@@ -58,30 +68,35 @@ class GameSystem {
                 return await this.handleHangman(chatId, senderId, args[0] || 'start', args.slice(1).join(' '));
 
             default:
-                return { text: '❌ Jogo não reconhecido.' };
+                return { text: '❌ Jogo não reconhecido.', finished: false };
         }
     }
 
     /**
      * Tenta processar mensagens curtas como jogadas de jogos ativos (sem precisar de comando explícito)
      */
-    public async processActiveGameInput(chatId: string, senderId: string, input: string): Promise<{ text: string, finished: boolean } | null> {
+    public async processActiveGameInput(chatId: string, senderId: string, input: string, replyInfo?: any): Promise<{ text: string, finished: boolean } | null> {
         this.cleanupGames();
         const texto = (input || '').trim().toLowerCase();
+        const normSender = this._normalizeId(senderId);
+
+        // Se for reply a uma mensagem específica de jogo, priorizamos o tipo detectado
+        if (replyInfo?.isReplyToGame) {
+            const gType = replyInfo.gameType;
+            if (gType === 'ttt' && /^[1-9]$/.test(texto)) {
+                return await this.handleTicTacToe(chatId, senderId, texto);
+            }
+            if (gType === 'grid') {
+                const GridTacticsGame = (await import('./GridTacticsGame.js')).default;
+                return await GridTacticsGame.handleGridTactics(chatId, senderId, texto, []);
+            }
+        }
 
         // Tic-Tac-Toe
         let game = this.games.get(chatId);
         if (game && game.type === 'ttt') {
             if (/^[1-9]$/.test(texto)) {
                 return await this.handleTicTacToe(chatId, senderId, texto);
-            }
-        }
-
-        // Hangman
-        game = this.games.get(`${chatId}_hangman`);
-        if (game && game.type === 'hangman') {
-            if (/^[a-z]$/.test(texto)) {
-                return await this.handleHangman(chatId, senderId, texto);
             }
         }
 
@@ -108,9 +123,9 @@ class GameSystem {
     public async handleTicTacToe(chatId: string, senderId: string, input: string, opponentId?: string): Promise<{ text: string, finished: boolean }> {
         let game = this.games.get(chatId);
 
-        // Normalize IDs to prevent device suffix mismatches (e.g. :1, :38)
-        const normalizedSenderId = senderId.split(':')[0] + (senderId.includes('@') ? '@' + senderId.split('@')[1] : '');
-        let normalizedOpponentId = opponentId ? (opponentId.split(':')[0] + (opponentId.includes('@') ? '@' + opponentId.split('@')[1] : '')) : undefined;
+        // Use helper for robust normalization
+        const normalizedSenderId = this._normalizeId(senderId);
+        let normalizedOpponentId = opponentId ? this._normalizeId(opponentId) : undefined;
 
         // Iniciar novo jogo - AGORA SUPORTA MODO IA
         if (input === 'start' || (!game && normalizedOpponentId)) {

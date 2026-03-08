@@ -146,19 +146,28 @@ class CommandHandler {
             const chatJid = m.key.remoteJid;
             const senderId = numeroReal;
 
-            const parsed = mp.parseCommand(texto);
-            if (!parsed) {
-                // Tenta interceptar como jogada de jogo ativo antes de ignorar (para não cair na IA)
-                const gameModule = this.gameSystem || (await import('./GameSystem.js')).default;
-                if (gameModule.processActiveGameInput) {
-                    const gameRes = await gameModule.processActiveGameInput(chatJid, senderId, texto);
+            // ═══════════════════════════════════════════════════════════════════════
+            // INTERCEPTAÇÃO DE JOGADAS ATIVAS (SEM PREFIXO OU VIA REPLY)
+            // ═══════════════════════════════════════════════════════════════════════
+            const isGameReply = replyInfo && replyInfo.isReplyToGame;
+            const gameType = replyInfo?.gameType;
+            const msgTexto = (texto || '').trim();
+
+            // Se for reply a uma mensagem de jogo OU se for um input que parece jogada em chat ativo
+            if (isGameReply || (!mp.parseCommand(texto) && /^\d+$/.test(msgTexto))) {
+                const gameModule = this.gameSystem;
+                if (gameModule) {
+                    // Tenta processar como jogo ativo
+                    const gameRes = await gameModule.processActiveGameInput(chatJid, senderId, msgTexto, isGameReply ? replyInfo : undefined);
                     if (gameRes) {
-                        await this._reply(m, gameRes.text);
+                        await this._reply(m, gameRes.text, { mentions: [senderId] });
                         return true;
                     }
                 }
-                return false;
             }
+
+            const parsed = mp.parseCommand(texto);
+            if (!parsed) return false;
 
             const command = parsed.comando.toLowerCase();
             const args = parsed.args;
@@ -181,10 +190,7 @@ class CommandHandler {
             // processa como jogada automaticamente sem enviar para a IA
             // ═══════════════════════════════════════════════════════════════════════
 
-            // Detecta se é uma resposta a uma mensagem de jogo
-            const isGameReply = replyInfo && replyInfo.isReplyToGame;
-            const gameType = replyInfo?.gameType;
-
+            // Detecta se é uma resposta a uma mensagem de jogo (re-uso de variáveis acima)
             if (isGameReply && fullArgs && command !== 'ping') {
                 // Verifica se o texto é uma jogada válida
                 const trimmedArgs = fullArgs.trim();
@@ -1414,6 +1420,9 @@ ${P}menu osint — Comandos OSINT avançados`,
             const canal = metadata.canal || 'Desconhecido';
             const duracao = metadata.duracao || 0;
             const thumbnail = metadata.thumbnail;
+            const visualizacoes = metadata.visualizacoes || 'N/A';
+            const curtidas = metadata.curtidas || 'N/A';
+            const dataPublicacao = metadata.dataPublicacao || 'N/A';
 
             // Enviar thumbnail e metadados se disponíveis
             if (thumbnail) {
@@ -1422,6 +1431,9 @@ ${P}menu osint — Comandos OSINT avançados`,
                     const duracaoMin = duracao ? `${Math.floor(duracao / 60)}:${(duracao % 60).toString().padStart(2, '0')}` : '??';
                     const caption = `🎵 *${titulo}*\n\n` +
                         `👤 *Canal:* ${canal}\n` +
+                        `👁️ *Visualizações:* ${visualizacoes}\n` +
+                        `👍 *Curtidas:* ${curtidas}\n` +
+                        `📅 *Lançamento:* ${dataPublicacao}\n` +
                         `⏱️ *Duração:* ${duracaoMin}\n\n` +
                         `🎧 _Enviando áudio..._`;
 
@@ -1660,6 +1672,9 @@ ${P}menu osint — Comandos OSINT avançados`,
             const titulo = metadata.titulo || 'Vídeo';
             const canal = metadata.canal || 'Desconhecido';
             const thumbnail = metadata.thumbnail;
+            const visualizacoes = metadata.visualizacoes || 'N/A';
+            const curtidas = metadata.curtidas || 'N/A';
+            const dataPublicacao = metadata.dataPublicacao || 'N/A';
 
             let thumbBuf = null;
             if (thumbnail) {
@@ -1677,7 +1692,12 @@ ${P}menu osint — Comandos OSINT avançados`,
             await fs.promises.writeFile(tempFile, res.buffer);
 
             const fileSizeMB = (res.buffer.length / (1024 * 1024)).toFixed(1);
-            const caption = `🎬 *${titulo}*\n👤 *Canal:* ${canal}\n📦 *Tamanho:* ${fileSizeMB}MB`;
+            const caption = `🎬 *${titulo}*\n` +
+                `👤 *Canal:* ${canal}\n` +
+                `👁️ *Visualizações:* ${visualizacoes}\n` +
+                `👍 *Curtidas:* ${curtidas}\n` +
+                `📅 *Lançamento:* ${dataPublicacao}\n` +
+                `📦 *Tamanho:* ${fileSizeMB}MB`;
 
             const isLargeFile = res.buffer.length > 64 * 1024 * 1024;
 

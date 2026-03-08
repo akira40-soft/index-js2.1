@@ -738,11 +738,22 @@ class MediaProcessor {
             const ytdl = await import('@distube/ytdl-core').then(m => m.default || m);
             const content = await fs.promises.readFile(cookiePath, 'utf8');
             const cookies = content.split('\n')
-                .filter(l => !l.startsWith('#') && l.trim())
+                .filter(l => {
+                    if (l.startsWith('#') || !l.trim()) return false;
+                    const parts = l.split('\t');
+                    if (parts.length < 7) return false;
+                    const domain = parts[0].toLowerCase();
+                    // Aceita apenas domínios do youtube ou google que permitam auth no youtube
+                    return domain.includes('youtube.com') || domain.endsWith('.youtube.com') ||
+                        (domain.includes('google.com') && (domain.startsWith('accounts.') || domain.startsWith('.google.com')));
+                })
                 .map(line => {
                     const parts = line.split('\t');
+                    let domain = parts[0];
+                    // Normalização básica de domínio para a biblioteca
+                    if (domain.startsWith('#HttpOnly_')) domain = domain.replace('#HttpOnly_', '');
                     return {
-                        domain: parts[0],
+                        domain: domain,
                         path: parts[2],
                         secure: parts[3] === 'TRUE',
                         name: parts[5],
