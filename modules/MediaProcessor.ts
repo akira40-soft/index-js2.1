@@ -153,11 +153,13 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 1: yt-dlp Enterprise Stability Loop
+            // TENTATIVA 1: yt-dlp Enterprise Stability Loop (v4)
             const attempts = [
-                { client: 'ios', format: 'ba/b' },
-                { client: 'web,android', format: 'bestaudio/best' },
-                { client: 'android', format: 'b' }
+                { id: '1', client: 'ios', format: 'ba/b' },
+                { id: '2', client: 'tv', format: 'ba/b' },
+                { id: '3', client: 'mweb', format: 'ba/b' },
+                { id: '4', client: 'web,android', format: 'bestaudio/best' },
+                { id: '5', client: 'android', format: 'b' }
             ];
 
             for (const attempt of attempts) {
@@ -170,14 +172,26 @@ class MediaProcessor {
                     formatOverride: attempt.format
                 });
 
-                this.logger?.info(`📥 Tentativa yt-dlp [${attempt.client}]: ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
+                this.logger?.info(`[ETAPA ${attempt.id}/5] Tentando áudio via ${attempt.client}...`);
                 try {
                     await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
                 } catch (execErr: any) {
-                    this.logger?.warn(`⚠️ Erro na tentativa [${attempt.client}]: ${execErr.stderr || execErr.message}`);
+                    this.logger?.warn(`⚠️ [FALHA ETAPA ${attempt.id}] ${attempt.client}: ${execErr.stderr || execErr.message?.split('\n')[0]}`);
                     if (execErr.message?.includes('Sign in') && !this.config?.YT_PO_TOKEN) {
-                        this.logger?.error('🚨 ALERTA CRÍTICO: YouTube exige PO_TOKEN. Configure YT_PO_TOKEN no Railway!');
+                        this.logger?.error('🚨 ALERTA: YouTube exige PO_TOKEN. Sem ele, a maioria das etapas falhará no Railway.');
                     }
+                }
+            }
+
+            // DIAGNÓSTICO: Se falhou tudo, vamos listar o que o YouTube está liberando
+            if (!fs.existsSync(outputPath)) {
+                this.logger?.warn('🛠️ INICIANDO DIAGNÓSTICO DE FORMATOS...');
+                const diagCmd = this._buildYtdlpCommand(finalUrl, { type: 'json', clientOverride: 'ios,web' });
+                try {
+                    const { stdout } = await execAsync(diagCmd.replace('--dump-json --no-download', '-F'));
+                    this.logger?.info(`\n📊 FORMATOS DISPONÍVEIS NO RAILWAY:\n${stdout}\n`);
+                } catch (diagErr: any) {
+                    this.logger?.error('❌ Falha ao rodar diagnóstico (-F). O IP pode estar totalmente bloqueado.');
                 }
             }
 
@@ -212,7 +226,11 @@ class MediaProcessor {
 
             // TENTATIVA 5: @distube/ytdl-core wrapper (ultimo recurso)
             this.logger?.warn('⚠️ Tentativa final: ytdl-core wrapper...');
-            return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
+            const ytdlCoreResult = await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
+            if (!ytdlCoreResult.sucesso) {
+                this.logger?.error(`❌ ytdl-core wrapper falhou: ${ytdlCoreResult.error}`);
+            }
+            return ytdlCoreResult;
 
         } catch (error: any) {
             this.logger?.error(`❌ Erro download audio: ${error.message}`);
@@ -241,11 +259,13 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 1: yt-dlp Enterprise Stability Loop
+            // TENTATIVA 1: yt-dlp Enterprise Stability Loop (v4)
             const attempts = [
-                { client: 'ios', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' : '22/18/best' },
-                { client: 'web,android', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' : '22/18/best/bestvideo+bestaudio' },
-                { client: 'android', format: 'best' }
+                { id: '1', client: 'ios', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' : '22/18/best' },
+                { id: '2', client: 'tv', format: '22/18/best' },
+                { id: '3', client: 'mweb', format: '22/18/18/best' },
+                { id: '4', client: 'web,android', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' : '22/18/best/bestvideo+bestaudio' },
+                { id: '5', client: 'android', format: 'best' }
             ];
 
             for (const attempt of attempts) {
@@ -259,14 +279,26 @@ class MediaProcessor {
                     formatOverride: attempt.format
                 });
 
-                this.logger?.info(`📥 Tentativa yt-dlp [${attempt.client}]: ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
+                this.logger?.info(`[ETAPA ${attempt.id}/5] Tentando vídeo via ${attempt.client}...`);
                 try {
                     await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
                 } catch (execErr: any) {
-                    this.logger?.warn(`⚠️ Erro na tentativa [${attempt.client}]: ${execErr.stderr || execErr.message}`);
+                    this.logger?.warn(`⚠️ [FALHA ETAPA ${attempt.id}] ${attempt.client}: ${execErr.stderr || execErr.message?.split('\n')[0]}`);
                     if (execErr.message?.includes('Sign in') && !this.config?.YT_PO_TOKEN) {
-                        this.logger?.error('🚨 ALERTA CRÍTICO: YouTube exige PO_TOKEN. Configure YT_PO_TOKEN no Railway!');
+                        this.logger?.error('🚨 ALERTA: YouTube exige PO_TOKEN. Sem ele, a maioria das etapas falhará no Railway.');
                     }
+                }
+            }
+
+            // DIAGNÓSTICO: Se falhou tudo, vamos listar o que o YouTube está liberando
+            if (!fs.existsSync(outputPath)) {
+                this.logger?.warn('🛠️ INICIANDO DIAGNÓSTICO DE FORMATOS...');
+                const diagCmd = this._buildYtdlpCommand(finalUrl, { type: 'json', clientOverride: 'ios,web' });
+                try {
+                    const { stdout } = await execAsync(diagCmd.replace('--dump-json --no-download', '-F'));
+                    this.logger?.info(`\n📊 FORMATOS VÍDEO NO RAILWAY:\n${stdout}\n`);
+                } catch (diagErr: any) {
+                    this.logger?.error('❌ Falha ao rodar diagnóstico (-F). O IP pode estar totalmente bloqueado.');
                 }
             }
 
