@@ -85,14 +85,13 @@ class MediaProcessor {
      * NOTA: tv_embedded foi removido em 2026-01-31 (era broken)
      * NOTA: --js-runtime node pode não ser suportado em versões antigas
      */
-    private _buildYtdlpCommand(url: string, options: { type: 'audio' | 'video' | 'json', quality?: string, output?: string, isSearch?: boolean }): string {
+    private _buildYtdlpCommand(url: string, options: { type: 'audio' | 'video' | 'json', quality?: string, output?: string, isSearch?: boolean, clientOverride?: string, formatOverride?: string }): string {
         const cookiePath = this._findCookiePath();
         const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
         const poToken = this.config?.YT_PO_TOKEN;
 
-        // iOS client bypassa bot detection em IPs de servidor (2026)
-        // Adicionando 'web' e 'android' como fallback mas forçando ios como primário
-        const clients = cookiePath ? 'ios,web,android' : 'ios,android';
+        // Clientes: ios, android, web, mweb, tv (tv_embedded removido)
+        const clients = options.clientOverride || (cookiePath ? 'ios,web,android' : 'ios,android');
 
         // Argumentos de extração
         let extractorArgs = `youtube:player_client=${clients}`;
@@ -105,23 +104,25 @@ class MediaProcessor {
             '--user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"',
             '--ignore-config',
             '--no-warnings',
+            '--no-playlist',
             '--geo-bypass',
             '--socket-timeout 30',
             '--retries 3',
-            '--age-limit 99',
-            '--no-playlist'
+            '--age-limit 99'
         ].join(' ');
 
         let actionFlags = '';
         if (options.type === 'audio') {
-            actionFlags = `-f "ba/b" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
+            const format = options.formatOverride || 'ba/b';
+            actionFlags = `-f "${format}" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
         } else if (options.type === 'video') {
             const quality = options.quality || '720';
-            // Seletores mais inclusivos para evitar "Requested format is not available"
-            const formatSelector = quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best' :
-                quality === '720' ? 'bestvideo[height<=720]+bestaudio/best' :
-                    'bestvideo[height<=480]+bestaudio/best';
-            actionFlags = `-f "${formatSelector}" --merge-output-format mp4 -o "${options.output}"`;
+            const format = options.formatOverride || (
+                quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best' :
+                    quality === '720' ? 'bestvideo[height<=720]+bestaudio/best' :
+                        'bestvideo[height<=480]+bestaudio/best'
+            );
+            actionFlags = `-f "${format}" --merge-output-format mp4 -o "${options.output}"`;
         } else if (options.type === 'json') {
             actionFlags = '--dump-json --no-download';
         }
@@ -151,23 +152,31 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 1: yt-dlp com client iOS (bypassa bot detection em servidores)
-            const command = this._buildYtdlpCommand(finalUrl, { type: 'audio', output: outputPath });
-            this.logger?.info(`📥 Executando (Audio iOS): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
-            try {
-                await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
-            } catch (execErr: any) {
-                this.logger?.warn(`⚠️ Tentativa iOS falhou: ${execErr.stderr || execErr.message}`);
-            }
+            // TENTATIVA 1: yt-dlp Enterprise Stability Loop
+            const attempts = [
+                { client: 'ios', format: 'ba/b' },
+                { client: 'web,android', format: 'bestaudio/best' },
+                { client: 'android', format: 'b' }
+            ];
 
-            // TENTATIVA 2: yt-dlp android puro
-            if (!fs.existsSync(outputPath)) {
-                this.logger?.info('🔄 Tentando cliente android puro...');
-                const androidCmd = `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android" --force-ipv4 --no-check-certificates --geo-bypass --age-limit 99 -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" "${finalUrl}"`;
+            for (const attempt of attempts) {
+                if (fs.existsSync(outputPath)) break;
+
+                const command = this._buildYtdlpCommand(finalUrl, {
+                    type: 'audio',
+                    output: outputPath,
+                    clientOverride: attempt.client,
+                    formatOverride: attempt.format
+                });
+
+                this.logger?.info(`📥 Tentativa yt-dlp [${attempt.client}]: ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
                 try {
-                    await execAsync(androidCmd, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
-                } catch (e2: any) {
-                    this.logger?.warn(`⚠️ Android falhou: ${e2.stderr || e2.message}`);
+                    await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
+                } catch (execErr: any) {
+                    this.logger?.warn(`⚠️ Erro na tentativa [${attempt.client}]: ${execErr.stderr || execErr.message}`);
+                    if (execErr.message?.includes('Sign in') && !this.config?.YT_PO_TOKEN) {
+                        this.logger?.error('🚨 ALERTA CRÍTICO: YouTube exige PO_TOKEN. Configure YT_PO_TOKEN no Railway!');
+                    }
                 }
             }
 
@@ -231,23 +240,32 @@ class MediaProcessor {
             const cookiePath = this._findCookiePath();
             const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 1: clientes iOS, ios_music, web, android (Nativo do Sistema Docker)
-            const command = this._buildYtdlpCommand(finalUrl, { type: 'video', quality, output: outputPath });
-            this.logger?.info(`📥 Executando nativamente (Video yt-dlp): ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
-            try {
-                await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
-            } catch (execErr: any) {
-                this.logger?.warn(`⚠️ Tentativa 1 (yt-dlp) falhou: ${execErr.stderr || execErr.message}`);
-            }
+            // TENTATIVA 1: yt-dlp Enterprise Stability Loop
+            const attempts = [
+                { client: 'ios', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best' : 'bestvideo[height<=720]+bestaudio/best' },
+                { client: 'web,android', format: 'best/bestvideo+bestaudio' },
+                { client: 'android', format: 'best' }
+            ];
 
-            // TENTATIVA 2: android puro com formato simplificado via Binário Docker
-            if (!fs.existsSync(outputPath)) {
-                this.logger?.info('🔄 Tentando fallback nativo android puro...');
-                const androidCmd = `yt-dlp ${cookieArg} --extractor-args "youtube:player_client=android" --force-ipv4 --no-check-certificates --geo-bypass -f "best[ext=mp4]/best" --merge-output-format mp4 -o "${outputPath}" "${finalUrl}"`;
+            for (const attempt of attempts) {
+                if (fs.existsSync(outputPath)) break;
+
+                const command = this._buildYtdlpCommand(finalUrl, {
+                    type: 'video',
+                    quality,
+                    output: outputPath,
+                    clientOverride: attempt.client,
+                    formatOverride: attempt.format
+                });
+
+                this.logger?.info(`📥 Tentativa yt-dlp [${attempt.client}]: ${command.replace(/--cookies ".*?"/, '[COOKIES]')}`);
                 try {
-                    await execAsync(androidCmd, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
-                } catch (e2: any) {
-                    this.logger?.warn(`⚠️ Android fallback falhou: ${e2.stderr || e2.message}`);
+                    await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
+                } catch (execErr: any) {
+                    this.logger?.warn(`⚠️ Erro na tentativa [${attempt.client}]: ${execErr.stderr || execErr.message}`);
+                    if (execErr.message?.includes('Sign in') && !this.config?.YT_PO_TOKEN) {
+                        this.logger?.error('🚨 ALERTA CRÍTICO: YouTube exige PO_TOKEN. Configure YT_PO_TOKEN no Railway!');
+                    }
                 }
             }
 
