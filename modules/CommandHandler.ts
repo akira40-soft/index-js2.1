@@ -1409,25 +1409,9 @@ ${P}menu osint — Comandos OSINT avançados`,
             await this._reply(m, `❌ Uso: ${this.config.PREFIXO}play <nome da música ou link>`);
             return true;
         }
+        await this._reply(m, '⏳ baixando...');
+
         try {
-            // Primeiro busca metadados para mostrar a legenda rica IMEDIATAMENTE
-            const metadata = await this.mediaProcessor.getYouTubeMetadata(query).catch((): any => null);
-
-            if (metadata && metadata.sucesso) {
-                const duracaoMin = metadata.duracao ? `${Math.floor(metadata.duracao / 60)}:${(metadata.duracao % 60).toString().padStart(2, '0')}` : '??';
-                const statusCaption = `🎵 *${metadata.titulo}*\n\n` +
-                    `👤 *Canal:* ${metadata.canal}\n` +
-                    `👁️ *Visualizações:* ${metadata.visualizacoes || 'N/A'}\n` +
-                    `👍 *Curtidas:* ${metadata.curtidas || 'N/A'}\n` +
-                    `📅 *Lançamento:* ${metadata.dataPublicacao || 'N/A'}\n` +
-                    `⏱️ *Duração:* ${duracaoMin}\n\n` +
-                    `⌛ _Baixando áudio... Aguarde._`;
-
-                await this._reply(m, statusCaption);
-            } else {
-                await this._reply(m, '⏳ baixando');
-            }
-
             const res = await this.mediaProcessor.downloadYouTubeAudio(query);
 
             if (!res.sucesso || res.error) {
@@ -1435,14 +1419,15 @@ ${P}menu osint — Comandos OSINT avançados`,
                 return true;
             }
 
-            // Extrai metadados (já buscados no início para a legenda de aguarde)
-            const titulo = metadata?.titulo || res.metadata?.titulo || 'Música';
-            const canal = metadata?.canal || res.metadata?.canal || 'Desconhecido';
-            const duracao = metadata?.duracao || res.metadata?.duracao || 0;
-            const thumbnail = metadata?.thumbnail || res.metadata?.thumbnail;
-            const visualizacoes = metadata?.visualizacoes || res.metadata?.visualizacoes || 'N/A';
-            const curtidas = metadata?.curtidas || res.metadata?.curtidas || 'N/A';
-            const dataPublicacao = metadata?.dataPublicacao || res.metadata?.dataPublicacao || 'N/A';
+            // Extrai metadados do resultado do download
+            const metadata = res.metadata || {};
+            const titulo = metadata.titulo || 'Música';
+            const canal = metadata.canal || 'Desconhecido';
+            const duracao = metadata.duracao || 0;
+            const thumbnail = metadata.thumbnail;
+            const visualizacoes = metadata.visualizacoes || 'N/A';
+            const curtidas = metadata.curtidas || 'N/A';
+            const dataPublicacao = metadata.dataPublicacao || 'N/A';
 
             // Enviar thumbnail e metadados se disponíveis
             if (thumbnail) {
@@ -1678,23 +1663,8 @@ ${P}menu osint — Comandos OSINT avançados`,
             await this._reply(m, `❌ Uso: ${this.config.PREFIXO}video <nome ou link>`);
             return true;
         }
+        await this._reply(m, '🎬 Baixando vídeo... (Arquivos grandes podem demorar)');
         try {
-            // Primeiro busca metadados para mostrar a legenda rica IMEDIATAMENTE
-            const metadata = await this.mediaProcessor.getYouTubeMetadata(query).catch((): any => null);
-
-            if (metadata && metadata.sucesso) {
-                const statusCaption = `🎬 *${metadata.titulo}*\n\n` +
-                    `👤 *Canal:* ${metadata.canal}\n` +
-                    `👁️ *Visualizações:* ${metadata.visualizacoes || 'N/A'}\n` +
-                    `👍 *Curtidas:* ${metadata.curtidas || 'N/A'}\n` +
-                    `📅 *Lançamento:* ${metadata.dataPublicacao || 'N/A'}\n\n` +
-                    `⌛ _Baixando vídeo... (Arquivos grandes podem demorar)_`;
-
-                await this._reply(m, statusCaption);
-            } else {
-                await this._reply(m, '🎬 Baixando vídeo... (Arquivos grandes podem demorar)');
-            }
-
             const res = await this.mediaProcessor.downloadYouTubeVideo(query);
 
             if (!res.sucesso || res.error) {
@@ -1702,13 +1672,14 @@ ${P}menu osint — Comandos OSINT avançados`,
                 return true;
             }
 
-            // Extrai metadados (já buscados ou do download)
-            const titulo = metadata?.titulo || res.metadata?.titulo || 'Vídeo';
-            const canal = metadata?.canal || res.metadata?.canal || 'Desconhecido';
-            const thumbnail = metadata?.thumbnail || res.metadata?.thumbnail;
-            const visualizacoes = metadata?.visualizacoes || res.metadata?.visualizacoes || 'N/A';
-            const curtidas = metadata?.curtidas || res.metadata?.curtidas || 'N/A';
-            const dataPublicacao = metadata?.dataPublicacao || res.metadata?.dataPublicacao || 'N/A';
+            // Extrai metadados do resultado
+            const metadata = res.metadata || {};
+            const titulo = metadata.titulo || 'Vídeo';
+            const canal = metadata.canal || 'Desconhecido';
+            const thumbnail = metadata.thumbnail;
+            const visualizacoes = metadata.visualizacoes || 'N/A';
+            const curtidas = metadata.curtidas || 'N/A';
+            const dataPublicacao = metadata.dataPublicacao || 'N/A';
 
             let thumbBuf = null;
             if (thumbnail) {

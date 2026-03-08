@@ -108,7 +108,8 @@ class MediaProcessor {
             '--geo-bypass',
             '--socket-timeout 30',
             '--retries 3',
-            '--age-limit 99'
+            '--age-limit 99',
+            '--no-playlist'
         ].join(' ');
 
         let actionFlags = '';
@@ -155,7 +156,7 @@ class MediaProcessor {
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ Tentativa iOS falhou: ${execErr.message.substring(0, 80)}`);
+                this.logger?.warn(`⚠️ Tentativa iOS falhou: ${execErr.stderr || execErr.message}`);
             }
 
             // TENTATIVA 2: yt-dlp android puro
@@ -165,7 +166,7 @@ class MediaProcessor {
                 try {
                     await execAsync(androidCmd, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
                 } catch (e2: any) {
-                    this.logger?.warn(`⚠️ Android falhou: ${e2.message.substring(0, 80)}`);
+                    this.logger?.warn(`⚠️ Android falhou: ${e2.stderr || e2.message}`);
                 }
             }
 
@@ -235,7 +236,7 @@ class MediaProcessor {
             try {
                 await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
             } catch (execErr: any) {
-                this.logger?.warn(`⚠️ Tentativa 1 (yt-dlp) falhou: ${execErr.message.substring(0, 60)}`);
+                this.logger?.warn(`⚠️ Tentativa 1 (yt-dlp) falhou: ${execErr.stderr || execErr.message}`);
             }
 
             // TENTATIVA 2: android puro com formato simplificado via Binário Docker
@@ -245,7 +246,7 @@ class MediaProcessor {
                 try {
                     await execAsync(androidCmd, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
                 } catch (e2: any) {
-                    this.logger?.warn(`⚠️ Android fallback falhou: ${e2.message.substring(0, 60)}`);
+                    this.logger?.warn(`⚠️ Android fallback falhou: ${e2.stderr || e2.message}`);
                 }
             }
 
