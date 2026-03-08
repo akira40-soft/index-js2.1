@@ -117,10 +117,11 @@ class MediaProcessor {
             actionFlags = `-f "${format}" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
         } else if (options.type === 'video') {
             const quality = options.quality || '720';
+            // Formatos progressivos (22=720p, 18=360p) são muito mais estáveis no client ios/android
             const format = options.formatOverride || (
-                quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best' :
-                    quality === '720' ? 'bestvideo[height<=720]+bestaudio/best' :
-                        'bestvideo[height<=480]+bestaudio/best'
+                quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' :
+                    quality === '720' ? '22 / bestvideo[height<=720]+bestaudio/best / 136+140 / best' :
+                        '18 / bestvideo[height<=480]+bestaudio/best / 135+140 / best'
             );
             actionFlags = `-f "${format}" --merge-output-format mp4 -o "${options.output}"`;
         } else if (options.type === 'json') {
@@ -242,8 +243,8 @@ class MediaProcessor {
 
             // TENTATIVA 1: yt-dlp Enterprise Stability Loop
             const attempts = [
-                { client: 'ios', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best' : 'bestvideo[height<=720]+bestaudio/best' },
-                { client: 'web,android', format: 'best/bestvideo+bestaudio' },
+                { client: 'ios', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' : '22/18/best' },
+                { client: 'web,android', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' : '22/18/best/bestvideo+bestaudio' },
                 { client: 'android', format: 'best' }
             ];
 
@@ -829,18 +830,20 @@ class MediaProcessor {
 
             const agent = await this._createYtdlAgent();
             const poToken = this.config?.YT_PO_TOKEN;
+            const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-            const options: any = {};
+            const options: any = {
+                requestOptions: {
+                    headers: {
+                        'User-Agent': userAgent
+                    }
+                }
+            };
+
             if (agent) options.agent = agent;
 
-            // Suporte para PO_TOKEN via requestOptions (fork Distube)
             if (poToken) {
-                options.requestOptions = {
-                    headers: {
-                        'x-youtube-identity-token': poToken
-                    }
-                };
-                // Algumas versões aceitam poToken direto no nível superior das opções
+                options.requestOptions.headers['x-youtube-identity-token'] = poToken;
                 options.poToken = poToken;
             }
 
