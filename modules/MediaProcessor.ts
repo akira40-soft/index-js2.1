@@ -114,12 +114,13 @@ class MediaProcessor {
 
         let actionFlags = '';
         if (options.type === 'audio') {
-            actionFlags = `-x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
+            actionFlags = `-f "ba/b" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
         } else if (options.type === 'video') {
             const quality = options.quality || '720';
-            const formatSelector = quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best[ext=m4a]/best' :
-                quality === '720' ? 'bestvideo[height<=720]+bestaudio/best[ext=m4a]/best' :
-                    'bestvideo[height<=480]+bestaudio/best[ext=m4a]/best';
+            // Seletores mais inclusivos para evitar "Requested format is not available"
+            const formatSelector = quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best' :
+                quality === '720' ? 'bestvideo[height<=720]+bestaudio/best' :
+                    'bestvideo[height<=480]+bestaudio/best';
             actionFlags = `-f "${formatSelector}" --merge-output-format mp4 -o "${options.output}"`;
         } else if (options.type === 'json') {
             actionFlags = '--dump-json --no-download';
@@ -446,11 +447,11 @@ class MediaProcessor {
     private async _getMetadataFromInvidious(videoId: string): Promise<any> {
         // Instâncias Invidious ativas e confiáveis (Março 2026)
         const invidiousInstances = [
-            'https://inv.tux.pizza',
+            'https://invidious.v0l.io',
+            'https://invidious.drgns.space',
             'https://invidious.nerdvpn.de',
-            'https://invidious.privacydev.net',
-            'https://yewtu.be',
-            'https://invidious.fdn.fr'
+            'https://inv.tux.pizza',
+            'https://invidious.privacydev.net'
         ];
 
         for (const instance of invidiousInstances) {
@@ -488,11 +489,11 @@ class MediaProcessor {
      */
     private async _getMetadataFromPiped(videoId: string): Promise<any> {
         const pipedInstances = [
+            'https://pipedapi.mha.fi',
+            'https://pipedapi.adminforge.de',
+            'https://pipedapi.astartes.nl',
             'https://pipedapi.kavin.rocks',
-            'https://pipedapi.tokhmi.xyz',
-            'https://pipedapi.qdi.fi',
-            'https://piped-api.hostux.net',
-            'https://pdapi.vern.cc'
+            'https://pipedapi.tokhmi.xyz'
         ];
 
         for (const instance of pipedInstances) {
@@ -807,8 +808,23 @@ class MediaProcessor {
 
             const ytdl = await import('@distube/ytdl-core').then(m => m.default || m);
 
+
             const agent = await this._createYtdlAgent();
-            const options = agent ? { agent } : {};
+            const poToken = this.config?.YT_PO_TOKEN;
+
+            const options: any = {};
+            if (agent) options.agent = agent;
+
+            // Suporte para PO_TOKEN via requestOptions (fork Distube)
+            if (poToken) {
+                options.requestOptions = {
+                    headers: {
+                        'x-youtube-identity-token': poToken
+                    }
+                };
+                // Algumas versões aceitam poToken direto no nível superior das opções
+                options.poToken = poToken;
+            }
 
             const info = await ytdl.getInfo(url, options);
             const formats = info.formats;
