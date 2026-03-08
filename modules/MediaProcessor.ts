@@ -119,15 +119,22 @@ class MediaProcessor {
 
         let actionFlags = '';
         if (options.type === 'audio') {
-            const format = options.formatOverride || 'ba[ext=m4a]/ba/bestaudio/best';
+            // ba = bestaudio (audio-only) — NÃO usar ba* (aviso da doc oficial)
+            // Cascata: M4A nativo > qualquer audio-only > formato combinado
+            const format = options.formatOverride || 'ba[ext=m4a]/ba/b';
             actionFlags = `-f "${format}" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
         } else if (options.type === 'video') {
             const quality = options.quality || '720';
-            // "Standard String": Prioriza formato progressivo mp4 para garantir compatibilidade com WhatsApp
+            // Padrão oficial da doc yt-dlp: bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4] / bv*+ba/b
+            // bv* (com asterisco) inclui formatos que possam ter áudio. bv (sem) = video-only
+            // 22 = formato progressivo 720p (MP4 com áudio embutido, mais compatível)
+            // 18 = formato progressivo 360p (MP4 com áudio embutido, mais compatível)
             const format = options.formatOverride || (
-                quality === '1080' ? 'bv[height<=1080][ext=mp4]+ba[ext=m4a]/bestvideo[height<=1080]+bestaudio/best' :
-                    quality === '720' ? '22/bv[height<=720][ext=mp4]+ba[ext=m4a]/bestvideo[height<=720]+bestaudio/best' :
-                        '18/bv[height<=480][ext=mp4]+ba[ext=m4a]/best'
+                quality === '1080'
+                    ? 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=1080]+ba/b'
+                    : quality === '720'
+                        ? '22/bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=720]+ba/b'
+                        : '18/bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=480]+ba/b'
             );
             actionFlags = `-f "${format}" --merge-output-format mp4 -o "${options.output}"`;
         } else if (options.type === 'json') {
@@ -139,13 +146,13 @@ class MediaProcessor {
     }
 
     /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * DOWNLOAD DE ÁUDIO DO YOUTUBE - VERSÃO SIMPLIFICADA
-     * ═══════════════════════════════════════════════════════════════════════
+     * ═══════════════════════════════════════════════════════
+     * DOWNLOAD DE ÁUDIO - yt-dlp PURO COM ANTI-BLOQUEIO
+     * ═══════════════════════════════════════════════════════
      */
     async downloadYouTubeAudio(url: string): Promise<{ sucesso: boolean; buffer?: Buffer; filePath?: string; error?: string; metadata?: any }> {
         try {
-            this.logger?.info(`🎵 Download áudio: ${url}`);
+            this.logger?.info(`🎧 Download áudio: ${url}`);
 
             const metadata = await this._getYouTubeMetadataSimple(url);
             if (!metadata.sucesso) {
@@ -154,34 +161,45 @@ class MediaProcessor {
             }
 
             const finalUrl = metadata.url || url;
-            const videoId = metadata.videoId || this._extractVideoId(finalUrl) || this._extractVideoId(url);
             const outputPath = this.generateRandomFilename('mp3');
+            const cookiePath = this._findCookiePath();
 
-            // HIERARQUIA LINEAR DE ÁUDIO (NORMA v5)
-            const efforts = [
-                { id: '1', name: 'yt-dlp [ios,deno]', client: 'ios', format: 'ba[ext=m4a]/ba/bestaudio' },
-                { id: '2', name: 'yt-dlp [embedded]', client: 'web_embedded,android_embedded', format: 'ba/best' },
-                { id: '3', name: 'yt-dlp [tv]', client: 'tv', format: 'ba/best' }
+            // ================================================================
+            // GAMBIARRAS ANTI-BLOQUEIO: 6 tentativas rotacionando clientes
+            // Cada cliente representa uma persona diferente para o YouTube
+            // ================================================================
+            const tentativas = [
+                // Cliente 1: iPhone — M4A nativo (audio-only)
+                { cliente: 'ios', formato: 'ba[ext=m4a]/ba/b', sleepMs: 0 },
+                // Cliente 2: Android — qualquer audio-only
+                { cliente: 'android', formato: 'ba/b', sleepMs: 1500 },
+                // Cliente 3: Web Embutido — bypassa age-gate (erro 152)
+                { cliente: 'web_embedded', formato: 'ba/b', sleepMs: 2000 },
+                // Cliente 4: TV — compatível com datacenters
+                { cliente: 'tv', formato: 'ba/b', sleepMs: 2500 },
+                // Cliente 5: Android Embutido
+                { cliente: 'android_embedded', formato: 'ba/b', sleepMs: 2000 },
+                // Cliente 6: Todos juntos — aceita qualquer formato
+                { cliente: 'ios,android,web', formato: 'b', sleepMs: 3000 }
             ];
 
-            for (const effort of efforts) {
+            for (let i = 0; i < tentativas.length; i++) {
                 if (fs.existsSync(outputPath)) break;
-                this.logger?.info(`[ETAPA ${effort.id}/5] Tentando via ${effort.name}...`);
+                const t = tentativas[i];
+                if (t.sleepMs > 0) await new Promise(r => setTimeout(r, t.sleepMs));
 
-                const cmd = this._buildYtdlpCommand(finalUrl, { type: 'audio', output: outputPath, clientOverride: effort.client, formatOverride: effort.format });
+                this.logger?.info(`[ÁUDIO ${i + 1}/${tentativas.length}] Cliente: ${t.cliente}`);
+                const cmd = this._buildYtdlpCommand(finalUrl, {
+                    type: 'audio',
+                    output: outputPath,
+                    clientOverride: t.cliente,
+                    formatOverride: t.formato
+                });
                 try {
-                    await execAsync(cmd, { timeout: 180000, maxBuffer: 100 * 1024 * 1024 });
+                    await execAsync(cmd, { timeout: 180000, maxBuffer: 150 * 1024 * 1024 });
                 } catch (e: any) {
-                    this.logger?.warn(`⚠️ Erro Etapa ${effort.id}: ${e.stderr || e.message?.split('\n')[0]}`);
-                }
-            }
-
-            // ETAPA 4: INVIDIOUS PROXY BYPASS (Bypassa o 429 no Railway)
-            if (!fs.existsSync(outputPath) && videoId) {
-                this.logger?.info('[ETAPA 4/5] Invidious Proxy Bypass (anti-429)...');
-                const invResult = await this._downloadViaInvidiousProxy(videoId, outputPath, 'audio');
-                if (!invResult.sucesso) {
-                    this.logger?.warn(`⚠️ Invidious Proxy falhou: ${invResult.error}`);
+                    const msg = (e.stderr || e.message || '').split('\n')[0];
+                    this.logger?.warn(`⚠️ [${t.cliente}] ${msg.substring(0, 100)}`);
                 }
             }
 
@@ -191,8 +209,8 @@ class MediaProcessor {
                 return { sucesso: true, buffer, metadata };
             }
 
-            // ETAPA 5: ytdl-core wrapper
-            this.logger?.warn('[ETAPA 5/5] Tentativa final: ytdl-core wrapper...');
+            // Último recurso: ytdl-core
+            this.logger?.warn('⚠️ [LAST RESORT] ytdl-core...');
             return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
 
         } catch (error: any) {
@@ -202,13 +220,13 @@ class MediaProcessor {
     }
 
     /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * DOWNLOAD DE VÍDEO DO YOUTUBE
-     * ═══════════════════════════════════════════════════════════════════════
+     * ═══════════════════════════════════════════════════════
+     * DOWNLOAD DE VÍDEO - yt-dlp PURO COM ANTI-BLOQUEIO
+     * ═══════════════════════════════════════════════════════
      */
     async downloadYouTubeVideo(url: string, quality: string = '720'): Promise<{ sucesso: boolean; buffer?: Buffer; error?: string; metadata?: any }> {
         try {
-            this.logger?.info(`🎬 Download vídeo: ${url} (qualidade: ${quality})`);
+            this.logger?.info(`🎥 Download vídeo: ${url} (qualidade: ${quality})`);
 
             const metadata = await this._getYouTubeMetadataSimple(url);
             if (!metadata.sucesso) {
@@ -217,73 +235,70 @@ class MediaProcessor {
             }
 
             const finalUrl = metadata.url || url;
-            const videoId = metadata.videoId || this._extractVideoId(finalUrl) || this._extractVideoId(url);
             const outputPath = this.generateRandomFilename('mp4');
 
-            // HIERARQUIA LINEAR DE VÍDEO (NORMA v5)
-            const efforts = [
-                { id: '1', name: 'yt-dlp [ios,deno]', client: 'ios', format: quality === '1080' ? 'bv[height<=1080][ext=mp4]+ba[ext=m4a]/bestvideo+bestaudio' : '22/18/best' },
-                { id: '2', name: 'yt-dlp [embedded]', client: 'web_embedded,android_embedded', format: '22/18/best' },
-                { id: '3', name: 'yt-dlp [tv]', client: 'tv', format: '22/18/best' }
+            // ================================================================
+            // GAMBIARRAS ANTI-BLOQUEIO: rotacionando clientes e formatos
+            // ================================================================
+            const q = parseInt(quality) || 720;
+            // Cascata de formatos: progressive > mux mp4 > qualquer coisa
+            const fmtCascade: Record<string, string> = {
+                // Padrão oficial yt-dlp: bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4] / bv*+ba/b
+                // bv* (COM asterisco) = best que CONTÉM vídeo (pode ter áudio também)
+                // bv (SEM asterisco) = best video-ONLY (sem áudio)
+                '1080': 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=1080]+ba/b',
+                '720': '22/bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=720]+ba/b',
+                '480': '18/bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=480]+ba/b',
+                'best': 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b'
+            };
+            const formatoPrincipal = fmtCascade[quality] || fmtCascade['720'];
+
+            const tentativas = [
+                // Cliente 1: iPhone — formato progressivo 720p (mp4 nativo)
+                { cliente: 'ios', formato: formatoPrincipal, sleepMs: 0 },
+                // Cliente 2: Android — Progressive (formato 22 = 720p, 18 = 360p)
+                { cliente: 'android', formato: '22/18/bv*[ext=mp4]+ba/b[ext=mp4]/b', sleepMs: 1500 },
+                // Cliente 3: Web Embutido — bypassa age-gate (erro 152)
+                { cliente: 'web_embedded', formato: '22/18/bv*+ba/b', sleepMs: 2000 },
+                // Cliente 4: TV — aceita melhor em datacenters
+                { cliente: 'tv', formato: '22/18/bv*[ext=mp4]+ba/b', sleepMs: 2500 },
+                // Cliente 5: Android+Web Embutido — combo de bypasses
+                { cliente: 'android_embedded,web', formato: 'bv*+ba/b', sleepMs: 2000 },
+                // Cliente 6: Todos juntos — aceita qualquer formato disponível
+                { cliente: 'ios,android,web', formato: 'b', sleepMs: 3000 }
             ];
 
-            for (const effort of efforts) {
+            for (let i = 0; i < tentativas.length; i++) {
                 if (fs.existsSync(outputPath)) break;
-                this.logger?.info(`[ETAPA ${effort.id}/5] Tentando vídeo via ${effort.name}...`);
+                const t = tentativas[i];
+                if (t.sleepMs > 0) await new Promise(r => setTimeout(r, t.sleepMs));
 
-                const command = this._buildYtdlpCommand(finalUrl, {
+                this.logger?.info(`[VÍDEO ${i + 1}/${tentativas.length}] Cliente: ${t.cliente}`);
+                const cmd = this._buildYtdlpCommand(finalUrl, {
                     type: 'video',
                     quality,
                     output: outputPath,
-                    clientOverride: effort.client,
-                    formatOverride: effort.format
+                    clientOverride: t.cliente,
+                    formatOverride: t.formato
                 });
-
                 try {
-                    await execAsync(command, { timeout: 360000, maxBuffer: 500 * 1024 * 1024 });
-                } catch (execErr: any) {
-                    this.logger?.warn(`⚠️ Erro Etapa ${effort.id}: ${execErr.stderr || execErr.message?.split('\n')[0]}`);
+                    await execAsync(cmd, { timeout: 360000, maxBuffer: 500 * 1024 * 1024 });
+                } catch (e: any) {
+                    const msg = (e.stderr || e.message || '').split('\n')[0];
+                    this.logger?.warn(`⚠️ [${t.cliente}] ${msg.substring(0, 100)}`);
                 }
             }
 
-            // ETAPA 4a: INVIDIOUS PROXY BYPASS (Bypassa o 429 no Railway)
-            if (!fs.existsSync(outputPath) && videoId) {
-                this.logger?.info('[ETAPA 4/5] Invidious Proxy Bypass (anti-429)...');
-                const invResult = await this._downloadViaInvidiousProxy(videoId, outputPath, 'video', quality);
-                if (!invResult.sucesso) {
-                    this.logger?.warn(`⚠️ Invidious Proxy falhou: ${invResult.error || 'unknown'}`);
-
-                    // 4b: Piped como segundo sub-fallback
-                    this.logger?.info('[ETAPA 4b/5] Sub-fallback: Piped API...');
-                    const pipedResult = await this._downloadVideoStreamFromPiped(videoId, outputPath, quality);
-                    if (pipedResult.sucesso && fs.existsSync(outputPath)) {
-                        const buffer = await fs.promises.readFile(outputPath);
-                        await this.cleanupFile(outputPath);
-                        return { sucesso: true, buffer, metadata };
-                    }
-                } else if (fs.existsSync(outputPath)) {
-                    const buffer = await fs.promises.readFile(outputPath);
-                    await this.cleanupFile(outputPath);
-                    return { sucesso: true, buffer, metadata };
-                }
+            if (fs.existsSync(outputPath)) {
+                const buffer = await fs.promises.readFile(outputPath);
+                await this.cleanupFile(outputPath);
+                return { sucesso: true, buffer, metadata };
             }
 
-            if (!fs.existsSync(outputPath)) {
-                // DIAGNÓSTICO FINAL ANTES DO ÚLTIMO RECURSO
-                this.logger?.warn('🛠️ DIAGNÓSTICO: Listando formatos acessíveis...');
-                try {
-                    const diagCmd = `yt-dlp ${this._findCookiePath() ? `--cookies "${this._findCookiePath()}"` : ''} -F "${finalUrl}"`;
-                    const { stdout } = await execAsync(diagCmd, { timeout: 20000 });
-                    this.logger?.info(`\n📊 FORMATOS:[${stdout.substring(0, 1000)}...]\n`);
-                } catch (e) { }
+            // Último recurso: ytdl-core
+            this.logger?.warn('⚠️ [LAST RESORT] ytdl-core...');
+            return await this._downloadWithYtdlCore(finalUrl, 'video', metadata);
 
-                this.logger?.warn('[ETAPA 5/5] Tentativa final: ytdl-core wrapper...');
-                return await this._downloadWithYtdlCore(finalUrl, 'video', metadata);
-            }
-
-            const buffer = await fs.promises.readFile(outputPath);
-            await this.cleanupFile(outputPath);
-            return { sucesso: true, buffer, metadata };
         } catch (error: any) {
             return { sucesso: false, error: error.message };
         }

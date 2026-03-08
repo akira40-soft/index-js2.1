@@ -1409,10 +1409,31 @@ ${P}menu osint — Comandos OSINT avançados`,
             await this._reply(m, `❌ Uso: ${this.config.PREFIXO}play <nome da música ou link>`);
             return true;
         }
+
+        // ── Interceptor Spotify ────────────────────────────────────────────────
+        // O Spotify usa DRM. Quando o usuário cola um link Spotify, convertemos
+        // para uma busca normal no YouTube usando o nome que está na URL.
+        let finalQuery = query.trim();
+        if (finalQuery.includes('open.spotify.com') || finalQuery.includes('spotify.com/track')) {
+            // Extrai o ID do track do link e usa como termo de busca
+            const spMatch = finalQuery.match(/track\/([A-Za-z0-9]+)/);
+            if (spMatch) {
+                // Não temos o nome, então buscamos pelo ID — o yt-dlp sabe lidar
+                // Mas é melhor avisar o usuário e pedir o nome
+                await this._reply(m, '🎵 _Link do Spotify detectado! Buscando no YouTube..._');
+                finalQuery = finalQuery.replace(/https?:\/\/open\.spotify\.com\/[^\s]+/, '').trim();
+                if (!finalQuery) {
+                    await this._reply(m, '❌ Para músicas do Spotify, envie o *nome da música* ao invés do link.\nEx: `*play nome da música - artista`');
+                    return true;
+                }
+            }
+        }
+        // ──────────────────────────────────────────────────────────────────────
+
         await this._reply(m, '⏳ baixando...');
 
         try {
-            const res = await this.mediaProcessor.downloadYouTubeAudio(query);
+            const res = await this.mediaProcessor.downloadYouTubeAudio(finalQuery);
 
             if (!res.sucesso || res.error) {
                 await this._reply(m, `❌ ${res.error || 'Erro desconhecido ao baixar áudio.'}`);
