@@ -96,6 +96,9 @@ class MediaProcessor {
         const clients = options.clientOverride || 'ios,web_embedded,android_embedded,tv,web';
 
         let extractorArgs = `youtube:player_client=${clients}`;
+        // formats=missing_pot: habilita formatos "quebrados" que o yt-dlp normalmente pula
+        // Essencial para bypass de shadow-block em IPs de datacenter (docs yt-dlp 2025)
+        extractorArgs += ',formats=missing_pot';
         if (poToken) extractorArgs += `;po_token=web+${poToken}`;
 
         const bypassFlags = [
@@ -103,16 +106,15 @@ class MediaProcessor {
             jsRuntime,
             '--force-ipv4',
             '--no-check-certificates',
-            // User-Agent autêntico com suporte a cookies de sessão
             '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"',
             '--add-header "Accept-Language:en-US,en;q=0.9"',
-            '--add-header "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"',
+            // REMOVIDO: --add-header Accept HTML (yt-dlp usa JSON internamente, HTML header quebrava)
+            // REMOVIDO: --max-filesize 64M (bloqueava TODOS os formatos quando tamnho é desconhecido no shadow-block)
             '--ignore-config',
             '--no-warnings',
             '--no-playlist',
             '--geo-bypass',
-            '--age-limit 99',  // Essencial para vídeos com restrição de idade (erro 152)
-            '--max-filesize 64M',
+            '--age-limit 99',
             '--socket-timeout 20',
             '--retries 2'
         ].filter(Boolean).join(' ');
@@ -171,16 +173,16 @@ class MediaProcessor {
             const tentativas = [
                 // Cliente 1: iPhone — M4A nativo (audio-only)
                 { cliente: 'ios', formato: 'ba[ext=m4a]/ba/b', sleepMs: 0 },
-                // Cliente 2: Android — qualquer audio-only
+                // Cliente 2: Android VR — MAIS EFICAZ contra shadow-block em datacenter (yt-dlp 2025)
+                { cliente: 'android_vr', formato: 'ba/b', sleepMs: 1000 },
+                // Cliente 3: Android — qualquer audio-only
                 { cliente: 'android', formato: 'ba/b', sleepMs: 1500 },
-                // Cliente 3: Web Embutido — bypassa age-gate (erro 152)
+                // Cliente 4: Web Embutido — bypassa age-gate (erro 152)
                 { cliente: 'web_embedded', formato: 'ba/b', sleepMs: 2000 },
-                // Cliente 4: TV — compatível com datacenters
+                // Cliente 5: TV — compatível com datacenters
                 { cliente: 'tv', formato: 'ba/b', sleepMs: 2500 },
-                // Cliente 5: Android Embutido
-                { cliente: 'android_embedded', formato: 'ba/b', sleepMs: 2000 },
                 // Cliente 6: Todos juntos — aceita qualquer formato
-                { cliente: 'ios,android,web', formato: 'b', sleepMs: 3000 }
+                { cliente: 'ios,android_vr,android,web', formato: 'b', sleepMs: 3000 }
             ];
 
             for (let i = 0; i < tentativas.length; i++) {
@@ -256,16 +258,16 @@ class MediaProcessor {
             const tentativas = [
                 // Cliente 1: iPhone — formato progressivo 720p (mp4 nativo)
                 { cliente: 'ios', formato: formatoPrincipal, sleepMs: 0 },
-                // Cliente 2: Android — Progressive (formato 22 = 720p, 18 = 360p)
+                // Cliente 2: Android VR — MAIS EFICAZ contra shadow-block em datacenter (yt-dlp 2025)
+                { cliente: 'android_vr', formato: '22/18/bv*+ba/b', sleepMs: 1000 },
+                // Cliente 3: Android — Progressive (formato 22 = 720p, 18 = 360p)
                 { cliente: 'android', formato: '22/18/bv*[ext=mp4]+ba/b[ext=mp4]/b', sleepMs: 1500 },
-                // Cliente 3: Web Embutido — bypassa age-gate (erro 152)
+                // Cliente 4: Web Embutido — bypassa age-gate (erro 152)
                 { cliente: 'web_embedded', formato: '22/18/bv*+ba/b', sleepMs: 2000 },
-                // Cliente 4: TV — aceita melhor em datacenters
+                // Cliente 5: TV — aceita melhor em datacenters
                 { cliente: 'tv', formato: '22/18/bv*[ext=mp4]+ba/b', sleepMs: 2500 },
-                // Cliente 5: Android+Web Embutido — combo de bypasses
-                { cliente: 'android_embedded,web', formato: 'bv*+ba/b', sleepMs: 2000 },
                 // Cliente 6: Todos juntos — aceita qualquer formato disponível
-                { cliente: 'ios,android,web', formato: 'b', sleepMs: 3000 }
+                { cliente: 'ios,android_vr,android,web', formato: 'b', sleepMs: 3000 }
             ];
 
             for (let i = 0; i < tentativas.length; i++) {
