@@ -172,14 +172,12 @@ class MediaProcessor {
                 }
             }
 
-            // ETAPA 4: FALLBACK SOUNDCLOUD/SEARCH (Se URL não é direta ou falhou)
-            if (!fs.existsSync(outputPath) && !url.includes('youtube.com') && !url.includes('youtu.be')) {
-                this.logger?.info('[ETAPA 4/5] Fallback de Busca (SoundCloud/APIs)...');
-                const searchCmd = `yt-dlp ${this._findCookiePath() ? `--cookies "${this._findCookiePath()}"` : ''} -f "ba/b" -x --audio-format mp3 --geo-bypass --max-filesize 50M -o "${outputPath}" "ytsearch1:${url}"`;
-                try {
-                    await execAsync(searchCmd, { timeout: 120000 });
-                } catch (esc: any) {
-                    this.logger?.warn(`⚠️ SoundCloud/Search falhou: ${esc.message.substring(0, 60)}`);
+            // ETAPA 4: INVIDIOUS PROXY BYPASS (Bypassa o 429 no Railway)
+            if (!fs.existsSync(outputPath) && videoId) {
+                this.logger?.info('[ETAPA 4/5] Invidious Proxy Bypass (anti-429)...');
+                const invResult = await this._downloadViaInvidiousProxy(videoId, outputPath, 'audio');
+                if (!invResult.sucesso) {
+                    this.logger?.warn(`⚠️ Invidious Proxy falhou: ${invResult.error}`);
                 }
             }
 
@@ -244,11 +242,22 @@ class MediaProcessor {
                 }
             }
 
-            // ETAPA 4: FALLBACK API NUVEM (Piped)
+            // ETAPA 4a: INVIDIOUS PROXY BYPASS (Bypassa o 429 no Railway)
             if (!fs.existsSync(outputPath) && videoId) {
-                this.logger?.info('[ETAPA 4/5] Fallback Cloud API (Piped)...');
-                const pipedResult = await this._downloadVideoStreamFromPiped(videoId, outputPath, quality);
-                if (pipedResult.sucesso && fs.existsSync(outputPath)) {
+                this.logger?.info('[ETAPA 4/5] Invidious Proxy Bypass (anti-429)...');
+                const invResult = await this._downloadViaInvidiousProxy(videoId, outputPath, 'video', quality);
+                if (!invResult.sucesso) {
+                    this.logger?.warn(`⚠️ Invidious Proxy falhou: ${invResult.error || 'unknown'}`);
+
+                    // 4b: Piped como segundo sub-fallback
+                    this.logger?.info('[ETAPA 4b/5] Sub-fallback: Piped API...');
+                    const pipedResult = await this._downloadVideoStreamFromPiped(videoId, outputPath, quality);
+                    if (pipedResult.sucesso && fs.existsSync(outputPath)) {
+                        const buffer = await fs.promises.readFile(outputPath);
+                        await this.cleanupFile(outputPath);
+                        return { sucesso: true, buffer, metadata };
+                    }
+                } else if (fs.existsSync(outputPath)) {
                     const buffer = await fs.promises.readFile(outputPath);
                     await this.cleanupFile(outputPath);
                     return { sucesso: true, buffer, metadata };
@@ -445,13 +454,15 @@ class MediaProcessor {
      * Obtém metadados via Invidious API
      */
     private async _getMetadataFromInvidious(videoId: string): Promise<any> {
-        // Instâncias Invidious ativas e confiáveis (Março 2026)
+        // Instâncias Invidious VERIFICADAS e ATIVAS (Março 2026)
         const invidiousInstances = [
-            'https://invidious.v0l.io',
-            'https://invidious.drgns.space',
+            'https://yewtu.be',
+            'https://inv.nadeko.net',
+            'https://invidious.flokinet.to',
+            'https://yt.artemislena.eu',
+            'https://invidious.privacydev.net',
             'https://invidious.nerdvpn.de',
-            'https://inv.tux.pizza',
-            'https://invidious.privacydev.net'
+            'https://invidious.v0l.io'
         ];
 
         for (const instance of invidiousInstances) {
@@ -489,11 +500,11 @@ class MediaProcessor {
      */
     private async _getMetadataFromPiped(videoId: string): Promise<any> {
         const pipedInstances = [
-            'https://pipedapi.mha.fi',
-            'https://pipedapi.adminforge.de',
-            'https://pipedapi.astartes.nl',
             'https://pipedapi.kavin.rocks',
-            'https://pipedapi.tokhmi.xyz'
+            'https://pipedapi.tokhmi.xyz',
+            'https://pipedapi.syncpundit.io',
+            'https://api.piped.projectsegfau.lt',
+            'https://watchapi.whatever.social'
         ];
 
         for (const instance of pipedInstances) {
@@ -536,14 +547,13 @@ class MediaProcessor {
             return { sucesso: false, error: 'videoId não pode ser vazio' };
         }
 
-        // Instâncias Piped VERIFICADAS em Março 2026
-        // Removidas: adminforge.de (DESLIGADA), api.piped.yt (ENOTFOUND), lunar.icu (ECONNRESET)
+        // Instâncias Piped VERIFICADAS (Março 2026)
         const pipedInstances = [
             'https://pipedapi.kavin.rocks',
             'https://pipedapi.tokhmi.xyz',
-            'https://pipedapi.qdi.fi',
-            'https://piped-api.hostux.net',
-            'https://pdapi.vern.cc'
+            'https://pipedapi.syncpundit.io',
+            'https://api.piped.projectsegfau.lt',
+            'https://watchapi.whatever.social'
         ];
 
         for (const instance of pipedInstances) {
@@ -726,7 +736,124 @@ class MediaProcessor {
             }
         }
 
-        return { sucesso: false, error: 'Todas as instâncias falharam no stream' };
+        return { sucesso: false, error: 'Todas as instâncias falharam no stream de áudio' };
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * DOWNLOAD VIA INVIDIOUS PROXY - BYPASS TOTAL DO 429/SHADOW BLOCK
+     * ═══════════════════════════════════════════════════════════════════════
+     * Usa a API do Invidious para obter URLs de stream direta e baixa via curl.
+     * As URLs de stream do Invidious passam pelo servidor DELES, não pelo IP do Railway.
+     */
+    private async _downloadViaInvidiousProxy(
+        videoId: string,
+        outputPath: string,
+        type: 'audio' | 'video',
+        quality: string = '720'
+    ): Promise<{ sucesso: boolean; error?: string }> {
+        if (!videoId) return { sucesso: false, error: 'videoId vazio' };
+
+        // Instâncias Invidious com suporte a streaming (Março 2026)
+        const instances = [
+            'https://yewtu.be',
+            'https://inv.nadeko.net',
+            'https://invidious.flokinet.to',
+            'https://yt.artemislena.eu',
+            'https://invidious.privacydev.net'
+        ];
+
+        for (const instance of instances) {
+            try {
+                this.logger?.info(`🔌 Invidious Proxy: ${instance}/api/v1/videos/${videoId}`);
+                const resp = await axios.get(`${instance}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`, {
+                    timeout: 12000,
+                    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AkiraBot/1.0)' }
+                });
+
+                const data = resp.data;
+                let streamUrl: string | null = null;
+
+                if (type === 'audio') {
+                    // Prioriza audio/mp4 (M4A) para depois converter com ffmpeg
+                    const audioStreams: any[] = data.adaptiveFormats?.filter((f: any) =>
+                        f.type?.startsWith('audio')
+                    ) || [];
+                    audioStreams.sort((a: any, b: any) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
+                    streamUrl = audioStreams[0]?.url || null;
+
+                    if (!streamUrl && data.formatStreams?.length > 0) {
+                        // Fallback: formato progressivo (tem áudio+vídeo)
+                        streamUrl = data.formatStreams[0]?.url || null;
+                    }
+                } else {
+                    // Procura stream de vídeo com a qualidade mais próxima
+                    const targetHeight = parseInt(quality) || 720;
+                    const videoStreams: any[] = data.adaptiveFormats?.filter((f: any) =>
+                        f.type?.startsWith('video') && f.container === 'mp4'
+                    ) || [];
+                    videoStreams.sort((a: any, b: any) => {
+                        // Prefere a resolução mais próxima do alvo
+                        return Math.abs(parseInt(a.resolution) - targetHeight) - Math.abs(parseInt(b.resolution) - targetHeight);
+                    });
+
+                    // Primeiro tenta formato progressivo (áudio + vídeo juntos)
+                    const progressive = data.formatStreams?.find((f: any) =>
+                        parseInt(f.resolution) <= targetHeight
+                    );
+                    streamUrl = progressive?.url || videoStreams[0]?.url || null;
+                }
+
+                if (!streamUrl) {
+                    this.logger?.warn(`⚠️ Invidious ${instance}: sem URL de stream`);
+                    continue;
+                }
+
+                // A URL do Invidious pode ser um proxy deles (ex: ${instance}/videoplayback?...) OU
+                // a URL direta do Google. Ambas funcionam via curl.
+                this.logger?.info(`📥 [Invidious Proxy] Baixando via curl: ${streamUrl.substring(0, 70)}...`);
+
+                const rawPath = type === 'audio' ? outputPath.replace('.mp3', '.m4a') : outputPath;
+                const curlCmd = [
+                    'curl -L -s --max-time 300 --retry 2',
+                    '-H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"',
+                    `-H "Referer: ${instance}/"`,
+                    `-o "${rawPath}"`,
+                    `"${streamUrl}"`
+                ].join(' ');
+
+                await execAsync(curlCmd, { timeout: 320000, maxBuffer: 512 * 1024 * 1024 });
+
+                if (!fs.existsSync(rawPath) || fs.statSync(rawPath).size < 5000) {
+                    this.logger?.warn(`⚠️ Invidious ${instance}: arquivo baixado vazio ou inválido`);
+                    continue;
+                }
+
+                if (type === 'audio' && rawPath !== outputPath) {
+                    // Converte M4A → MP3 via ffmpeg
+                    await new Promise<void>((resolve, reject) => {
+                        ffmpeg(rawPath)
+                            .toFormat('mp3')
+                            .audioCodec('libmp3lame')
+                            .audioQuality(0)
+                            .on('end', () => resolve())
+                            .on('error', (e: Error) => reject(e))
+                            .save(outputPath);
+                    });
+                    await this.cleanupFile(rawPath);
+                }
+
+                if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 5000) {
+                    this.logger?.info(`✅ [Invidious Proxy] Download concluído com sucesso!`);
+                    return { sucesso: true };
+                }
+
+            } catch (err: any) {
+                this.logger?.warn(`⚠️ Invidious ${instance} falhou: ${err.message?.substring(0, 60)}`);
+            }
+        }
+
+        return { sucesso: false, error: 'Todas as instâncias Invidious falharam' };
     }
 
     /**
