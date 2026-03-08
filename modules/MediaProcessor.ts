@@ -81,48 +81,49 @@ class MediaProcessor {
     }
 
     /**
-     * Constrói o comando yt-dlp com bypasses para 2026
-     * NOTA: tv_embedded foi removido em 2026-01-31 (era broken)
-     * NOTA: --js-runtime node pode não ser suportado em versões antigas
+     * Constrói o comando yt-dlp seguindo as NORMAS TÉCNICAS de 2026
+     * Usa Deno como runtime JS para decifrar assinaturas complexas (SABR/DPI)
      */
     private _buildYtdlpCommand(url: string, options: { type: 'audio' | 'video' | 'json', quality?: string, output?: string, isSearch?: boolean, clientOverride?: string, formatOverride?: string }): string {
         const cookiePath = this._findCookiePath();
         const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
         const poToken = this.config?.YT_PO_TOKEN;
 
-        // Clientes: ios, android, web, mweb, tv (tv_embedded removido)
-        const clients = options.clientOverride || (cookiePath ? 'ios,web,android' : 'ios,android');
+        // Padrão Industrial: Se houver Deno, use-o. Caso contrário, deixa o yt-dlp decidir.
+        const jsRuntime = fs.existsSync('/usr/local/bin/deno') || fs.existsSync('/root/.deno/bin/deno') ? '--js-runtime deno' : '';
 
-        // Argumentos de extração
+        // Clientes normatizados em ordem de prioridade
+        const clients = options.clientOverride || 'ios,web_embedded,android_embedded,tv,web';
+
         let extractorArgs = `youtube:player_client=${clients}`;
         if (poToken) extractorArgs += `;po_token=web+${poToken}`;
 
         const bypassFlags = [
             `--extractor-args "${extractorArgs}"`,
+            jsRuntime,
             '--force-ipv4',
             '--no-check-certificates',
-            '--user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"',
+            '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"',
             '--ignore-config',
             '--no-warnings',
             '--no-playlist',
             '--geo-bypass',
-            '--socket-timeout 30',
-            '--retries 3',
-            '--age-limit 99',
-            '--youtube-include-dash-manifest'
-        ].join(' ');
+            '--max-filesize 64M', // Limite de segurança para WhatsApp
+            '--socket-timeout 20',
+            '--retries 2'
+        ].filter(Boolean).join(' ');
 
         let actionFlags = '';
         if (options.type === 'audio') {
-            const format = options.formatOverride || 'ba/b';
+            const format = options.formatOverride || 'ba[ext=m4a]/ba/bestaudio/best';
             actionFlags = `-f "${format}" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
         } else if (options.type === 'video') {
             const quality = options.quality || '720';
-            // Formatos progressivos (22=720p, 18=360p) são muito mais estáveis no client ios/android
+            // "Standard String": Prioriza formato progressivo mp4 para garantir compatibilidade com WhatsApp
             const format = options.formatOverride || (
-                quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' :
-                    quality === '720' ? '22 / bestvideo[height<=720]+bestaudio/best / 136+140 / best' :
-                        '18 / bestvideo[height<=480]+bestaudio/best / 135+140 / best'
+                quality === '1080' ? 'bv[height<=1080][ext=mp4]+ba[ext=m4a]/bestvideo[height<=1080]+bestaudio/best' :
+                    quality === '720' ? '22/bv[height<=720][ext=mp4]+ba[ext=m4a]/bestvideo[height<=720]+bestaudio/best' :
+                        '18/bv[height<=480][ext=mp4]+ba[ext=m4a]/best'
             );
             actionFlags = `-f "${format}" --merge-output-format mp4 -o "${options.output}"`;
         } else if (options.type === 'json') {
@@ -151,71 +152,34 @@ class MediaProcessor {
             const finalUrl = metadata.url || url;
             const videoId = metadata.videoId || this._extractVideoId(finalUrl) || this._extractVideoId(url);
             const outputPath = this.generateRandomFilename('mp3');
-            const cookiePath = this._findCookiePath();
-            const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 1: yt-dlp Enterprise Stability Loop (v4.1)
-            const attempts = [
-                { id: '1', client: 'ios', format: 'ba/b' },
-                { id: '2', client: 'web_embedded', format: 'ba/b' },
-                { id: '3', client: 'android_embedded', format: 'ba/b' },
-                { id: '4', client: 'tv', format: 'ba/b' },
-                { id: '5', client: 'mweb', format: 'ba/b' }
+            // HIERARQUIA LINEAR DE ÁUDIO (NORMA v5)
+            const efforts = [
+                { id: '1', name: 'yt-dlp [ios,deno]', client: 'ios', format: 'ba[ext=m4a]/ba/bestaudio' },
+                { id: '2', name: 'yt-dlp [embedded]', client: 'web_embedded,android_embedded', format: 'ba/best' },
+                { id: '3', name: 'yt-dlp [tv]', client: 'tv', format: 'ba/best' }
             ];
 
-            for (const attempt of attempts) {
+            for (const effort of efforts) {
                 if (fs.existsSync(outputPath)) break;
+                this.logger?.info(`[ETAPA ${effort.id}/5] Tentando via ${effort.name}...`);
 
-                const command = this._buildYtdlpCommand(finalUrl, {
-                    type: 'audio',
-                    output: outputPath,
-                    clientOverride: attempt.client,
-                    formatOverride: attempt.format
-                });
-
-                this.logger?.info(`[ETAPA ${attempt.id}/5] Tentando áudio via ${attempt.client}...`);
+                const cmd = this._buildYtdlpCommand(finalUrl, { type: 'audio', output: outputPath, clientOverride: effort.client, formatOverride: effort.format });
                 try {
-                    await execAsync(command, { timeout: 300000, maxBuffer: 200 * 1024 * 1024 });
-                } catch (execErr: any) {
-                    this.logger?.warn(`⚠️ [FALHA ETAPA ${attempt.id}] ${attempt.client}: ${execErr.stderr || execErr.message?.split('\n')[0]}`);
-                    if (execErr.message?.includes('Sign in') && !this.config?.YT_PO_TOKEN) {
-                        this.logger?.error('🚨 ALERTA: YouTube exige PO_TOKEN. Sem ele, a maioria das etapas falhará no Railway.');
-                    }
+                    await execAsync(cmd, { timeout: 180000, maxBuffer: 100 * 1024 * 1024 });
+                } catch (e: any) {
+                    this.logger?.warn(`⚠️ Erro Etapa ${effort.id}: ${e.stderr || e.message?.split('\n')[0]}`);
                 }
             }
 
-            // DIAGNÓSTICO: Se falhou tudo, vamos listar o que o YouTube está liberando
-            if (!fs.existsSync(outputPath)) {
-                this.logger?.warn('🛠️ INICIANDO DIAGNÓSTICO DE FORMATOS...');
-                const diagCmd = this._buildYtdlpCommand(finalUrl, { type: 'json', clientOverride: 'ios,web' });
+            // ETAPA 4: FALLBACK SOUNDCLOUD/SEARCH (Se URL não é direta ou falhou)
+            if (!fs.existsSync(outputPath) && !url.includes('youtube.com') && !url.includes('youtu.be')) {
+                this.logger?.info('[ETAPA 4/5] Fallback de Busca (SoundCloud/APIs)...');
+                const searchCmd = `yt-dlp ${this._findCookiePath() ? `--cookies "${this._findCookiePath()}"` : ''} -f "ba/b" -x --audio-format mp3 --geo-bypass --max-filesize 50M -o "${outputPath}" "ytsearch1:${url}"`;
                 try {
-                    const { stdout } = await execAsync(diagCmd.replace('--dump-json --no-download', '-F'));
-                    this.logger?.info(`\n📊 FORMATOS DISPONÍVEIS NO RAILWAY:\n${stdout}\n`);
-                } catch (diagErr: any) {
-                    this.logger?.error('❌ Falha ao rodar diagnóstico (-F). O IP pode estar totalmente bloqueado.');
-                }
-            }
-
-            // TENTATIVA 3: Download direto via Piped stream local
-            if (!fs.existsSync(outputPath) && videoId) {
-                this.logger?.info('🚀 Tentando fallback de API pública (Piped stream)...');
-                const pipedResult = await this._downloadStreamFromPiped(videoId, outputPath);
-                if (pipedResult.sucesso && fs.existsSync(outputPath)) {
-                    const buffer = await fs.promises.readFile(outputPath);
-                    await this.cleanupFile(outputPath);
-                    return { sucesso: true, buffer, metadata };
-                }
-                this.logger?.warn('⚠️ Fallback do Piped stream falhou');
-            }
-
-            // TENTATIVA 4: SoundCloud como alternativa final
-            if (!fs.existsSync(outputPath) && !url.startsWith('http')) {
-                this.logger?.info('🎶 Tentando SoundCloud como alternativa...');
-                const scCmd = `yt-dlp "scsearch1:${url}" -x --audio-format mp3 --audio-quality 0 -o "${outputPath}" --no-warnings`;
-                try {
-                    await execAsync(scCmd, { timeout: 120000, maxBuffer: 200 * 1024 * 1024 });
+                    await execAsync(searchCmd, { timeout: 120000 });
                 } catch (esc: any) {
-                    this.logger?.warn(`⚠️ SoundCloud falhou: ${esc.message.substring(0, 60)}`);
+                    this.logger?.warn(`⚠️ SoundCloud/Search falhou: ${esc.message.substring(0, 60)}`);
                 }
             }
 
@@ -225,13 +189,9 @@ class MediaProcessor {
                 return { sucesso: true, buffer, metadata };
             }
 
-            // TENTATIVA 5: @distube/ytdl-core wrapper (ultimo recurso)
-            this.logger?.warn('⚠️ Tentativa final: ytdl-core wrapper...');
-            const ytdlCoreResult = await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
-            if (!ytdlCoreResult.sucesso) {
-                this.logger?.error(`❌ ytdl-core wrapper falhou: ${ytdlCoreResult.error}`);
-            }
-            return ytdlCoreResult;
+            // ETAPA 5: ytdl-core wrapper
+            this.logger?.warn('[ETAPA 5/5] Tentativa final: ytdl-core wrapper...');
+            return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
 
         } catch (error: any) {
             this.logger?.error(`❌ Erro download audio: ${error.message}`);
@@ -257,66 +217,54 @@ class MediaProcessor {
             const finalUrl = metadata.url || url;
             const videoId = metadata.videoId || this._extractVideoId(finalUrl) || this._extractVideoId(url);
             const outputPath = this.generateRandomFilename('mp4');
-            const cookiePath = this._findCookiePath();
-            const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
 
-            // TENTATIVA 1: yt-dlp Enterprise Stability Loop (v4.1)
-            const attempts = [
-                { id: '1', client: 'ios', format: quality === '1080' ? 'bestvideo[height<=1080]+bestaudio/best / 137+140 / best' : '22/18/best' },
-                { id: '2', client: 'web_embedded', format: '22/18/best' },
-                { id: '3', client: 'android_embedded', format: '22/18/best' },
-                { id: '4', client: 'tv', format: '22/18/best' },
-                { id: '5', client: 'web,android', format: '22/18/best/bestvideo+bestaudio' }
+            // HIERARQUIA LINEAR DE VÍDEO (NORMA v5)
+            const efforts = [
+                { id: '1', name: 'yt-dlp [ios,deno]', client: 'ios', format: quality === '1080' ? 'bv[height<=1080][ext=mp4]+ba[ext=m4a]/bestvideo+bestaudio' : '22/18/best' },
+                { id: '2', name: 'yt-dlp [embedded]', client: 'web_embedded,android_embedded', format: '22/18/best' },
+                { id: '3', name: 'yt-dlp [tv]', client: 'tv', format: '22/18/best' }
             ];
 
-            for (const attempt of attempts) {
+            for (const effort of efforts) {
                 if (fs.existsSync(outputPath)) break;
+                this.logger?.info(`[ETAPA ${effort.id}/5] Tentando vídeo via ${effort.name}...`);
 
                 const command = this._buildYtdlpCommand(finalUrl, {
                     type: 'video',
                     quality,
                     output: outputPath,
-                    clientOverride: attempt.client,
-                    formatOverride: attempt.format
+                    clientOverride: effort.client,
+                    formatOverride: effort.format
                 });
 
-                this.logger?.info(`[ETAPA ${attempt.id}/5] Tentando vídeo via ${attempt.client}...`);
                 try {
-                    await execAsync(command, { timeout: 300000, maxBuffer: 500 * 1024 * 1024 });
+                    await execAsync(command, { timeout: 360000, maxBuffer: 500 * 1024 * 1024 });
                 } catch (execErr: any) {
-                    this.logger?.warn(`⚠️ [FALHA ETAPA ${attempt.id}] ${attempt.client}: ${execErr.stderr || execErr.message?.split('\n')[0]}`);
-                    if (execErr.message?.includes('Sign in') && !this.config?.YT_PO_TOKEN) {
-                        this.logger?.error('🚨 ALERTA: YouTube exige PO_TOKEN. Sem ele, a maioria das etapas falhará no Railway.');
-                    }
+                    this.logger?.warn(`⚠️ Erro Etapa ${effort.id}: ${execErr.stderr || execErr.message?.split('\n')[0]}`);
                 }
             }
 
-            // DIAGNÓSTICO: Se falhou tudo, vamos listar o que o YouTube está liberando
-            if (!fs.existsSync(outputPath)) {
-                this.logger?.warn('🛠️ INICIANDO DIAGNÓSTICO DE FORMATOS...');
-                const diagCmd = this._buildYtdlpCommand(finalUrl, { type: 'json', clientOverride: 'ios,web' });
-                try {
-                    const { stdout } = await execAsync(diagCmd.replace('--dump-json --no-download', '-F'));
-                    this.logger?.info(`\n📊 FORMATOS VÍDEO NO RAILWAY:\n${stdout}\n`);
-                } catch (diagErr: any) {
-                    this.logger?.error('❌ Falha ao rodar diagnóstico (-F). O IP pode estar totalmente bloqueado.');
-                }
-            }
-
-            // TENTATIVA 3: Download proxy Muxing Piped stream de VÍDEO
+            // ETAPA 4: FALLBACK API NUVEM (Piped)
             if (!fs.existsSync(outputPath) && videoId) {
-                this.logger?.info('🚀 Tentando download fallback em Nuvem pela PAPI...');
+                this.logger?.info('[ETAPA 4/5] Fallback Cloud API (Piped)...');
                 const pipedResult = await this._downloadVideoStreamFromPiped(videoId, outputPath, quality);
                 if (pipedResult.sucesso && fs.existsSync(outputPath)) {
                     const buffer = await fs.promises.readFile(outputPath);
                     await this.cleanupFile(outputPath);
                     return { sucesso: true, buffer, metadata };
                 }
-                this.logger?.warn('⚠️ Piped video stream fallback falhou, indo para última via...');
             }
 
             if (!fs.existsSync(outputPath)) {
-                this.logger?.warn('⚠️ Tentativa final: @distube proxy wrapper...');
+                // DIAGNÓSTICO FINAL ANTES DO ÚLTIMO RECURSO
+                this.logger?.warn('🛠️ DIAGNÓSTICO: Listando formatos acessíveis...');
+                try {
+                    const diagCmd = `yt-dlp ${this._findCookiePath() ? `--cookies "${this._findCookiePath()}"` : ''} -F "${finalUrl}"`;
+                    const { stdout } = await execAsync(diagCmd, { timeout: 20000 });
+                    this.logger?.info(`\n📊 FORMATOS:[${stdout.substring(0, 1000)}...]\n`);
+                } catch (e) { }
+
+                this.logger?.warn('[ETAPA 5/5] Tentativa final: ytdl-core wrapper...');
                 return await this._downloadWithYtdlCore(finalUrl, 'video', metadata);
             }
 
