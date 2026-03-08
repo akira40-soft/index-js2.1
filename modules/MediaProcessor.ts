@@ -288,8 +288,8 @@ class MediaProcessor {
 
         // SE for uma busca por nome (não URL), precisamos resolver o nome → videoId primeiro
         if (isSearch && !videoId) {
-            this.logger?.info(`🔍 Buscando "${url}" no Invidious...`);
-            const searchResult = await this._searchOnInvidious(url);
+            this.logger?.info(`🔍 Buscando "${url}" via APIs Fallback...`);
+            const searchResult = await this._searchYouTubeFallback(url);
             if (searchResult.sucesso && searchResult.videoId) {
                 videoId = searchResult.videoId;
                 this.logger?.info(`✅ Encontrado via busca: ${searchResult.titulo} (${videoId})`);
@@ -308,7 +308,7 @@ class MediaProcessor {
                     dataPublicacao: searchResult.dataPublicacao || 'N/A'
                 };
             }
-            this.logger?.warn(`⚠️ Busca Invidious falhou para "${url}", tentando yt-dlp search...`);
+            this.logger?.warn(`⚠️ Busca inicial falhou para "${url}", tentando yt-dlp search...`);
         } else {
             this.logger?.info(`🔍 Extraindo metadados para video ID: ${videoId || '(URL sem ID)'}`);
         }
@@ -413,47 +413,46 @@ class MediaProcessor {
     }
 
     /**
-     * Busca um vídeo por nome no Invidious e retorna o primeiro resultado com videoId e metadados
-     * Resolve o problema de buscas por nome (ex: "kerosene") que não têm videoId
+     * Busca um vídeo por nome nas APIs públicas (Piped)
      */
-    private async _searchOnInvidious(query: string): Promise<any> {
-        // Instâncias Invidious que ainda suportam API de busca em servidores (Março 2026)
-        const instances = [
-            'https://inv.nadeko.net',
-            'https://invidious.flokinet.to',
-            'https://inv.tux.pizza',
-            'https://invidious.privacydev.net',
-            'https://yewtu.be'
+    private async _searchYouTubeFallback(query: string): Promise<any> {
+        const pipedInstances = [
+            'https://pipedapi.kavin.rocks',
+            'https://pipedapi.tokhmi.xyz',
+            'https://pipedapi.qdi.fi',
+            'https://pdapi.vern.cc'
         ];
 
-        for (const instance of instances) {
+        for (const instance of pipedInstances) {
             try {
-                const response = await axios.get(`${instance}/api/v1/search`, {
-                    params: { q: query, type: 'video', sort_by: 'relevance' },
+                const url = `${instance}/search?q=${encodeURIComponent(query)}&filter=all`;
+                const response = await axios.get(url, {
                     timeout: 10000,
-                    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AkiraBot/1.0)' }
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
                 });
 
-                const results = response.data;
+                const results = response.data?.items;
                 if (Array.isArray(results) && results.length > 0) {
-                    const first = results.find((r: any) => r.type === 'video') || results[0];
-                    if (first && first.videoId) {
+                    // Pega o primeiro item que for 'stream' (vídeo)
+                    const first = results.find((r: any) => r.type === 'stream');
+                    if (first && first.url) {
+                        const videoId = first.url.replace('/watch?v=', '');
                         return {
                             sucesso: true,
-                            videoId: first.videoId,
+                            videoId: videoId,
                             titulo: first.title || query,
-                            canal: first.author || 'Desconhecido',
-                            duracao: first.lengthSeconds || 0,
-                            duracaoFormatada: this._formatDuration(first.lengthSeconds || 0),
-                            thumbnail: first.videoThumbnails?.[0]?.url || `https://img.youtube.com/vi/${first.videoId}/maxresdefault.jpg`,
-                            visualizacoes: this._formatStats(first.viewCount),
-                            dataPublicacao: first.publishedText || 'N/A',
-                            curtidas: 'N/A' // Busca geralmente não traz likes
+                            canal: first.uploaderName || 'Desconhecido',
+                            duracao: first.duration || 0,
+                            duracaoFormatada: this._formatDuration(first.duration || 0),
+                            thumbnail: first.thumbnail || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+                            visualizacoes: this._formatStats(first.views),
+                            dataPublicacao: first.uploadedDate || 'N/A',
+                            curtidas: 'N/A'
                         };
                     }
                 }
             } catch (err: any) {
-                this.logger?.debug(`⚠️ Invidious search ${instance}: ${err.message?.substring(0, 40)}`);
+                this.logger?.debug(`⚠️ Piped Search ${instance}: ${err.message?.substring(0, 40)}`);
             }
         }
 
@@ -661,48 +660,82 @@ class MediaProcessor {
                 });
 
                 const data = response.data;
-                let streamUrl: string | null = null;
+                let videoUrl: string | null = null;
+                let audioUrl: string | null = null;
+                let needsMuxing = false;
 
                 if (data.videoStreams && data.videoStreams.length > 0) {
-                    // Tenta achar a qualidade desejada, ou a mais próxima inferior
                     const targetQualNum = parseInt(targetQuality) || 360;
 
-                    const validStreams = data.videoStreams.filter((s: any) => s.videoOnly === false && s.quality !== 'auto');
+                    const validStreams = data.videoStreams.filter((s: any) => s.quality !== 'auto');
 
                     if (validStreams.length > 0) {
                         const sorted = validStreams.sort((a: any, b: any) => {
                             const qA = parseInt(a.quality.replace('p', '')) || 0;
                             const qB = parseInt(b.quality.replace('p', '')) || 0;
-                            // Priorizamos a qualidade mais alta que não ultrapasse o target
                             if (qA <= targetQualNum && qB > targetQualNum) return -1;
                             if (qB <= targetQualNum && qA > targetQualNum) return 1;
-                            return qB - qA; // Maior primeiro
+                            return qB - qA;
                         });
 
-                        streamUrl = sorted[0]?.url || null;
+                        const selectedVideo = sorted[0];
+                        videoUrl = selectedVideo?.url || null;
+                        needsMuxing = selectedVideo?.videoOnly === true;
                     }
                 }
 
-                if (!streamUrl) {
-                    this.logger?.warn(`⚠️ Piped ${instance}: sem URL de stream VÍDEO (com áudio embutido)`);
+                if (!videoUrl) {
+                    this.logger?.warn(`⚠️ Piped ${instance}: sem URL de stream VÍDEO`);
                     continue;
                 }
 
-                // ════════════════════════════════════════════════════
-                // Usa CURL como subprocess
-                // ════════════════════════════════════════════════════
-                this.logger?.info(`📥 Baixando VÍDEO via curl: ${streamUrl.substring(0, 50)}...`);
-                // Precisamos salvar direto como destino porque a maioria dos streams Piped com video+audio é mp4
-                const curlCmd = `curl -L -s --max-time 300 --retry 3 \
-                    -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-                    -H "Referer: https://www.youtube.com/" \
-                    -o "${outputPath}" \
-                    "${streamUrl}"`;
+                if (needsMuxing && data.audioStreams && data.audioStreams.length > 0) {
+                    const sortedAudio = [...data.audioStreams].sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+                    audioUrl = sortedAudio[0]?.url || null;
+                }
 
-                await execAsync(curlCmd, { timeout: 320000, maxBuffer: 500 * 1024 * 1024 });
+                if (needsMuxing && !audioUrl) {
+                    this.logger?.warn(`⚠️ Piped ${instance} precisa de muxing mas não tem stream de áudio`);
+                    continue;
+                }
+
+                this.logger?.info(`📥 Baixando VÍDEO via curl (${needsMuxing ? 'Muxing: Video+Audio' : 'Muxed direto'})...`);
+
+                if (needsMuxing) {
+                    const tempVideo = outputPath.replace('.mp4', '_v.mp4');
+                    const tempAudio = outputPath.replace('.mp4', '_a.m4a');
+
+                    const curlVidCmd = `curl -L -s --max-time 300 --retry 3 -H "User-Agent: Mozilla/5.0" -H "Referer: https://www.youtube.com/" -o "${tempVideo}" "${videoUrl}"`;
+                    await execAsync(curlVidCmd, { timeout: 320000, maxBuffer: 500 * 1024 * 1024 });
+
+                    const curlAudCmd = `curl -L -s --max-time 300 --retry 3 -H "User-Agent: Mozilla/5.0" -H "Referer: https://www.youtube.com/" -o "${tempAudio}" "${audioUrl}"`;
+                    await execAsync(curlAudCmd, { timeout: 320000, maxBuffer: 500 * 1024 * 1024 });
+
+                    if (!fs.existsSync(tempVideo) || !fs.existsSync(tempAudio)) {
+                        this.logger?.warn(`⚠️ Erro ao baixar arquivos temporários para Muxing no ${instance}`);
+                        continue;
+                    }
+
+                    this.logger?.info(`🎵 Muxing Áudio e Vídeo via ffmpeg...`);
+                    await new Promise<void>((resolve, reject) => {
+                        ffmpeg()
+                            .input(tempVideo)
+                            .input(tempAudio)
+                            .outputOptions(['-c:v copy', '-c:a aac'])
+                            .on('end', () => resolve())
+                            .on('error', (err: Error) => reject(err))
+                            .save(outputPath);
+                    });
+
+                    await this.cleanupFile(tempVideo);
+                    await this.cleanupFile(tempAudio);
+                } else {
+                    const curlCmd = `curl -L -s --max-time 300 --retry 3 -H "User-Agent: Mozilla/5.0" -H "Referer: https://www.youtube.com/" -o "${outputPath}" "${videoUrl}"`;
+                    await execAsync(curlCmd, { timeout: 320000, maxBuffer: 500 * 1024 * 1024 });
+                }
 
                 if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) {
-                    this.logger?.info(`✅ Piped VÍDEO download concluído via curl!`);
+                    this.logger?.info(`✅ Piped VÍDEO download concluído!`);
                     return { sucesso: true };
                 }
 
@@ -711,7 +744,7 @@ class MediaProcessor {
             }
         }
 
-        return { sucesso: false, error: 'Todas as instâncias falharam' };
+        return { sucesso: false, error: 'Todas as instâncias falharam no stream' };
     }
 
     /**
