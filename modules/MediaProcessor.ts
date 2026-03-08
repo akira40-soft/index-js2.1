@@ -91,9 +91,8 @@ class MediaProcessor {
         const poToken = this.config?.YT_PO_TOKEN;
 
         // iOS client bypassa bot detection em IPs de servidor (2026)
-        // android_music é uma alternativa mais discreta
-        // web/mweb usados com cookies
-        const clients = cookiePath ? 'ios,ios_music,web,android' : 'ios,ios_music,android';
+        // Adicionando 'web' e 'android' como fallback mas forçando ios como primário
+        const clients = cookiePath ? 'ios,web,android' : 'ios,android';
 
         // Argumentos de extração
         let extractorArgs = `youtube:player_client=${clients}`;
@@ -743,9 +742,9 @@ class MediaProcessor {
                     const parts = l.split('\t');
                     if (parts.length < 7) return false;
                     const domain = parts[0].toLowerCase();
-                    // Aceita apenas domínios do youtube ou google que permitam auth no youtube
-                    return domain.includes('youtube.com') || domain.endsWith('.youtube.com') ||
-                        (domain.includes('google.com') && (domain.startsWith('accounts.') || domain.startsWith('.google.com')));
+                    // Aceita APENAS domínios do youtube para evitar erro "Cookie not in this host's domain"
+                    // Muitos cookies do Google são espelhados como __Secure- no youtube.com
+                    return domain.includes('youtube.com');
                 })
                 .map(line => {
                     const parts = line.split('\t');
@@ -787,7 +786,10 @@ class MediaProcessor {
                 duracao: parseInt(videoDetails.lengthSeconds) || 0,
                 duracaoFormatada: this._formatDuration(parseInt(videoDetails.lengthSeconds) || 0),
                 thumbnail: videoDetails.thumbnails?.[0]?.url || '',
-                url: videoDetails.video_url || url
+                url: videoDetails.video_url || url,
+                visualizacoes: this._formatStats(videoDetails.viewCount),
+                curtidas: this._formatStats(videoDetails.likes),
+                dataPublicacao: videoDetails.publishDate || 'N/A'
             };
         } catch (err: any) {
             this.logger?.warn(`⚠️ ytdl-core falhou: ${err.message}`);
@@ -874,6 +876,17 @@ class MediaProcessor {
 
         } catch (error: any) {
             this.logger?.error(`❌ Erro ytdl-core: ${error.message}`);
+
+            // Sugestão de PO_TOKEN se for erro de bot
+            if (error.message?.includes('Sign in') || error.message?.includes('bot')) {
+                if (!this.config?.YT_PO_TOKEN) {
+                    return {
+                        sucesso: false,
+                        error: 'O YouTube bloqueou o download. Como você está no Railway, configure a variável YT_PO_TOKEN para burlar isso. Veja o arquivo RAILWAY_SETUP.md.'
+                    };
+                }
+            }
+
             return { sucesso: false, error: error.message };
         }
     }
