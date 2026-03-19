@@ -6,8 +6,11 @@
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay, Browsers, getContentType } from '@whiskeysockets/baileys';
+/// <reference path="./declarations.d.ts" />
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay, Browsers, getContentType, generateMessageID } from '@whiskeysockets/baileys';
 import fs from 'fs';
+// @ts-ignore
+import path from 'path';
 import pino from 'pino';
 import { exec } from 'child_process';
 import util from 'util';
@@ -206,11 +209,13 @@ class BotCore {
                 browser: Browsers.macOS('Akira-Bot'),
                 generateHighQualityLinkPreview: true,
                 getMessage: async (key: any) => ({ conversation: 'hello' }),
-                connectTimeoutMs: 60000,
-                defaultQueryTimeoutMs: 60000,
-                keepAliveIntervalMs: 10000,
+                connectTimeoutMs: 120000,
+                defaultQueryTimeoutMs: 120000,
+                keepAliveIntervalMs: 15000,
+                markOnlineOnConnect: true,
                 emitOwnEvents: false,
-                retryRequestDelayMs: 250
+                retryRequestDelayMs: 500,
+                shouldIgnoreJid: (jid: string) => jid === 'status@broadcast'
             };
 
             const agent = HFCorrections.createHFAgent();
@@ -237,7 +242,14 @@ class BotCore {
                     this.isConnected = false;
                     this.currentQR = null;
                     const reason = lastDisconnect?.error?.output?.statusCode;
-                    const shouldReconnect = reason !== DisconnectReason.loggedOut;
+                    let shouldReconnect = reason !== DisconnectReason.loggedOut;
+                    // 401/500: force auth recovery
+                    if (reason === 401 || reason === 500) {
+                      this.logger.warn('🔄 401/500 detected → Clearing auth & forcing QR regen');
+                      this._cleanAuthOnError();
+                      shouldReconnect = true;
+                      this.reconnectAttempts = 0; // Reset for auth recovery
+                    }
                     this.logger.warn(`🔴 Conexão fechada. Motivo: ${reason}. Reconectar: ${shouldReconnect}`);
 
                     if (this.eventListeners.onDisconnected) this.eventListeners.onDisconnected(reason);
@@ -246,8 +258,8 @@ class BotCore {
                         if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
                             this.reconnectAttempts++;
                             // Exponential backoff com jitter (até 30s)
-                            const baseDelay = Math.min(Math.pow(1.5, this.reconnectAttempts) * 1000, 30000);
-                            const delayMs = Math.floor(baseDelay + Math.random() * 1000);
+                            const baseDelay = Math.min(Math.pow(1.8, this.reconnectAttempts) * 1000, 300000); // Up to 5min
+                            const delayMs = Math.floor(baseDelay + Math.random() * 5000); // More jitter
 
                             this.logger.info(`⏳ Reconectando em ${delayMs}ms (Tentativa ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`);
                             await delay(delayMs);
@@ -398,6 +410,7 @@ class BotCore {
 
             const replyInfo = this.messageProcessor.extractReplyInfo(m);
             const temSticker = !!m.message?.stickerMessage;
+            const temVideo = this.messageProcessor.hasVideo(m);
 
             if (temSticker && ehGrupo && this.moderationSystem?.isAntiStickerActive(remoteJid)) {
                 await this.handleAntiMediaViolation(m, 'sticker');
@@ -410,6 +423,14 @@ class BotCore {
                     return;
                 }
                 await this.handleImageMessage(m, nome, numeroReal, replyInfo, ehGrupo);
+            } else if (temVideo) {
+                if (ehGrupo && this.moderationSystem?.isAntiVideoActive(remoteJid)) {
+                    await this.handleAntiMediaViolation(m, 'video');
+                    return;
+                }
+                await this.handleVideoMessage(m, nome, numeroReal, replyInfo, ehGrupo);
+            } else if (this.messageProcessor.hasDocument(m)) {
+                await this.handleDocumentMessage(m, nome, numeroReal, replyInfo, ehGrupo);
             } else if (temAudio) {
                 await this.handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo);
             } else if (texto) {
@@ -422,8 +443,12 @@ class BotCore {
     }
 
     async handleImageMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean): Promise<void> {
+        const caption = this.messageProcessor.extractText(m) || '';
+        const allowed = await this.handleRateLimitAndBlacklist(m, nome, numeroReal, caption || '<IMAGEM>', ehGrupo);
+        if (!allowed) return;
+
         this.logger.info(`🖼️ [IMAGEM] ${nome}`);
-        if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
+        if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling !== false) {
             const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 15);
             if (xp) this.logger.info(`📈 [LEVEL] ${nome} +15 XP`);
         }
@@ -432,7 +457,7 @@ class BotCore {
             let deveResponder = false;
             const caption = this.messageProcessor.extractText(m) || '';
             const captionLower = caption.toLowerCase();
-            const botNameLower = (this.config.BOT_NAME || 'belmira').toLowerCase();
+            const botNameLower = (this.config.BOT_NAME || 'akira').toLowerCase();
 
             if (!ehGrupo) deveResponder = true;
             else if (this.messageProcessor.isBotMentioned(m)) deveResponder = true;
@@ -467,8 +492,10 @@ class BotCore {
             }
             if (!imgMsg) { this.logger.error('❌ Imagem inválida'); return; }
 
+            // Passa m.message completo para que o downloadMedia possa usar extractMediaContainer
+            // e encontrar a mediaKey e URL correctamente. Passar imgMsg (já extraído) fazia falhar.
             this.logger.debug('⬇️ Baixando imagem...');
-            const imageBuffer = await this.mediaProcessor.downloadMedia(imgMsg, 'image');
+            const imageBuffer = await this.mediaProcessor.downloadMedia(m.message, 'image');
             if (!imageBuffer?.length) {
                 this.logger.error('❌ Buffer vazio');
                 await this.reply(m, '❌ Não consegui baixar a imagem.');
@@ -476,26 +503,43 @@ class BotCore {
             }
 
             this.logger.debug(`✅ Imagem: ${imageBuffer.length} bytes`);
-            let base64Image;
+
+            // Salvando a imagem localmente para envio por Path em vez de Base64
+            let tempMediaPath = '';
             try {
-                base64Image = imageBuffer.toString('base64');
-                if (!base64Image || base64Image.length < 100) throw new Error('Base64 inválido');
+                const dir = this.config.DATA_DIR ? path.join(this.config.DATA_DIR, 'media') : './temp/akira_media';
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+                const ext = (imgMsg.mimetype || 'image/jpeg').split('/')[1] || 'jpeg';
+                const filename = `img_${Date.now()}_${numeroReal.split('@')[0]}.${ext}`;
+                tempMediaPath = path.join(dir, filename);
+
+                fs.writeFileSync(tempMediaPath, imageBuffer);
+                this.logger.debug(`💾 Imagem salva em: ${tempMediaPath}`);
             } catch (err: any) {
-                this.logger.error('❌ Erro base64:', err.message);
-                await this.reply(m, '❌ Erro ao processar imagem.');
-                return;
+                this.logger.error('❌ Erro salvando imagem no disco:', err.message);
+                tempMediaPath = ''; // Fallback de emergência (ou skip)
+                // Fallback para Base64 apenas se o ficheiro falhar dramaticamente
+                try {
+                    tempMediaPath = imageBuffer.toString('base64');
+                } catch (e: any) {
+                    await this.reply(m, '❌ Erro ao processar arquivo de imagem localmente.');
+                    return;
+                }
             }
 
-            const payload = this.apiClient.buildPayload({
+            this.logger.info(`👁️ Analisando imagem...`);
+            const resultado = await this.apiClient.processMessage({
                 usuario: nome,
                 numero: numeroReal,
                 mensagem: caption || 'O que tem nesta imagem?',
                 tipo_conversa: ehGrupo ? 'grupo' : 'pv',
                 grupo_id: ehGrupo ? m.key.remoteJid : null,
-                grupo_nome: ehGrupo ? (m.key.remoteJid.split('@')[0] || 'Grupo') : null,
+                grupo_nome: ehGrupo ? (this.groupManagement?.groupMetadata?.[m.key.remoteJid]?.subject || m.key.remoteJid.split('@')[0]) : null,
                 tipo_mensagem: 'image',
                 imagem_dados: {
-                    dados: base64Image,
+                    dados: tempMediaPath,
+                    path: fs.existsSync(tempMediaPath) ? tempMediaPath : null,
                     mime_type: imgMsg.mimetype || 'image/jpeg',
                     descricao: caption || 'Imagem'
                 },
@@ -503,12 +547,13 @@ class BotCore {
                 reply_metadata: replyInfo ? {
                     is_reply: replyInfo.isReply || true,
                     reply_to_bot: replyInfo.ehRespostaAoBot,
-                    quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido'
-                } : null
+                    quoted_author_name: replyInfo.quemEscreveuCitacaoName || 'Usuário',
+                    quoted_author_numero: replyInfo.quotedAuthorNumero || 'desconhecido',
+                    quoted_type: replyInfo.quotedType || 'texto',
+                    quoted_text_original: replyInfo.quotedTextOriginal || '',
+                    context_hint: replyInfo.contextHint || ''
+                } : { is_reply: false, reply_to_bot: false }
             });
-
-            this.logger.info(`👁️ Analisando imagem...`);
-            const resultado = await this.apiClient.processMessage(payload);
 
             if (!resultado.success) {
                 this.logger.error('❌ Erro API:', resultado.error);
@@ -523,6 +568,208 @@ class BotCore {
             await this.presenceSimulator.simulateTicks(m, true, false);
         } catch (error: any) {
             this.logger.error('❌ Erro imagem:', error.message);
+        }
+    }
+
+    async handleVideoMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean): Promise<void> {
+        const caption = this.messageProcessor.extractText(m) || '';
+        const allowed = await this.handleRateLimitAndBlacklist(m, nome, numeroReal, caption || '<VÍDEO>', ehGrupo);
+        if (!allowed) return;
+
+        this.logger.info(`🎥 [VÍDEO] ${nome}`);
+        if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling !== false) {
+            const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 20);
+            if (xp) this.logger.info(`📈 [LEVEL] ${nome} +20 XP`);
+        }
+
+        try {
+            let deveResponder = false;
+            const captionLower = caption.toLowerCase();
+            const botNameLower = (this.config.BOT_NAME || 'akira').toLowerCase();
+
+            if (!ehGrupo) deveResponder = true;
+            else if (this.messageProcessor.isBotMentioned(m)) deveResponder = true;
+            else if (replyInfo?.ehRespostaAoBot) deveResponder = true;
+            else if (captionLower.includes(botNameLower)) deveResponder = true;
+            else if (this.messageProcessor.isCommand(caption)) deveResponder = true;
+
+            if (!deveResponder) {
+                this.logger.debug(`⏭️ Vídeo ignorado: ${caption.substring(0, 30)}`);
+                return;
+            }
+
+            if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
+                try {
+                    const handled = await this.commandHandler.handle(m, { nome, numeroReal, texto: caption, replyInfo, ehGrupo });
+                    if (handled) {
+                        this.logger.info(`⚡ Comando vídeo: ${caption.substring(0, 30)}`);
+                        return;
+                    }
+                } catch (err: any) {
+                    this.logger.warn(`⚠️ Comando legenda vídeo: ${err.message}`);
+                }
+            }
+
+            await this.presenceSimulator.simulateTicks(m, true, false);
+            await this.presenceSimulator.simulateTyping(m.key.remoteJid, 2000);
+
+            const tipoMsg = getContentType(m.message);
+            let vidMsg = m.message.videoMessage;
+            if (tipoMsg === 'viewOnceMessage' || tipoMsg === 'viewOnceMessageV2') {
+                vidMsg = m.message[tipoMsg].message?.videoMessage;
+            }
+            if (!vidMsg) { this.logger.error('❌ Vídeo inválido'); return; }
+
+            this.logger.debug('⬇️ Baixando vídeo...');
+            // Passa m.message para que extractMediaContainer funcione correctamente
+            const videoBuffer = await this.mediaProcessor.downloadMedia(m.message, 'video');
+            if (!videoBuffer?.length) {
+                this.logger.error('❌ Buffer vídeo vazio');
+                await this.reply(m, '❌ Não consegui baixar o vídeo.');
+                return;
+            }
+
+            let tempMediaPath = '';
+            try {
+                const dir = this.config.DATA_DIR ? path.join(this.config.DATA_DIR, 'media') : './temp/akira_media';
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+                const ext = (vidMsg.mimetype || 'video/mp4').split('/')[1] || 'mp4';
+                const filename = `vid_${Date.now()}_${numeroReal.split('@')[0]}.${ext}`;
+                tempMediaPath = path.join(dir, filename);
+
+                fs.writeFileSync(tempMediaPath, videoBuffer);
+                this.logger.debug(`💾 Vídeo salvo em: ${tempMediaPath}`);
+            } catch (err: any) {
+                this.logger.error('❌ Erro salvando vídeo no disco:', err.message);
+                tempMediaPath = videoBuffer.toString('base64');
+            }
+
+            this.logger.info(`👁️ Analisando vídeo...`);
+            const resultado = await this.apiClient.processMessage({
+                usuario: nome,
+                numero: numeroReal,
+                mensagem: caption || 'O que tem neste vídeo?',
+                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+                grupo_id: ehGrupo ? m.key.remoteJid : null,
+                grupo_nome: ehGrupo ? (this.groupManagement?.groupMetadata?.[m.key.remoteJid]?.subject || m.key.remoteJid.split('@')[0]) : null,
+                tipo_mensagem: 'video',
+                video_dados: {
+                    dados: tempMediaPath,
+                    path: fs.existsSync(tempMediaPath) ? tempMediaPath : null,
+                    mime_type: vidMsg.mimetype || 'video/mp4',
+                    descricao: caption || 'Vídeo'
+                },
+                mensagem_citada: replyInfo?.textoMensagemCitada || '',
+                reply_metadata: replyInfo ? {
+                    is_reply: replyInfo.isReply || true,
+                    reply_to_bot: replyInfo.ehRespostaAoBot,
+                    quoted_author_name: replyInfo.quemEscreveuCitacaoName || 'Usuário',
+                    quoted_author_numero: replyInfo.quotedAuthorNumero || 'desconhecido',
+                    quoted_type: replyInfo.quotedType || 'texto',
+                    quoted_text_original: replyInfo.quotedTextOriginal || '',
+                    context_hint: replyInfo.contextHint || ''
+                } : { is_reply: false, reply_to_bot: false }
+            });
+
+            if (!resultado.success) {
+                this.logger.error('❌ Erro API:', resultado.error);
+                await this.sock.sendMessage(m.key.remoteJid, { text: 'Não consegui analisar o vídeo.' });
+                return;
+            }
+
+            const resposta = resultado.resposta || 'Sem resposta.';
+            await this.presenceSimulator.simulateTyping(m.key.remoteJid, this.presenceSimulator.calculateTypingDuration(resposta));
+            const opcoes = ehGrupo || replyInfo?.ehRespostaAoBot ? { quoted: m } : {};
+            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
+            await this.presenceSimulator.simulateTicks(m, true, false);
+        } catch (error: any) {
+            this.logger.error('❌ Erro vídeo:', error.message);
+        }
+    }
+
+    async handleDocumentMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean): Promise<void> {
+        const allowed = await this.handleRateLimitAndBlacklist(m, nome, numeroReal, '<DOCUMENTO>', ehGrupo);
+        if (!allowed) return;
+
+        this.logger.info(`📄 [DOCUMENTO] ${nome}`);
+        try {
+            const caption = this.messageProcessor.extractText(m) || '';
+            const contentType = getContentType(m.message);
+            const docMsg = contentType === 'documentWithCaptionMessage'
+                ? m.message.documentWithCaptionMessage.message.documentMessage
+                : m.message.documentMessage;
+
+            if (!docMsg) { this.logger.error('❌ Documento inválido'); return; }
+
+            const fileName = docMsg.fileName || 'document';
+            const mimeType = docMsg.mimetype || 'application/octet-stream';
+
+            // Passa m.message para que extractMediaContainer funcione correctamente
+            const bufferDoc = await this.mediaProcessor.downloadMedia(m.message, 'document');
+            if (!bufferDoc) {
+                this.logger.error('❌ Documento não pôde ser baixado');
+                await this.sock.sendMessage(m.key.remoteJid, { text: '❌ Erro ao baixar o arquivo.' });
+                return;
+            }
+
+            let tempMediaPath = '';
+            try {
+                const dir = this.config.DATA_DIR ? path.join(this.config.DATA_DIR, 'media') : './temp/akira_media';
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+                // Extrai a extensão do MimeType ou do Nome original.
+                const ext = mimeType.split('/')[1] || fileName.split('.').pop() || 'tmp';
+                const ts = Date.now();
+                const saveName = `doc_${ts}_${numeroReal.split('@')[0]}.${ext}`;
+                tempMediaPath = path.join(dir, saveName);
+
+                fs.writeFileSync(tempMediaPath, bufferDoc);
+                this.logger.debug(`💾 Documento salvo em: ${tempMediaPath}`);
+            } catch (err: any) {
+                this.logger.error('❌ Erro salvando documento no disco:', err.message);
+                tempMediaPath = bufferDoc.toString('base64');
+            }
+
+            // Simula presença
+            await this.presenceSimulator.simulateTicks(m, true, false);
+            await this.presenceSimulator.simulateTyping(m.key.remoteJid, 1000);
+
+            // Processar Mensagem
+            const resultado = await this.apiClient.processMessage({
+                usuario: nome,
+                numero: numeroReal,
+                mensagem: caption || `Analise o documento: ${fileName}`,
+                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+                grupo_id: ehGrupo ? m.key.remoteJid : null,
+                grupo_nome: ehGrupo ? (this.groupManagement?.groupMetadata?.[m.key.remoteJid]?.subject || m.key.remoteJid.split('@')[0]) : null,
+                tipo_mensagem: caption ? 'documentWithCaption' : 'document',
+                analise_doc: `[Arquivo: ${fileName} | Tipo: ${mimeType}]`,
+                documento_dados: {
+                    dados: tempMediaPath,
+                    path: fs.existsSync(tempMediaPath) ? tempMediaPath : null,
+                    mime_type: mimeType,
+                    nome_arquivo: fileName
+                },
+                reply_metadata: replyInfo ? {
+                    is_reply: replyInfo.isReply || true,
+                    reply_to_bot: replyInfo.ehRespostaAoBot,
+                    quoted_author_name: replyInfo.quemEscreveuCitacaoName || 'Usuário',
+                    quoted_author_numero: replyInfo.quotedAuthorNumero || 'desconhecido',
+                    quoted_type: replyInfo.quotedType || 'texto',
+                    quoted_text_original: replyInfo.quotedTextOriginal || '',
+                    context_hint: replyInfo.contextHint || ''
+                } : { is_reply: false, reply_to_bot: false }
+            });
+
+            if (resultado.success) {
+                const resposta = resultado.resposta || 'Recebi o documento.';
+                await this.presenceSimulator.simulateTyping(m.key.remoteJid, this.presenceSimulator.calculateTypingDuration(resposta));
+                const opcoes = ehGrupo || replyInfo?.ehRespostaAoBot ? { quoted: m } : {};
+                await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
+            }
+        } catch (error: any) {
+            this.logger.error('❌ Erro documento:', error.message);
         }
     }
 
@@ -544,6 +791,9 @@ class BotCore {
     }
 
     async handleAudioMessage_internal(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean, audioBuffer: Buffer | null): Promise<void> {
+        const allowed = await this.handleRateLimitAndBlacklist(m, nome, numeroReal, '<AUDIO/VOZ>', ehGrupo);
+        if (!allowed) return;
+
         try {
             if (!audioBuffer) { this.logger.error('❌ Buffer áudio vazio'); return; }
 
@@ -557,37 +807,69 @@ class BotCore {
         }
     }
 
+    private async handleRateLimitAndBlacklist(m: any, nome: string, numeroReal: string, texto: string, ehGrupo: boolean): Promise<boolean> {
+        // Retorna FALSE se for para bloquear a mensagem. Retorna TRUE se for permitido continuar.
+        try {
+            const isDono = typeof this.config?.isDono === 'function' ? this.config.isDono(numeroReal, nome) : false;
+
+            if (this.moderationSystem?.checkAndLimitHourlyMessages) {
+                const res = this.moderationSystem.checkAndLimitHourlyMessages(m.key.participant || numeroReal, nome, numeroReal, texto, null, isDono, ehGrupo, m.key.remoteJid);
+
+                if (!res?.allowed) {
+
+                    if (res?.action === 'KICK_SILENT' && ehGrupo) {
+                        // Tenta expulsar o usuário silenciosamente se for grupo
+                        try {
+                            const participantId = m.key.participant || `${numeroReal}@s.whatsapp.net`;
+                            await this.sock.groupParticipantsUpdate(m.key.remoteJid, [participantId], 'remove');
+                            this.logger.info(`🚨 [KICK_SILENT] Flood/Blacklist: Usuário ${numeroReal} removido de ${m.key.remoteJid}`);
+                        } catch (kickErr) {
+                            this.logger.warn(`⚠️ Não foi possível kickar o usuário ${numeroReal}: Pode não ser admin`);
+                        }
+                        return false; // Aborta processamento
+                    }
+
+                    if (res?.action === 'WARN_STOP') {
+                        await this.sock.sendMessage(m.key.remoteJid, { text: `⚠️ *AVISO FINAL* @${numeroReal.split('@')[0]}!\n\nVocê está a enviar mensagens demasiado rápido e já esgotou a sua quota horária de segurança.\n\nPare de chatear a Akira imediatamente, ou será *Bloqueado e Expulso* do sistema e dos grupos blindados!`, mentions: [m.key.participant || `${numeroReal}@s.whatsapp.net`] }, { quoted: m });
+                        return false;
+                    }
+
+                    if (res?.reason === 'LIMITE_HORARIO_EXCEDIDO') {
+                        const mins = res?.blockDurationMinutes || 30;
+                        await this.sock.sendMessage(m.key.remoteJid, { text: `⏰ *LIMITE EXCEDIDO*\n\nVocê enviou demasiadas mensagens nas últimas horas. Por favor, aguarde ${mins} minutos antes de usar a Akira novamente.`, mentions: [m.key.participant || `${numeroReal}@s.whatsapp.net`] }, { quoted: m });
+                        return false;
+                    }
+
+                    // Bloqueios silenciosos residuais (eg: repetição do estagio 1)
+                    return false;
+                }
+            } else if (!this.messageProcessor.checkRateLimit(numeroReal)) {
+                await this.sock.sendMessage(m.key.remoteJid, { text: '⏰ Muitas mensagens. Aguarde.' });
+                return false;
+            }
+            return true;
+        } catch (err: any) {
+            this.logger?.warn('Erro rate limit:', err?.message);
+            // Se as coisas derem erro, recai no antigo
+            if (!this.messageProcessor.checkRateLimit(numeroReal)) {
+                await this.sock.sendMessage(m.key.remoteJid, { text: '⏰ Muitas mensagens. Aguarde.' });
+                return false;
+            }
+            return true;
+        }
+    }
+
     async handleTextMessage(m: any, nome: string, numeroReal: string, texto: string, replyInfo: any, ehGrupo: boolean, foiAudio: boolean = false): Promise<void> {
         try {
-            let allowed = true;
-            try {
-                const isDono = typeof this.config?.isDono === 'function' ? this.config.isDono(numeroReal, nome) : false;
-                if (this.moderationSystem?.checkAndLimitHourlyMessages) {
-                    const res = this.moderationSystem.checkAndLimitHourlyMessages(numeroReal, nome, numeroReal, texto, null, isDono);
-                    allowed = !!res?.allowed;
-                    if (!allowed) {
-                        const msg = res?.reason === 'LIMITE_HORARIO_EXCEDIDO' ? '⏰ Limite por hora excedido.' : '⏰ Muitas mensagens. Aguarde.';
-                        await this.sock.sendMessage(m.key.remoteJid, { text: msg });
-                        return;
-                    }
-                } else if (!this.messageProcessor.checkRateLimit(numeroReal)) {
-                    await this.sock.sendMessage(m.key.remoteJid, { text: '⏰ Muitas mensagens. Aguarde.' });
-                    return;
-                }
-            } catch (err: any) {
-                this.logger?.warn('Erro rate limit:', err?.message);
-                if (!this.messageProcessor.checkRateLimit(numeroReal)) {
-                    await this.sock.sendMessage(m.key.remoteJid, { text: '⏰ Muitas mensagens. Aguarde.' });
-                    return;
-                }
-            }
+            const allowed = await this.handleRateLimitAndBlacklist(m, nome, numeroReal, texto, ehGrupo);
+            if (!allowed) return;
 
             try {
                 if (this.commandHandler) {
                     const handled = await this.commandHandler.handle(m, { nome, numeroReal, texto, replyInfo, ehGrupo });
                     if (handled) {
                         this.logger.info(`⚡ Comando: ${texto.substring(0, 30)}`);
-                        if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
+                        if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling !== false) {
                             const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
                             if (xp) this.logger.info(`📈 [LEVEL] ${nome} +5 XP`);
                         }
@@ -600,7 +882,7 @@ class BotCore {
 
             let deveResponder = false;
             const textoLower = texto.toLowerCase();
-            const botNameLower = (this.config.BOT_NAME || 'belmira').toLowerCase();
+            const botNameLower = (this.config.BOT_NAME || 'akira').toLowerCase();
 
             if (foiAudio) {
                 if (!ehGrupo) deveResponder = true;
@@ -624,7 +906,7 @@ class BotCore {
             const replyMetadata = replyInfo ? {
                 is_reply: replyInfo.isReply || true,
                 reply_to_bot: replyInfo.ehRespostaAoBot,
-                quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido',
+                quoted_author_name: replyInfo.quemEscreveuCitacaoName || 'Usuário',
                 quoted_author_numero: replyInfo.quotedAuthorNumero || 'desconhecido',
                 quoted_type: replyInfo.quotedType || 'texto',
                 quoted_text_original: replyInfo.quotedTextOriginal || '',
@@ -632,24 +914,22 @@ class BotCore {
                 priority_level: replyInfo.priorityLevel || 2
             } : { is_reply: false, reply_to_bot: false };
 
-            if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
+            if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling !== false) {
                 const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 10);
                 if (xp) this.logger.info(`📈 [LEVEL] ${nome} +10 XP`);
             }
 
-            const payload = this.apiClient.buildPayload({
+            const resultado = await this.apiClient.processMessage({
                 usuario: nome,
                 numero: numeroReal,
                 mensagem: texto,
                 tipo_conversa: ehGrupo ? 'grupo' : 'pv',
                 grupo_id: ehGrupo ? m.key.remoteJid : null,
-                grupo_nome: ehGrupo ? (m.key.remoteJid.split('@')[0] || 'Grupo') : null,
+                grupo_nome: ehGrupo ? (this.groupManagement?.groupMetadata?.[m.key.remoteJid]?.subject || m.key.remoteJid.split('@')[0]) : null,
                 tipo_mensagem: foiAudio ? 'audio' : 'texto',
                 mensagem_citada: replyInfo?.textoMensagemCitada || '',
                 reply_metadata: replyMetadata
             });
-
-            const resultado = await this.apiClient.processMessage(payload);
             if (!resultado.success) {
                 this.logger.error('❌ Erro API:', resultado.error);
                 await this.sock.sendMessage(m.key.remoteJid, { text: 'Tive um problema. Tenta de novo?' });
