@@ -1,6 +1,5 @@
-# Dockerfile — AKIRA BOT RAILWAY (Corrigido)
+# Dockerfile — AKIRA BOT RAILWAY (Otimizado)
 # ✅ Configurado especificamente para Railway
-
 FROM node:20-alpine
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -11,8 +10,7 @@ ENV NODE_ENV=production \
     PINO_NO_PRETTY=true \
     NODE_OPTIONS="--dns-result-order=ipv4first --no-warnings" \
     UV_THREADPOOL_SIZE=128 \
-    LANG=C.UTF-8 \
-    GOPATH=/root/go
+    LANG=C.UTF-8
 
 # ═══════════════════════════════════════════════════════════════════════
 # INSTALAR DEPENDÊNCIAS DO SISTEMA ESSENCIAIS
@@ -23,22 +21,10 @@ RUN apk add --no-cache \
     wget \
     python3 \
     py3-pip \
-    make \
-    g++ \
-    cairo-dev \
-    pango-dev \
-    jpeg-dev \
-    giflib-dev \
     ffmpeg \
     ca-certificates \
     openssl \
-    openssl-dev \
-    zlib-dev \
-    bash \
-    libffi-dev \
-    sqlite-dev \
-    postgresql-dev \
-    musl-dev
+    bash
 
 # ═══════════════════════════════════════════════════════════════════════
 # INSTALAÇÃO DO YT-DLP
@@ -46,13 +32,6 @@ RUN apk add --no-cache \
 RUN pip3 install --upgrade --no-cache-dir --break-system-packages yt-dlp && \
     ln -sf $(which yt-dlp) /usr/local/bin/yt-dlp 2>/dev/null || true && \
     echo "✅ yt-dlp instalado"
-
-# ═══════════════════════════════════════════════════════════════════════
-# (REMOVIDO) INSTALAÇÃO DE FERRAMENTAS DE CYBERSECURITY
-# ═══════════════════════════════════════════════════════════════════════
-# Tudo de cybersegurança foi movido para Ferramentas-cyber/
-# e não deve ser instalado no container do bot principal.
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # DIRETÓRIOS
@@ -75,27 +54,24 @@ RUN npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
     npm install --include=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps
 
+# ═══════════════════════════════════════════════════════════════════════
+# COPIAR CÓDIGO E COMPILAR TYPESCRIPT
+# ═══════════════════════════════════════════════════════════════════════
 COPY . .
 
-# Limpar dist/ anterior e recompilar TypeScript para garantir código atualizado
-RUN rm -rf dist/ && \
-    npx tsc && \
+RUN npx tsc && \
     npm prune --omit=dev
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # VERIFICAÇÃO FINAL PARA RAILWAY
 # ═══════════════════════════════════════════════════════════════════════
-
 RUN echo "🔍 Verificando instalação para Railway..." && \
     node -v && \
     npm -v && \
     python3 --version && \
     ffmpeg -version | head -1 && \
     (yt-dlp --version 2>/dev/null || echo "⚠️ yt-dlp versão não verificada") && \
-    echo "✅ Build verificado com sucesso" && \
-    echo "✅ Dockerfile construído com sucesso para Railway"
-
+    echo "✅ Build verificado com sucesso"
 
 RUN npm cache clean --force 2>/dev/null || true
 
