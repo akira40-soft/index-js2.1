@@ -46,21 +46,30 @@ RUN mkdir -p /app/data && \
 WORKDIR /app
 
 # ═══════════════════════════════════════════════════════════════════════
-# DEPENDÊNCIAS NODE.JS
+# DEPENDÊNCIAS NODE.JS (Dev para build)
 # ═══════════════════════════════════════════════════════════════════════
 COPY package*.json ./
 
 RUN npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
-    npm install --include=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps
+    npm ci --include=dev --no-audit --progress=false --fetch-retries=5 --legacy-peer-deps
 
 # ═══════════════════════════════════════════════════════════════════════
-# COPIAR CÓDIGO E COMPILAR TYPESCRIPT
+# COPIAR CÓDIGO FONTE
 # ═══════════════════════════════════════════════════════════════════════
 COPY . .
 
-RUN npx tsc && \
-    npm prune --omit=dev
+# ═══════════════════════════════════════════════════════════════════════
+# COMPILAR TYPESCRIPT
+# ═══════════════════════════════════════════════════════════════════════
+RUN npm run build
+
+# ═══════════════════════════════════════════════════════════════════════
+# PRUNE PROD + VERIFICAÇÃO
+# ═══════════════════════════════════════════════════════════════════════
+RUN npm ci --omit=dev --no-audit && \
+    ls -la dist/index.js && \
+    echo "✅ dist/index.js compilado com sucesso (tamanho: $(wc -c < dist/index.js) bytes)"
 
 # ═══════════════════════════════════════════════════════════════════════
 # VERIFICAÇÃO FINAL PARA RAILWAY
@@ -75,9 +84,22 @@ RUN echo "🔍 Verificando instalação para Railway..." && \
 
 RUN npm cache clean --force 2>/dev/null || true
 
+# ═══════════════════════════════════════════════════════════════════════
+# VERIFICAÇÃO FINAL PARA RAILWAY (MELHORADA)
+# ═══════════════════════════════════════════════════════════════════════
+RUN echo "🔍 Verificação final Railway..." && \
+    node -v && \
+    npm -v && \
+    python3 --version && \
+    ffmpeg -version | head -1 && \
+    yt-dlp --version && \
+    ls -la dist/index.js && \
+    echo "✅ Build COMPLETO - Pronto para Railway!"
+
 EXPOSE $PORT
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["node", "dist/index.js"]
