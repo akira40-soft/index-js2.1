@@ -1,0 +1,279 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * PRESENCE SIMULATOR - AKIRA BOT V21
+ * ═══════════════════════════════════════════════════════════════════════
+ * ✅ Simulações realistas de presença e status de mensagem
+ * ✅ Digitação, gravação de áudio, ticks, leitura
+ * ✅ Totalmente compatível com Baileys
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+import { delay } from '@whiskeysockets/baileys';
+class PresenceSimulator {
+    sock;
+    logger;
+    constructor(sock, logger = null) {
+        this.sock = sock;
+        this.logger = logger || console;
+    }
+    /**
+     * Aguarda a conexão ficar estável (OPEN) por um tempo limitado
+     */
+    async waitForConnection(timeoutMs = 2000) {
+        if (this.sock?.ws?.readyState === 1)
+            return true;
+        const startTime = Date.now();
+        while (Date.now() - startTime < timeoutMs) {
+            if (this.sock?.ws?.readyState === 1)
+                return true;
+            await new Promise(r => setTimeout(r, 200));
+        }
+        return false;
+    }
+    /**
+     * Envia atualização de presença de forma segura, verificando se o socket está ativo
+     */
+    async safeSendPresenceUpdate(type, jid) {
+        const maxRetries = 3;
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                if (this.sock) {
+                    await this.sock.sendPresenceUpdate(type, jid);
+                    return true;
+                }
+            }
+            catch (e) {
+                // Se falhar, espera um pouco e tenta de novo (pode ser reconexão rápida)
+                if (i < maxRetries - 1)
+                    await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+        // Falha silenciosa para não quebrar o fluxo chamador
+        return false;
+    }
+    /**
+     * Simula digitação realista
+     * - Inicia presença como "disponível"
+     * - Muda para "digitando"
+     * - Aguarda tempo proporcional ao tamanho da resposta
+     * - Volta para "pausado"
+     * - Retorna para "disponível"
+     */
+    async simulateTyping(jid, durationMs = 3000) {
+        try {
+            // Step 1: Garantir que está online
+            await this.safeSendPresenceUpdate('available', jid);
+            await delay(300);
+            // Step 2: Começar a digitar
+            await this.safeSendPresenceUpdate('composing', jid);
+            this.logger.info(`⌨️  [DIGITANDO] Simulando digitação por ${(durationMs / 1000).toFixed(1)}s...`);
+            // Step 3: Aguardar conforme tamanho da mensagem
+            await delay(durationMs);
+            // Step 4: Parar de digitar (transição)
+            await this.safeSendPresenceUpdate('paused', jid);
+            await delay(300);
+            // Step 5: Voltar ao normal
+            await this.safeSendPresenceUpdate('available', jid);
+            this.logger.info('✅ [PRONTO] Digitação simulada concluída');
+            return true;
+        }
+        catch (e) {
+            this.logger.error('❌ Erro inesperado ao simular digitação:', e.message);
+            return false;
+        }
+    }
+    /**
+     * Simula gravação de áudio realista
+     * - Muda para "gravando"
+     * - Aguarda duração
+     * - Volta para "pausado"
+     */
+    async simulateRecording(jid, durationMs = 2000) {
+        try {
+            this.logger.info(`🎤 [GRAVANDO] Preparando áudio por ${(durationMs / 1000).toFixed(1)}s...`);
+            // Step 1: Começar a "gravar"
+            await this.safeSendPresenceUpdate('recording', jid);
+            // Step 2: Aguardar processamento
+            await delay(durationMs);
+            // Step 3: Concluir gravação
+            await this.safeSendPresenceUpdate('paused', jid);
+            this.logger.info('✅ [PRONTO] Áudio preparado para envio');
+            return true;
+        }
+        catch (e) {
+            this.logger.error('❌ Erro inesperado ao simular gravação:', e.message);
+            return false;
+        }
+    }
+    /**
+     * Simula envio de "ticks" (confirmações de entrega/leitura)
+     *
+     * Em grupos:
+     *   - Sem ativação: Um tick (entregue)
+     *   - Com ativação: Dois ticks azuis (lido)
+     *
+     * Em PV:
+     *   - Sem ativação: Um tick (entregue)
+     *   - Com ativação: Dois ticks azuis (lido)
+     */
+    async simulateTicks(m, wasActivated = true, isAudio = false) {
+        try {
+            // REMOVIDO: Verificação de socket bloqueante
+            if (!this.sock)
+                return false;
+            const isGroup = String(m.key.remoteJid || '').endsWith('@g.us');
+            const jid = m.key.remoteJid;
+            const participant = m.key.participant;
+            const messageId = m.key.id;
+            if (isGroup) {
+                // ═══ GRUPO ═══
+                if (!wasActivated) {
+                    // Não foi ativada: Apenas um tick (entregue)
+                    try {
+                        await this.sock.sendReadReceipt(jid, participant, [messageId]);
+                        this.logger.info('✓ [ENTREGUE] Grupo');
+                        return true;
+                    }
+                    catch (err) {
+                        return false;
+                    }
+                }
+                else {
+                    // Foi ativada: Dois ticks azuis (lido)
+                    try {
+                        await this.sock.readMessages([m.key]);
+                        this.logger.info('✓✓ [LIDO] Grupo');
+                        return true;
+                    }
+                    catch (err) {
+                        return false;
+                    }
+                }
+            }
+            else {
+                // ═══ PV (PRIVADO) ═══
+                if (wasActivated || isAudio) {
+                    try {
+                        await this.sock.readMessages([m.key]);
+                        this.logger.info(isAudio ? '▶️ [REPRODUZIDO] PV' : '✓✓ [LIDO] PV');
+                        return true;
+                    }
+                    catch (err) {
+                        return false;
+                    }
+                }
+                else {
+                    try {
+                        await this.sock.sendReadReceipt(jid, participant, [messageId]);
+                        this.logger.info('✓ [ENTREGUE] PV');
+                        return true;
+                    }
+                    catch (err) {
+                        return false;
+                    }
+                }
+            }
+        }
+        catch (e) {
+            return false;
+        }
+    }
+    /**
+     * Simula leitura de mensagem
+     */
+    async markAsRead(m) {
+        try {
+            if (!this.sock)
+                return false;
+            await this.sock.readMessages([m.key]);
+            this.logger.info('✓✓ [LIDO] Mensagem marcada');
+            return true;
+        }
+        catch (e) {
+            return false;
+        }
+    }
+    /**
+     * Simula status completo de mensagem
+     */
+    async simulateMessageStatus(m, wasActivated = true) {
+        try {
+            if (!this.sock)
+                return false;
+            const isGroup = String(m.key.remoteJid || '').endsWith('@g.us');
+            if (isGroup) {
+                try {
+                    await this.sock.sendReadReceipt(m.key.remoteJid, m.key.participant, [m.key.id]);
+                    await delay(300);
+                }
+                catch (e) { }
+            }
+            if (wasActivated) {
+                await delay(500);
+                await this.markAsRead(m);
+            }
+            return true;
+        }
+        catch (e) {
+            return false;
+        }
+    }
+    /**
+     * Simula comportamento completo ao responder
+     * 1. Marca entrega
+     * 2. Simula digitação
+     * 3. Envia mensagem
+     * 4. Marca leitura
+     */
+    async simulateFullResponse(sock, m, responseText, isAudio = false) {
+        try {
+            // Atualizar socket se fornecido novo
+            if (sock)
+                this.sock = sock;
+            // REMOVIDO: Verificação bloqueante e waitForConnection
+            // Agora confiamos no safeSendPresenceUpdate para lidar com erros silenciosamente
+            const jid = m.key.remoteJid;
+            const isGroup = String(jid || '').endsWith('@g.us');
+            // Step 1: Marcar como entregue (PV e Grupos)
+            await this.simulateTicks(m, false, false);
+            await delay(300);
+            // Step 2: Simular digitação ou gravação
+            if (isAudio) {
+                const estimatedDuration = this.calculateRecordingDuration(responseText);
+                await this.simulateRecording(jid, estimatedDuration);
+            }
+            else {
+                const estimatedDuration = this.calculateTypingDuration(responseText);
+                await this.simulateTyping(jid, estimatedDuration);
+            }
+            // Step 4: Marcar como lido
+            await delay(500);
+            await this.simulateTicks(m, true, isAudio);
+            return true;
+        }
+        catch (e) {
+            this.logger.error('❌ Erro inesperado ao simular resposta completa:', e.message);
+            return false;
+        }
+    }
+    /**
+     * Calcula duração realista de digitação baseado no tamanho da resposta
+     * Fórmula: 30-50ms por caractere, mínimo 1s, máximo 15s
+     */
+    calculateTypingDuration(text, minMs = 500, maxMs = 8000) {
+        if (!text)
+            return minMs;
+        const estimatedMs = Math.max(text.length * 30, minMs);
+        return Math.min(estimatedMs, maxMs);
+    }
+    /**
+     * Calcula duração realista de gravação de áudio
+     * Fórmula: 100ms por 10 caracteres, mínimo 2s, máximo 10s
+     */
+    calculateRecordingDuration(text, minMs = 500, maxMs = 2500) {
+        if (!text)
+            return minMs;
+        const estimatedMs = Math.max((text.length / 10) * 40, minMs);
+        return Math.min(estimatedMs, maxMs);
+    }
+}
+export default PresenceSimulator;

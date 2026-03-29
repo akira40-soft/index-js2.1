@@ -1,0 +1,993 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CLASSE: BotCore V21 - SOCKET INSTANT + RAILWAY OK
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+/// <reference path="./declarations.d.ts" />
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay, Browsers } from '@whiskeysockets/baileys';
+import fs from 'fs';
+import pino from 'pino';
+import { exec } from 'child_process';
+import util from 'util';
+const _execAsync = util.promisify(exec);
+import ConfigManager from './ConfigManager.js';
+import APIClient from './APIClient.js';
+import AudioProcessor from './AudioProcessor.js';
+import MediaProcessor from './MediaProcessor.js';
+import MessageProcessor from './MessageProcessor.js';
+import ModerationSystem from './ModerationSystem.js';
+import LevelSystem from './LevelSystem.js';
+import RegistrationSystem from './RegistrationSystem.js';
+import EconomySystem from './EconomySystem.js';
+import PaymentManager from './PaymentManager.js';
+import CommandHandler from './CommandHandler.js';
+import HFCorrections from './HFCorrections.js';
+import PresenceSimulator from './PresenceSimulator.js';
+import SubscriptionManager from './SubscriptionManager.js';
+import UserProfile from './UserProfile.js';
+import BotProfile from './BotProfile.js';
+import GroupManagement from './GroupManagement.js';
+import ImageEffects from './ImageEffects.js';
+import StickerViewOnceHandler from './StickerViewOnceHandler.js';
+import PermissionManager from './PermissionManager.js';
+import RateLimiter from './RateLimiter.js';
+import JidUtils from './JidUtils.js';
+class BotCore {
+    config;
+    logger;
+    sock;
+    isConnected = false;
+    reconnectAttempts = 0;
+    MAX_RECONNECT_ATTEMPTS = 15;
+    connectionStartTime = null;
+    currentQR = null;
+    BOT_JID = null;
+    // Componentes
+    registrationSystem;
+    moderationSystem;
+    mediaProcessor;
+    messageProcessor;
+    levelSystem;
+    apiClient;
+    audioProcessor;
+    paymentManager;
+    subscriptionManager;
+    commandHandler;
+    presenceSimulator;
+    economySystem;
+    userProfile;
+    botProfile;
+    groupManagement;
+    imageEffects;
+    permissionManager;
+    stickerViewOnceHandler;
+    rateLimiter;
+    // Event listeners
+    eventListeners = {
+        onQRGenerated: null,
+        onConnected: null,
+        onDisconnected: null
+    };
+    // Deduplicação
+    processedMessages = new Set();
+    MAX_PROCESSED_MESSAGES = 1000;
+    pipelineLogCounter = 0;
+    PIPELINE_LOG_INTERVAL = 10;
+    constructor() {
+        this.config = ConfigManager.getInstance();
+        this.logger = this.config.logger || pino({
+            level: this.config.LOG_LEVEL || 'info',
+            timestamp: () => `,"time":"${new Date().toISOString()}"`
+        });
+        this.sock = null;
+    }
+    async initialize() {
+        try {
+            this.logger.info('🚀 Inicializando BotCore...');
+            HFCorrections.apply();
+            this.config.validate();
+            this.config.logConfig();
+            await this.initializeComponents();
+            return true;
+        }
+        catch (error) {
+            this.logger.error('❌ Erro ao inicializar:', error.message);
+            throw error;
+        }
+    }
+    async start() {
+        await this.initialize();
+        await this.connect();
+    }
+    async _selfUpdateYtdlp() {
+        try {
+            this.logger.info('🔄 [yt-dlp] Verificando atualizações...');
+            const { stdout } = await _execAsync('yt-dlp -U 2>&1', { timeout: 120000 });
+            if (stdout.includes('up to date')) {
+                this.logger.info('✅ [yt-dlp] Já está atualizado');
+            }
+            else {
+                this.logger.info('✅ [yt-dlp] Atualizado com sucesso!');
+            }
+        }
+        catch (err) {
+            this.logger.warn(`⚠️ [yt-dlp] Não foi possível atualizar: ${err.message?.substring(0, 80)}`);
+        }
+    }
+    async initializeComponents() {
+        try {
+            this.logger.debug('🔧 Inicializando componentes..');
+            this._selfUpdateYtdlp().catch(() => { });
+            this.apiClient = new APIClient(this.logger);
+            // Teste de conectividade inicial (Não bloqueante)
+            this.apiClient.healthCheck().then((health) => {
+                if (health.success) {
+                    this.logger.info('✅ [API] Teste de conectividade: OK!');
+                }
+                else {
+                    this.logger.warn(`⚠️ [API] Teste de conectividade: API offline ou inacessível (${health.error || 'Status ' + health.status})`);
+                }
+            }).catch((e) => {
+                this.logger.error(`🚨 [API] Falha crítica de rede no startup: ${e.message}`);
+            });
+            this.audioProcessor = new AudioProcessor(this.logger);
+            this.mediaProcessor = new MediaProcessor(this.logger);
+            this.messageProcessor = new MessageProcessor(this.logger);
+            this.moderationSystem = ModerationSystem.getInstance(this.logger);
+            this.levelSystem = LevelSystem.getInstance(this.logger);
+            this.registrationSystem = RegistrationSystem.getInstance(this.logger);
+            this.subscriptionManager = new SubscriptionManager(this.config);
+            this.userProfile = new UserProfile(this.sock, this.config);
+            this.botProfile = new BotProfile(this.sock, this.logger);
+            this.groupManagement = new GroupManagement(this.sock, this.config, this.moderationSystem);
+            this.imageEffects = new ImageEffects(this.logger);
+            this.permissionManager = new PermissionManager(this.logger);
+            this.stickerViewOnceHandler = new StickerViewOnceHandler(this.sock, this.config);
+            this.rateLimiter = new RateLimiter({
+                pvLimit: this.config.RATE_LIMIT_PV,
+                groupLimit: this.config.RATE_LIMIT_GROUP,
+                maxViolations: this.config.MAX_VIOLATIONS
+            });
+            this.paymentManager = new PaymentManager(this, this.subscriptionManager);
+            this.presenceSimulator = new PresenceSimulator(this.sock || null, this.logger);
+            this.economySystem = EconomySystem.getInstance(this.logger);
+            try {
+                this.commandHandler = new CommandHandler(this.sock, this.config, this, this.messageProcessor);
+                this.commandHandler.economySystem = this.economySystem;
+                this.commandHandler.gameSystem = await import('./GameSystem.js').then(mod => mod.default);
+                this.logger.debug('✅ CommandHandler inicializado');
+            }
+            catch (err) {
+                this.logger.warn(`⚠️ CommandHandler: ${err.message}`);
+                this.commandHandler = null;
+            }
+            const poToken = this.config?.YT_PO_TOKEN;
+            const cookiesPath = this.config?.YT_COOKIES_PATH;
+            this.logger.info(`📺 YouTube: PO_TOKEN=${poToken ? '✅' : '❌'}, Cookies=${cookiesPath ? '✅' : '❌'}`);
+            this.logger.debug('✅ Componentes inicializados');
+        }
+        catch (error) {
+            this.logger.error('❌ Erro componentes:', error.message);
+        }
+    }
+    _updateComponentsSocket(sock) {
+        try {
+            this.logger.info('🔄 Atualizando socket...');
+            if (this.commandHandler?.setSocket)
+                this.commandHandler.setSocket(sock);
+            if (this.groupManagement?.setSocket)
+                this.groupManagement.setSocket(sock);
+            if (this.stickerViewOnceHandler?.setSocket)
+                this.stickerViewOnceHandler.setSocket(sock);
+            if (this.botProfile?.setSocket)
+                this.botProfile.setSocket(sock);
+            if (this.userProfile?.setSocket)
+                this.userProfile.setSocket(sock);
+            if (this.presenceSimulator)
+                this.presenceSimulator.sock = sock;
+            this.logger.info('✅ Socket atualizado');
+        }
+        catch (e) {
+            this.logger.error('❌ Erro socket:', e);
+        }
+    }
+    async connect() {
+        try {
+            const { state, saveCreds } = await useMultiFileAuthState(this.config.AUTH_FOLDER);
+            const { version, isLatest } = await fetchLatestBaileysVersion();
+            this.logger.info(`📡 WhatsApp v${version.join('.')} (Latest: ${isLatest})`);
+            const socketConfig = {
+                version,
+                logger: pino({ level: 'silent' }),
+                auth: {
+                    creds: state.creds,
+                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
+                },
+                browser: Browsers.macOS('Akira-Bot'),
+                generateHighQualityLinkPreview: true,
+                getMessage: async (key) => ({ conversation: 'hello' }),
+                connectTimeoutMs: 120000,
+                defaultQueryTimeoutMs: 120000,
+                keepAliveIntervalMs: 15000,
+                markOnlineOnConnect: true,
+                emitOwnEvents: false,
+                retryRequestDelayMs: 500,
+                shouldIgnoreJid: (jid) => jid === 'status@broadcast'
+            };
+            const agent = HFCorrections.createHFAgent();
+            if (agent) {
+                socketConfig.agent = agent;
+                this.logger.info('🌐 Agente HTTP personalizado');
+            }
+            this.sock = makeWASocket(socketConfig);
+            if (this.commandHandler?.setSocket)
+                this.commandHandler.setSocket(this.sock);
+            if (this.presenceSimulator)
+                this.presenceSimulator.sock = this.sock;
+            this.sock.ev.on('connection.update', async (update) => {
+                const { connection, lastDisconnect, qr } = update;
+                if (qr) {
+                    this.logger.info('📸 QR Code recebido');
+                    this.currentQR = qr;
+                    if (this.eventListeners.onQRGenerated)
+                        this.eventListeners.onQRGenerated(qr);
+                }
+                if (connection === 'close') {
+                    this.isConnected = false;
+                    this.currentQR = null;
+                    const reason = lastDisconnect?.error?.output?.statusCode;
+                    let shouldReconnect = reason !== DisconnectReason.loggedOut;
+                    if (reason === 401) {
+                        this.logger.warn('🔄 401 → Clearing auth');
+                        this._cleanAuthOnError();
+                        shouldReconnect = true;
+                        this.reconnectAttempts = 0;
+                    }
+                    else if (reason === 500) {
+                        this.logger.warn('🔄 500 Internal Server Error → Force Reconnect without clearing auth');
+                        shouldReconnect = true;
+                        this.reconnectAttempts = 0;
+                    }
+                    this.logger.warn(`🔴 Conexão fechada. Motivo: ${reason}. Reconectar: ${shouldReconnect}`);
+                    if (this.eventListeners.onDisconnected)
+                        this.eventListeners.onDisconnected(reason);
+                    if (shouldReconnect) {
+                        if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
+                            this.reconnectAttempts++;
+                            const baseDelay = Math.min(Math.pow(1.8, this.reconnectAttempts) * 1000, 300000);
+                            const delayMs = Math.floor(baseDelay + Math.random() * 5000);
+                            this.logger.info(`⏳ Reconectando em ${delayMs}ms (Tentativa ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`);
+                            await delay(delayMs);
+                            this.connect();
+                        }
+                        else {
+                            this.logger.error('❌ Muitas falhas. Reiniciando...');
+                            process.exit(1);
+                        }
+                    }
+                    else {
+                        this.logger.info('🔒 Desconectado permanentemente');
+                        this._cleanAuthOnError();
+                    }
+                }
+                else if (connection === 'open') {
+                    this.logger.info('✅ CONEXÃO ESTABELECIDA!');
+                    this.isConnected = true;
+                    this.reconnectAttempts = 0;
+                    this.currentQR = null;
+                    this.connectionStartTime = Date.now();
+                    this._updateComponentsSocket(this.sock);
+                    this.BOT_JID = this.sock.user?.id;
+                    this.logger.info(`🤖 Logado como: ${this.BOT_JID} | Socket INSTANT para GroupManagement`);
+                    if (this.eventListeners.onConnected)
+                        this.eventListeners.onConnected(this.BOT_JID);
+                }
+            });
+            this.sock.ev.on('creds.update', saveCreds);
+            this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+                if (type !== 'notify')
+                    return;
+                // Processa mensagens em paralelo para evitar que uma mensagem lenta (ex: vídeo) trave as outras (ex: *ping)
+                Promise.all(messages.map((m) => this.processMessage(m))).catch(err => {
+                    this.logger.error('❌ Erro no processamento paralelo:', err.message);
+                });
+            });
+            this.sock.ev.on('group-participants.update', async (update) => {
+                const { id, participants, action } = update;
+                if (!id || !participants || participants.length === 0)
+                    return;
+                this.logger.info(`👥 [GROUP-EVENT] ${action} em ${id} para ${participants.length} participantes.`);
+                // Limpeza de cache para garantir dados frescos no welcome/goodbye
+                if (this.groupManagement)
+                    this.groupManagement.clearMetadataCache(id);
+                const cleanParticipants = participants.map((p) => {
+                    const [user, domain] = p.split('@');
+                    return `${user.split(':')[0]}@${domain || 's.whatsapp.net'}`;
+                });
+                let validParticipants = [...cleanParticipants];
+                // Anti-Fake Check
+                if (action === 'add' && this.moderationSystem?.isAntiFakeActive(id)) {
+                    const fakeParticipants = validParticipants.filter((p) => this.moderationSystem.isFakeNumber(id, p));
+                    validParticipants = validParticipants.filter((p) => !this.moderationSystem.isFakeNumber(id, p));
+                    if (fakeParticipants.length > 0) {
+                        for (const p of fakeParticipants) {
+                            this.logger.warn(`🚫 [ANTI-FAKE] Removendo ${p} de ${id}`);
+                            try {
+                                await this.sock.groupParticipantsUpdate(id, [p], 'remove');
+                            }
+                            catch (e) {
+                                this.logger.error(`Erro ao remover fake: ${e.message}`);
+                            }
+                        }
+                        await this.sock.sendMessage(id, { text: '⚠️ Números não-autorizados removidos (Anti-Fake ativo).' }).catch(() => { });
+                    }
+                }
+                // X9 - Promote/Demote
+                if (this.moderationSystem?.isX9Active(id)) {
+                    if (action === 'promote') {
+                        for (const p of participants) {
+                            await this.sock.sendMessage(id, {
+                                text: `⚡ [X9 - PROMOÇÃO]\n@${p.split('@')[0]} foi promovido a administrador!`,
+                                mentions: [p]
+                            }).catch(() => { });
+                        }
+                    }
+                    else if (action === 'demote') {
+                        for (const p of participants) {
+                            await this.sock.sendMessage(id, {
+                                text: `📉 [X9 - REBAIXAMENTO]\n@${p.split('@')[0]} perdeu o cargo de administrador.`,
+                                mentions: [p]
+                            }).catch(() => { });
+                        }
+                    }
+                }
+                // Welcome Trigger (Saudação Visual Premium)
+                if (action === 'add' && this.groupManagement && validParticipants.length > 0) {
+                    try {
+                        const isWelcomeOn = this.groupManagement.getWelcomeStatus(id);
+                        if (isWelcomeOn) {
+                            this.logger.info(`👋 Gerando Welcome Visual para ${validParticipants.length} novos membros em ${id}`);
+                            const metadata = await this.sock.groupMetadata(id);
+                            const groupName = metadata.subject;
+                            const memberCount = metadata.participants.length;
+                            for (const p of validParticipants) {
+                                let ppUrl;
+                                try {
+                                    ppUrl = await this.sock.profilePictureUrl(p, 'image');
+                                }
+                                catch {
+                                    ppUrl = 'https://i.ibb.co/0Q9Sv9m/avatar-placeholder.png';
+                                }
+                                // API de Card de Boas-vindas (Estética Premium)
+                                const welcomeCardUrl = `https://api.popcat.xyz/welcomecard?background=https://i.ibb.co/XyS1DLw/cdfbdf66f07b.jpg&text1=${encodeURIComponent('BEM-VINDO!')}&text2=${encodeURIComponent(groupName)}&text3=${encodeURIComponent('Membro #' + memberCount)}&avatar=${encodeURIComponent(ppUrl)}`;
+                                const template = this.groupManagement.getCustomMessage(id, 'welcome') || 'Olá @user, bem-vindo ao @group!';
+                                const formatted = await this.groupManagement.formatMessage(id, p, template);
+                                await this.sock.sendMessage(id, {
+                                    image: { url: welcomeCardUrl },
+                                    caption: formatted,
+                                    mentions: [p]
+                                }).catch(async (err) => {
+                                    this.logger.error(`[Welcome] Falha ao enviar card visual: ${err.message}`);
+                                    // Fallback para texto
+                                    await this.sock.sendMessage(id, { text: formatted, mentions: [p] }).catch(() => { });
+                                });
+                            }
+                        }
+                    }
+                    catch (e) {
+                        this.logger.error(`Erro no Welcome Visual: ${e.message}`);
+                    }
+                }
+                // Goodbye Trigger (Despedida)
+                if ((action === 'remove' || action === 'leave') && this.groupManagement && cleanParticipants.length > 0) {
+                    try {
+                        const isGoodbyeOn = this.groupManagement.getGoodbyeStatus(id);
+                        if (isGoodbyeOn) {
+                            this.logger.info(`👋 Despedindo de ${cleanParticipants.length} membros em ${id}`);
+                            for (const p of cleanParticipants) {
+                                const template = this.groupManagement.getCustomMessage(id, 'goodbye') || 'Adeus @user!';
+                                const formatted = await this.groupManagement.formatMessage(id, p, template);
+                                await this.sock.sendMessage(id, { text: formatted, mentions: [p] }).catch(() => { });
+                            }
+                        }
+                    }
+                    catch (e) {
+                        this.logger.error(`Erro no Goodbye: ${e.message}`);
+                    }
+                }
+            });
+            // X9 - Group Update (Metadata)
+            this.sock.ev.on('groups.update', async (groups) => {
+                for (const update of groups) {
+                    const id = update.id;
+                    if (id && this.moderationSystem?.isX9Active(id)) {
+                        if (update.subject) {
+                            await this.sock.sendMessage(id, { text: `🏷️ [X9 - NOME]\nO nome do grupo foi alterado para: *${update.subject}*` }).catch(() => { });
+                        }
+                        if (update.desc) {
+                            await this.sock.sendMessage(id, { text: `📝 [X9 - DESCRIÇÃO]\nA descrição do grupo foi atualizada.` }).catch(() => { });
+                        }
+                        if (update.announce !== undefined) {
+                            const status = update.announce ? 'FECHADO 🔐 (apenas admins)' : 'ABERTO 🔓 (todos podem falar)';
+                            await this.sock.sendMessage(id, { text: `⚙️ [X9 - CONFIGURAÇÃO]\nO grupo agora está: *${status}*` }).catch(() => { });
+                        }
+                    }
+                }
+            });
+            // Auto-Block Call
+            this.sock.ev.on('call', async (call) => {
+                for (const c of call) {
+                    if (c.status === 'offer') {
+                        this.logger.warn(`📞 [AUTO-BLOCK] Chamada de ${c.from}`);
+                        await this.sock.sendMessage(c.from, { text: '❌ O bot não aceita chamadas. Você foi bloqueado automaticamente.' }).catch(() => { });
+                        await this.sock.updateBlockStatus(c.from, 'block').catch(() => { });
+                    }
+                }
+            });
+        }
+        catch (error) {
+            this.logger.error('❌ Erro conexão:', error.message);
+            await delay(5000);
+            this.connect();
+        }
+    }
+    isMessageProcessed(key) {
+        if (!key?.id)
+            return false;
+        const messageId = key.id;
+        if (this.processedMessages.has(messageId)) {
+            this.logger.debug(`⏭️ Já processada: ${messageId.substring(0, 15)}`);
+            return true;
+        }
+        this.processedMessages.add(messageId);
+        if (this.processedMessages.size > this.MAX_PROCESSED_MESSAGES) {
+            const arr = Array.from(this.processedMessages);
+            this.processedMessages = new Set(arr.slice(-this.MAX_PROCESSED_MESSAGES / 2));
+        }
+        return false;
+    }
+    async processMessage(m) {
+        try {
+            if (this.isMessageProcessed(m.key))
+                return;
+            this.pipelineLogCounter++;
+            const shouldLog = this.pipelineLogCounter % this.PIPELINE_LOG_INTERVAL === 1;
+            if (shouldLog)
+                this.logger.debug('🔹 [PIPELINE] Iniciando');
+            if (!m || !m.message || m.key.fromMe || m.message.protocolMessage)
+                return;
+            const remoteJid = m.key.remoteJid;
+            const ehGrupo = remoteJid.endsWith('@g.us');
+            if (remoteJid === 'status@broadcast')
+                return;
+            if (!this.messageProcessor)
+                return;
+            const nome = m.pushName || 'Usuário';
+            let participantJidRaw = this.messageProcessor.extractParticipantJid(m);
+            const numeroReal = this.messageProcessor.extractUserNumber(m);
+            // NORMALIZAÇÃO DE JID: Usando JidUtils para suporte a Multi-Device e LID
+            const participantJid = JidUtils.normalize(participantJidRaw);
+            if (this.moderationSystem?.isBlacklisted(numeroReal))
+                return;
+            // ═══ BLACKLIST CHECK ═══
+            if (this.rateLimiter?.isBlacklisted(numeroReal))
+                return;
+            if (ehGrupo && this.moderationSystem?.isMuted(remoteJid, participantJid)) {
+                // MUTE VIOLATION: Delete message and autoban user
+                this.logger.warn(`🔇 MUTE VIOLATION: @${participantJid.split('@')[0]} falou enquanto mutado. BANINDO.`);
+                try {
+                    await this.sock.sendMessage(remoteJid, {
+                        delete: { remoteJid, fromMe: false, id: m.key.id, participant: participantJid }
+                    });
+                    // Remove participant immediately as requested
+                    await this.sock.groupParticipantsUpdate(remoteJid, [participantJid], 'remove');
+                    await this.sock.sendMessage(remoteJid, {
+                        text: `🚫 @${participantJid.split('@')[0]} foi removido por falar durante o período de Mute!`,
+                        mentions: [participantJid]
+                    });
+                }
+                catch (e) { }
+                return;
+            }
+            const texto = this.messageProcessor.extractText(m);
+            const temImagem = this.messageProcessor.hasImage(m);
+            const temAudio = this.messageProcessor.hasAudio(m);
+            const temVideo = this.messageProcessor.hasVideo(m);
+            const temDoc = this.messageProcessor.hasDocument(m);
+            if (ehGrupo && texto && this.moderationSystem) {
+                let isAdmin = false;
+                try {
+                    if (this.groupManagement)
+                        isAdmin = await this.groupManagement.isUserAdmin(remoteJid, participantJid);
+                }
+                catch (e) { }
+                // Antilink rigoroso (apenas para não-admins)
+                if (!isAdmin && this.moderationSystem.isAntiLinkActive(remoteJid) && this.moderationSystem.isLink(texto)) {
+                    this.logger.warn(`🔗 ANTI-LINK DETECTADO: @${participantJid}`);
+                    try {
+                        // 1. Deleta a mensagem com o link imediatamente
+                        await this.sock.sendMessage(remoteJid, {
+                            delete: { remoteJid, fromMe: false, id: m.key.id, participant: participantJid }
+                        });
+                        // 2. Remove o membro conforme pedido
+                        await this.sock.groupParticipantsUpdate(remoteJid, [participantJid], 'remove');
+                        // 3. Notifica o grupo
+                        await this.sock.sendMessage(remoteJid, {
+                            text: `🚫 @${participantJid.split('@')[0]} foi expulso e seu rasto apagado por enviar link proibido!`,
+                            mentions: [participantJid]
+                        });
+                    }
+                    catch (e) {
+                        this.logger.error(`Erro ao aplicar Anti-Link: ${e.message}`);
+                    }
+                    return;
+                }
+            }
+            const replyInfo = this.messageProcessor.extractReplyInfo(m);
+            // ═══ GANHO DE XP POR MENSAGEM (SISTEMA DE NÍVEIS) ═══
+            const levelingSetting = this.groupManagement?.groupSettings?.[remoteJid]?.leveling;
+            const levelingAtivo = ehGrupo && (levelingSetting === true || levelingSetting === 'on' || levelingSetting === 1);
+            if (levelingAtivo && this.levelSystem) {
+                try {
+                    const resultXp = this.levelSystem.awardXp(remoteJid, participantJid, 10);
+                    this.logger.info(`✨ [LevelSystem] +10 XP para @${participantJid.split('@')[0]} em ${remoteJid}. Level: ${resultXp?.rec?.level}`);
+                    if (resultXp && resultXp.leveled) {
+                        const newLevel = resultXp.rec.level;
+                        const patente = this.levelSystem.getPatente(newLevel);
+                        const msgLvl = `🎉 *LEVEL UP!* 🔥\n\n@${participantJid.split('@')[0]} subiu para o Nível *${newLevel}*!\n\n👑 *Nova Patente:* ${patente}`;
+                        await this.sock.sendMessage(remoteJid, { text: msgLvl, mentions: [participantJid] });
+                        // Verifica Auto-ADM
+                        if (newLevel >= this.levelSystem.maxLevel) {
+                            const resultPromo = await this.levelSystem.registerMaxLevelUser(remoteJid, participantJid, m.pushName || 'Usuário', this.sock);
+                            if (resultPromo && resultPromo.message) {
+                                await this.sock.sendMessage(remoteJid, { text: resultPromo.message, mentions: [participantJid] });
+                            }
+                        }
+                    }
+                }
+                catch (e) {
+                    this.logger.error(`🚨 [LVL] Erro ao atribuir XP: ${e.message}`);
+                }
+            }
+            else if (ehGrupo && this.levelSystem) {
+                // Log opcional para debug se o leveling está desligado mas deveria estar ligado
+                if (this.levelSystem.enableDetailedLogging) {
+                    this.logger.debug(`[LVL] Ignorado para ${remoteJid}: Status=${this.groupManagement?.groupSettings?.[remoteJid]?.leveling}`);
+                }
+            }
+            // ═══ NOVO RATE LIMIT CHECK (SELETIVO) ═══
+            if (this.rateLimiter) {
+                const isDirected = this.messageProcessor.isDirectedToBot(m);
+                if (isDirected) {
+                    const isOwner = this.config.isDono(numeroReal);
+                    // 1. Check Command Spam (Rapid Fire) - Se ativo no grupo
+                    if (ehGrupo && this.groupManagement && this.moderationSystem) {
+                        const settings = this.groupManagement.groupSettings?.[remoteJid] || {};
+                        if (settings.antispam && !isOwner) {
+                            if (this.moderationSystem.checkSpam(numeroReal)) {
+                                this.logger.warn(`🚫 [COMMAND-SPAM] ${numeroReal} bloqueado por rapid-fire em ${remoteJid}`);
+                                return;
+                            }
+                        }
+                    }
+                    // 2. Check Hourly Rate Limit (Avisos Progressivos)
+                    const rateCheck = this.rateLimiter.check(numeroReal, ehGrupo, isOwner, nome);
+                    if (!rateCheck.allowed) {
+                        if (rateCheck.message) {
+                            await this.sock.sendMessage(remoteJid, { text: rateCheck.message }, { quoted: m });
+                        }
+                        this.logger.warn(`🛑 [RATE-LIMIT] ${numeroReal} interceptado (${ehGrupo ? 'Grupo' : 'PV'})`);
+                        return;
+                    }
+                }
+            }
+            // ═══ BARREIRA ANTI-MODERAÇÃO DE MÍDIA ═══
+            // Executa para qualquer mídia em grupos, desde que o sender NÃO seja admin
+            if (ehGrupo && this.moderationSystem && this.groupManagement) {
+                let senderIsAdmin = false;
+                try {
+                    senderIsAdmin = await this.groupManagement.isUserAdmin(remoteJid, participantJid);
+                }
+                catch (e) { }
+                const deletarMídia = async (motivo, aviso) => {
+                    this.logger.warn(`🛡️ [ANTI-MEDIA] ${motivo}: ${participantJid}`);
+                    try {
+                        await this.sock.sendMessage(remoteJid, {
+                            delete: { remoteJid, fromMe: false, id: m.key.id, participant: participantJid }
+                        });
+                        await this.sock.sendMessage(remoteJid, {
+                            text: aviso,
+                            mentions: [participantJid]
+                        });
+                    }
+                    catch (e) { }
+                };
+                if (!senderIsAdmin) {
+                    // Anti-Image
+                    const settings = this.groupManagement.groupSettings?.[remoteJid] || {};
+                    if (temImagem && settings.antiimage) {
+                        await deletarMídia('ANTI-IMAGE', `🚫 @${participantJid.split('@')[0]} — Envio de imagens está desactivado neste grupo.`);
+                        return;
+                    }
+                    // Anti-Video
+                    if (temVideo && (settings.antivideo || this.moderationSystem.isAntiVideoActive?.(remoteJid))) {
+                        await deletarMídia('ANTI-VIDEO', `🚫 @${participantJid.split('@')[0]} — Envio de vídeos está desactivado neste grupo.`);
+                        return;
+                    }
+                    // Anti-Sticker (detectamos via messageType)
+                    const msgType = this.messageProcessor?.getMessageType?.(m) || Object.keys(m.message || {})[0];
+                    if (msgType === 'stickerMessage' && (settings.antisticker || this.moderationSystem.isAntiStickerActive?.(remoteJid))) {
+                        await deletarMídia('ANTI-STICKER', `🚫 @${participantJid.split('@')[0]} — Envio de stickers está desactivado neste grupo.`);
+                        return;
+                    }
+                    // Anti-Audio/PTT
+                    if (temAudio && settings.antiaudio) {
+                        await deletarMídia('ANTI-AUDIO', `🚫 @${participantJid.split('@')[0]} — Envio de áudios está desactivado neste grupo.`);
+                        return;
+                    }
+                    // Anti-Doc
+                    if (temDoc && settings.antidoc) {
+                        await deletarMídia('ANTI-DOC', `🚫 @${participantJid.split('@')[0]} — Envio de documentos está desactivado neste grupo.`);
+                        return;
+                    }
+                }
+            }
+            if (temImagem) {
+                await this.handleImageMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo);
+            }
+            else if (temVideo) {
+                await this.handleVideoMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo);
+            }
+            else if (temDoc) {
+                await this.handleDocumentMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo);
+            }
+            else if (temAudio) {
+                await this.handleAudioMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo);
+            }
+            else if (texto) {
+                await this.handleTextMessage(m, nome, numeroReal, participantJid, texto, replyInfo, ehGrupo);
+            }
+        }
+        catch (error) {
+            this.logger.error('❌ Erro pipeline:', error?.message);
+        }
+    }
+    async handleImageMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo) {
+        const caption = this.messageProcessor.extractText(m) || '';
+        const allowed = await this.handleRateLimitAndBlacklist(m, nome, numeroReal, caption || '<IMAGEM>', ehGrupo);
+        if (!allowed)
+            return;
+        this.logger.info(`🖼️ [IMAGEM] ${nome}`);
+        // Leveling...
+        try {
+            // CommandHandler primeiro - Comandos respondem INSTANTANEAMENTE sem delay
+            if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
+                if (this.presenceSimulator) {
+                    await this.presenceSimulator.simulateTicks(m, true);
+                }
+                const handled = await this.commandHandler.handle(m, { nome, numeroReal, participantJid, texto: caption, replyInfo, ehGrupo });
+                if (handled)
+                    return;
+            }
+            // BARREIRA ANTI-TAGARELICE
+            if (!this.shouldRespondToAI(m, caption, replyInfo, ehGrupo)) {
+                return;
+            }
+            if (this.presenceSimulator) {
+                await this.presenceSimulator.simulateTicks(m, replyInfo, ehGrupo);
+            }
+            // API análise imagem...
+            let grupo_nome = '';
+            if (ehGrupo) {
+                grupo_nome = await this._getGrupoNome(m.key.remoteJid);
+            }
+            const resultado = await this.apiClient.processMessage({
+                usuario: nome,
+                numero: numeroReal,
+                pushName: nome,
+                mensagem: caption,
+                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+                tipo_mensagem: 'imagem',
+                reply_metadata: replyInfo,
+                grupo_id: ehGrupo ? m.key.remoteJid : '',
+                grupo_nome: grupo_nome,
+                imagem_dados: {
+                    m: m // O APIClient vai baixar se necessário
+                }
+            });
+            if (!resultado.success) {
+                await this.sock.sendMessage(m.key.remoteJid, { text: 'Não consegui analisar a imagem.' });
+                return;
+            }
+            const resposta = resultado.resposta || 'Sem resposta.';
+            const shouldReply = ehGrupo || (replyInfo?.ehRespostaAoBot);
+            const sendOptions = shouldReply ? { quoted: m } : {};
+            if (this.presenceSimulator) {
+                await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta);
+            }
+            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, sendOptions);
+        }
+        catch (error) {
+            this.logger.error('❌ Erro imagem:', error.message);
+        }
+    }
+    async handleVideoMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo) {
+        // Similar a imagem, stub completo
+        this.logger.info(`🎥 [VIDEO] ${nome}`);
+        try {
+            const caption = this.messageProcessor.extractText(m) || '';
+            if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
+                if (this.presenceSimulator) {
+                    await this.presenceSimulator.simulateTicks(m, true);
+                }
+                const handled = await this.commandHandler.handle(m, { nome, numeroReal, participantJid, texto: caption, replyInfo, ehGrupo });
+                if (handled)
+                    return;
+            }
+            if (!this.shouldRespondToAI(m, caption, replyInfo, ehGrupo)) {
+                return;
+            }
+            if (this.presenceSimulator) {
+                await this.presenceSimulator.simulateTicks(m, replyInfo, ehGrupo);
+            }
+            let grupo_nome = '';
+            if (ehGrupo) {
+                grupo_nome = await this._getGrupoNome(m.key.remoteJid);
+            }
+            const resultado = await this.apiClient.processMessage({
+                usuario: nome,
+                numero: numeroReal,
+                pushName: nome,
+                mensagem: this.messageProcessor.extractText(m) || '',
+                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+                tipo_mensagem: 'video',
+                reply_metadata: replyInfo,
+                grupo_id: ehGrupo ? m.key.remoteJid : '',
+                grupo_nome: grupo_nome,
+                video_dados: { m: m }
+            });
+            const resposta = resultado.resposta || 'Vídeo recebido.';
+            const shouldReply = ehGrupo || (replyInfo?.ehRespostaAoBot);
+            const sendOptions = shouldReply ? { quoted: m } : {};
+            if (this.presenceSimulator) {
+                await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta);
+            }
+            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, sendOptions);
+        }
+        catch (e) { }
+    }
+    async handleDocumentMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo) {
+        this.logger.info(`📄 [DOC] ${nome}`);
+        try {
+            const caption = this.messageProcessor.extractText(m) || '';
+            if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
+                if (this.presenceSimulator) {
+                    await this.presenceSimulator.simulateTicks(m, true);
+                }
+                const handled = await this.commandHandler.handle(m, { nome, numeroReal, participantJid, texto: caption, replyInfo, ehGrupo });
+                if (handled)
+                    return;
+            }
+            if (!this.shouldRespondToAI(m, caption, replyInfo, ehGrupo)) {
+                return;
+            }
+            if (this.presenceSimulator) {
+                await this.presenceSimulator.simulateTicks(m, replyInfo, ehGrupo);
+            }
+            let grupo_nome = '';
+            if (ehGrupo) {
+                grupo_nome = await this._getGrupoNome(m.key.remoteJid);
+            }
+            const resultado = await this.apiClient.processMessage({
+                usuario: nome,
+                numero: numeroReal,
+                pushName: nome,
+                mensagem: this.messageProcessor.extractText(m) || '',
+                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+                tipo_mensagem: 'documento',
+                reply_metadata: replyInfo,
+                grupo_id: ehGrupo ? m.key.remoteJid : '',
+                grupo_nome: grupo_nome,
+                documento_dados: { m: m }
+            });
+            const resposta = resultado.resposta || 'Doc recebido.';
+            const shouldReply = ehGrupo || (replyInfo?.ehRespostaAoBot);
+            const sendOptions = shouldReply ? { quoted: m } : {};
+            if (this.presenceSimulator) {
+                await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta);
+            }
+            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, sendOptions);
+        }
+        catch (e) { }
+    }
+    async handleAudioMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo) {
+        this.logger.info(`🎤 [AUDIO] ${nome}`);
+        try {
+            const transcricao = await this.audioProcessor.speechToText(await this.mediaProcessor.downloadMedia(m.message, 'audio'));
+            if (transcricao.sucesso) {
+                await this.handleTextMessage(m, nome, numeroReal, participantJid, transcricao.texto, replyInfo, ehGrupo, true);
+            }
+        }
+        catch (e) { }
+    }
+    shouldRespondToAI(m, texto, replyInfo, ehGrupo) {
+        if (!ehGrupo)
+            return true; // PV sempre responde
+        const textoLower = (texto || '').toLowerCase();
+        const isReplyToBot = replyInfo?.ehRespostaAoBot || false;
+        // Verifica se é dono (apenas donos podem usar "bot" ou "morena" para ativar)
+        const numeroReal = this.messageProcessor?.extractUserNumber?.(m) || '';
+        const isOwner = this.config.isDono(numeroReal);
+        // Palavras de ativação
+        const hasAkiraMention = textoLower.includes('akira');
+        const hasSpecialMention = (textoLower.includes('pretinha') || textoLower.includes('morena')) && isOwner;
+        const mentions = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const isMentioned = mentions.some((jid) => jid === this.BOT_JID);
+        return isReplyToBot || hasAkiraMention || hasSpecialMention || isMentioned;
+    }
+    async handleTextMessage(m, nome, numeroReal, participantJid, texto, replyInfo, ehGrupo, foiAudio = false) {
+        try {
+            if (this.commandHandler && (this.messageProcessor.isCommand(texto) || texto.startsWith('#') || texto.startsWith('.'))) {
+                // Comandos não devem ter delay de presença (ex: *ping deve ser instantâneo)
+                // Mas DEVEM marcar como lido
+                if (this.presenceSimulator) {
+                    await this.presenceSimulator.simulateTicks(m, true);
+                }
+                const handled = await this.commandHandler.handle(m, { nome, numeroReal, participantJid, texto, replyInfo, ehGrupo });
+                if (handled)
+                    return;
+            }
+            // BARREIRA ANTI-TAGARELICE
+            if (!this.shouldRespondToAI(m, texto, replyInfo, ehGrupo)) {
+                return;
+            }
+            if (this.presenceSimulator) {
+                await this.presenceSimulator.simulateTicks(m, replyInfo, ehGrupo);
+            }
+            let grupo_nome = '';
+            if (ehGrupo) {
+                grupo_nome = await this._getGrupoNome(m.key.remoteJid);
+            }
+            const resultado = await this.apiClient.processMessage({
+                usuario: nome,
+                numero: numeroReal,
+                pushName: nome,
+                mensagem: texto,
+                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+                tipo_mensagem: foiAudio ? 'audio' : 'texto',
+                reply_metadata: replyInfo,
+                grupo_id: ehGrupo ? m.key.remoteJid : '',
+                grupo_nome: grupo_nome
+            });
+            if (!resultado.success)
+                return;
+            const resposta = resultado.resposta || 'OK';
+            const shouldReply = ehGrupo || (replyInfo?.ehRespostaAoBot);
+            const sendOptions = shouldReply ? { quoted: m } : {};
+            // Resposta em Áudio se o input foi Áudio
+            if (foiAudio && this.audioProcessor) {
+                try {
+                    const tts = await this.audioProcessor.generateTTS(resposta);
+                    if (tts && tts.sucesso) {
+                        if (this.presenceSimulator) {
+                            await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta, true);
+                        }
+                        await this.sock.sendMessage(m.key.remoteJid, {
+                            audio: tts.buffer,
+                            mimetype: 'audio/ogg; codecs=opus',
+                            ptt: true
+                        }, sendOptions);
+                        return;
+                    }
+                    else {
+                        this.logger.warn(`⚠️ [TTS] Falha ao gerar resposta em áudio: ${tts?.error || 'Erro desconhecido'}`);
+                    }
+                }
+                catch (ttsErr) {
+                    this.logger.error(`🚨 [TTS] Exceção ao processar áudio: ${ttsErr.message}`);
+                }
+            }
+            if (this.presenceSimulator) {
+                await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta);
+            }
+            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, sendOptions);
+        }
+        catch (e) { }
+    }
+    async handleRateLimitAndBlacklist(m, nome, numeroReal, texto, ehGrupo) {
+        // Stub - sempre true para teste
+        return true;
+    }
+    _cleanAuthOnError() {
+        try {
+            if (fs.existsSync(this.config.AUTH_FOLDER)) {
+                fs.rmSync(this.config.AUTH_FOLDER, { recursive: true, force: true });
+                this.logger.info('🧹 Credenciais limpas');
+            }
+            this.isConnected = false;
+            this.currentQR = null;
+            this.BOT_JID = null;
+            this.reconnectAttempts = 0;
+        }
+        catch (error) {
+            this.logger.error('❌ Erro limpar credenciais:', error.message);
+        }
+    }
+    getStatus() {
+        return {
+            isConnected: this.isConnected,
+            botJid: this.BOT_JID,
+            botNumero: this.config.BOT_NUMERO_REAL,
+            botName: this.config.BOT_NAME,
+            version: this.config.BOT_VERSION,
+            uptime: Math.floor(process.uptime()),
+            hasQR: !!this.currentQR,
+            reconnectAttempts: this.reconnectAttempts
+        };
+    }
+    getQRCode() {
+        return this.currentQR;
+    }
+    getStats() {
+        return {
+            isConnected: this.isConnected,
+            botJid: this.BOT_JID,
+            botNumero: this.config.BOT_NUMERO_REAL,
+            botName: this.config.BOT_NAME,
+            version: this.config.BOT_VERSION,
+            uptime: Math.floor(process.uptime()),
+            hasQR: !!this.currentQR,
+            reconnectAttempts: this.reconnectAttempts,
+            connectionStartTime: this.connectionStartTime,
+            features: this.config.FEATURES || {}
+        };
+    }
+    async disconnect() {
+        try {
+            this.logger.info('🔴 Desconectando...');
+            if (this.sock) {
+                this.sock.ev.removeAllListeners();
+                this.sock.ws?.close();
+            }
+            this.isConnected = false;
+            this.currentQR = null;
+            this.BOT_JID = null;
+        }
+        catch (error) {
+            this.logger.error('❌ Erro desconectar:', error.message);
+        }
+    }
+    async reply(m, text, options = {}) {
+        try {
+            if (!this.sock)
+                return false;
+            return await this.sock.sendMessage(m.key.remoteJid, { text, ...options }, { quoted: m });
+        }
+        catch (error) {
+            this.logger.error('❌ Erro reply:', error.message);
+            return false;
+        }
+    }
+    async _getGrupoNome(remoteJid) {
+        try {
+            if (!remoteJid || !remoteJid.endsWith('@g.us'))
+                return '';
+            // Tenta via GroupManagement (cache interno dele)
+            if (this.groupManagement) {
+                const meta = await this.groupManagement._getGroupMetadata(remoteJid);
+                if (meta?.subject)
+                    return meta.subject;
+            }
+            // Tenta via socket cache (Baileys nativo)
+            const socketCache = this.sock?.groupMetadataCache?.[remoteJid];
+            if (socketCache?.subject)
+                return socketCache.subject;
+            // Fallback: Nome genérico ou JID parcial
+            return 'Grupo';
+        }
+        catch (e) {
+            return 'Grupo';
+        }
+    }
+}
+export default BotCore;

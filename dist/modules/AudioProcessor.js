@@ -1,0 +1,427 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * CLASSE: AudioProcessor
+ * ═══════════════════════════════════════════════════════════════════════
+ * Gerencia STT (Speech-to-Text), TTS (Text-to-Speech) e processamento de áudio
+ * Integração com Deepgram e Google TTS
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+/// <reference path="./declarations.d.ts" />
+import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
+import ffmpeg from 'fluent-ffmpeg';
+import googleTTS from 'google-tts-api';
+import ConfigManager from './ConfigManager.js';
+class AudioProcessor {
+    config;
+    logger;
+    tempFolder;
+    sttCache;
+    ttsCache;
+    AUDIO_FILTERS;
+    constructor(logger = null) {
+        this.config = ConfigManager.getInstance();
+        this.logger = logger || console;
+        this.tempFolder = this.config?.TEMP_FOLDER || './temp';
+        if (!fs.existsSync(this.tempFolder)) {
+            try {
+                fs.mkdirSync(this.tempFolder, { recursive: true });
+            }
+            catch (e) { }
+        }
+        this.sttCache = new Map();
+        this.ttsCache = new Map();
+        // Filtros de Áudio - Refinados para Alta Fidelidade (Premium & Estável)
+        this.AUDIO_FILTERS = {
+            'bass': 'lowshelf=f=150:g=8:w=0.5,volume=0.9',
+            'bassboost': 'lowshelf=f=100:g=10:w=0.5,volume=0.8',
+            'esquilo': 'aresample=44100,asetrate=44100*1.5,atempo=1.0',
+            'gemuk': 'aresample=44100,asetrate=44100*0.75,atempo=1.2',
+            'nightcore': 'aresample=44100,asetrate=44100*1.15,atempo=1.0',
+            'earrape': 'volume=5,equalizer=f=1000:width_type=h:width=200:g=15',
+            'fast': 'atempo=1.5',
+            'fat': 'aresample=44100,asetrate=44100*0.8,atempo=1.2',
+            'reverse': 'areverse',
+            'robot': 'afftfilt=real=\'hypot(re,im)*sin(0)\':imag=\'hypot(re,im)*cos(0)\':win_size=512:overlap=0.75',
+            'slow': 'atempo=0.8',
+            'smooth': 'chorus=0.7:0.9:55:0.4:0.25:2,stereowiden=level=0.5',
+            'tupai': 'aresample=44100,asetrate=44100*1.8,atempo=1.0',
+            'treble': 'highshelf=f=4000:g=8:w=0.5',
+            'echo': 'aecho=0.8:0.9:400:0.3',
+            'deep': 'aresample=44100,asetrate=44100*0.83,lowpass=f=2000',
+            'squirrel': 'aresample=44100,asetrate=44100*1.9,atempo=1.0',
+            // 8D Audio Effect - Sensação 360° Suave (8.3s por ciclo)
+            '8d': 'apulsator=hz=0.12:amount=0.8:panning=1,stereowiden=levelin=1:levelout=1:delay=25:width=0.6'
+        };
+    }
+    /**
+    * Gera nome de arquivo aleatório
+    */
+    generateRandomFilename(ext = '') {
+        return path.join(this.tempFolder, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext ? '.' + ext : ''}`);
+    }
+    /**
+    * Limpa arquivo após uso
+    */
+    async cleanupFile(filePath) {
+        try {
+            if (!filePath || !fs.existsSync(filePath))
+                return;
+            return new Promise((resolve) => {
+                fs.unlink(filePath, (err) => {
+                    if (err && err.code !== 'ENOENT') {
+                        this.logger?.warn(`⚠️ Erro ao limpar ${path.basename(filePath || '')}: ${err.code}`);
+                    }
+                    resolve();
+                });
+            });
+        }
+        catch (e) {
+            this.logger?.error('Erro ao limpar arquivo:', e.message);
+        }
+    }
+    /**
+    * STT usando Deepgram
+    * Transcreve áudio para texto
+    */
+    async speechToText(audioBuffer, language = 'pt') {
+        try {
+            if (!this.config?.DEEPGRAM_API_KEY) {
+                this.logger?.warn('⚠️ Deepgram API Key não configurada');
+                return {
+                    sucesso: false,
+                    texto: '[Audio recebido mas Deepgram não configurado]',
+                    erro: 'API_KEY_MISSING'
+                };
+            }
+            this.logger?.info('🔊 Iniciando STT (Deepgram)...');
+            // Converte OGG para MP3
+            const audioPath = this.generateRandomFilename('ogg');
+            const convertedPath = this.generateRandomFilename('mp3');
+            await fs.promises.writeFile(audioPath, audioBuffer);
+            // Converte para MP3
+            await new Promise((resolve, reject) => {
+                ffmpeg(audioPath)
+                    .toFormat('mp3')
+                    .audioCodec('libmp3lame')
+                    .on('end', resolve)
+                    .on('error', reject)
+                    .save(convertedPath);
+            });
+            const convertedBuffer = await fs.promises.readFile(convertedPath);
+            // Chama Deepgram API
+            this.logger?.info('📤 Enviando para Deepgram...');
+            const response = await axios.post(this.config?.DEEPGRAM_API_URL, convertedBuffer, {
+                headers: {
+                    'Authorization': `Token ${this.config?.DEEPGRAM_API_KEY}`,
+                    'Content-Type': 'audio/mpeg'
+                },
+                params: {
+                    model: this.config?.DEEPGRAM_MODEL,
+                    language: language || this.config?.STT_LANGUAGE,
+                    smart_format: true,
+                    punctuate: true,
+                    diarize: false,
+                    numerals: true
+                },
+                timeout: 30000
+            });
+            let textoTranscrito = '';
+            if (response.data?.results?.channels?.[0]?.alternatives?.[0]?.transcript) {
+                textoTranscrito = response.data.results.channels[0].alternatives[0].transcript.trim();
+            }
+            if (!textoTranscrito || textoTranscrito.length < 2) {
+                textoTranscrito = '[Não consegui entender claramente]';
+            }
+            // Limpeza
+            await Promise.all([
+                this.cleanupFile(audioPath),
+                this.cleanupFile(convertedPath)
+            ]);
+            this.logger?.info(`📝 STT Completo: ${textoTranscrito.substring(0, 80)}...`);
+            return {
+                sucesso: true,
+                texto: textoTranscrito,
+                fonte: 'Deepgram STT',
+                confidence: response.data?.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0
+            };
+        }
+        catch (error) {
+            this.logger?.error('❌ Erro STT:', error.message);
+            let errorCode = 'UNKNOWN';
+            if (error.response?.status === 401) {
+                errorCode = 'INVALID_API_KEY';
+            }
+            else if (error.code === 'ECONNREFUSED') {
+                errorCode = 'CONNECTION_FAILED';
+            }
+            return {
+                sucesso: false,
+                texto: '[Recebi seu áudio mas houve um erro na transcrição]',
+                erro: errorCode,
+                mensagem: error.message
+            };
+        }
+    }
+    /**
+    * TTS usando Google TTS
+    * Converte texto para áudio
+    */
+    async textToSpeech(text, language = 'pt') {
+        try {
+            if (!text || text.length === 0) {
+                return { sucesso: false, error: 'Texto vazio' };
+            }
+            // Novo limite de 4000 caracteres conforme solicitado
+            const maxChars = 4000;
+            const textToProcess = text.substring(0, maxChars);
+            // Verifica cache
+            const cacheKey = `${textToProcess.substring(0, 100)}_${language}`;
+            if (this.ttsCache?.has(cacheKey)) {
+                this.logger?.debug('💾 TTS from cache');
+                return this.ttsCache.get(cacheKey);
+            }
+            this.logger?.info(`🔊 Iniciando TTS (Google) para ${textToProcess.length} caracteres...`);
+            // Google TTS tem limite de ~200 chars por requisição.
+            // Vamos dividir em chunks de aproximadamente 200 caracteres, respeitando espaços.
+            const chunks = [];
+            let currentText = textToProcess;
+            while (currentText.length > 0) {
+                if (currentText.length <= 200) {
+                    chunks.push(currentText);
+                    break;
+                }
+                let cutAt = currentText.lastIndexOf(' ', 200);
+                if (cutAt <= 0)
+                    cutAt = 200;
+                chunks.push(currentText.substring(0, cutAt).trim());
+                currentText = currentText.substring(cutAt).trim();
+            }
+            const tempFiles = [];
+            // Processa cada chunk
+            for (let i = 0; i < chunks.length; i++) {
+                const audioUrl = googleTTS.getAudioUrl(chunks[i], {
+                    lang: language || this.config?.TTS_LANGUAGE,
+                    slow: this.config?.TTS_SLOW,
+                    host: 'https://translate.google.com'
+                });
+                const tempPath = this.generateRandomFilename(`part${i}.mp3`);
+                const response = await axios({
+                    url: audioUrl,
+                    method: 'GET',
+                    responseType: 'arraybuffer',
+                    timeout: 15000
+                });
+                await fs.promises.writeFile(tempPath, Buffer.from(response.data));
+                tempFiles.push(tempPath);
+            }
+            // Concatena os arquivos MP3 usando FFmpeg
+            const combinedMp3Path = this.generateRandomFilename('combined.mp3');
+            const opusPath = this.generateRandomFilename('opus');
+            await new Promise((resolve, reject) => {
+                const merging = ffmpeg();
+                tempFiles.forEach(f => merging.input(f));
+                merging
+                    .on('error', reject)
+                    .on('end', resolve)
+                    .mergeToFile(combinedMp3Path, this.tempFolder);
+            });
+            // Converte para OGG Opus (Voice Note)
+            await new Promise((resolve, reject) => {
+                ffmpeg(combinedMp3Path)
+                    .toFormat('opus')
+                    .audioCodec('libopus')
+                    .audioBitrate('32k')
+                    .audioFrequency(48000)
+                    .audioChannels(1)
+                    .on('end', resolve)
+                    .on('error', reject)
+                    .save(opusPath);
+            });
+            const finalBuffer = await fs.promises.readFile(opusPath);
+            // Cleanup
+            await Promise.all([
+                ...tempFiles.map(f => this.cleanupFile(f)),
+                this.cleanupFile(combinedMp3Path),
+                this.cleanupFile(opusPath)
+            ]);
+            const result = {
+                sucesso: true,
+                buffer: finalBuffer,
+                fonte: 'Google TTS (Merged Ogg Opus)',
+                size: finalBuffer.length,
+                mimetype: 'audio/ogg; codecs=opus'
+            };
+            // Cache
+            this.ttsCache.set(cacheKey, result);
+            if (this.ttsCache.size > 50) {
+                const firstKey = this.ttsCache.keys().next().value;
+                this.ttsCache.delete(firstKey);
+            }
+            this.logger?.info(`🔊 TTS Completo: ${chunks.length} partes, total ${finalBuffer.length} bytes`);
+            return result;
+        }
+        catch (error) {
+            this.logger?.error('❌ Erro TTS (Google Multi-chunk):', error.message);
+            return {
+                sucesso: false,
+                error: 'Erro ao gerar TTS longo: ' + error.message
+            };
+        }
+    }
+    /**
+    * Detecta se é áudio animado (apenas tipo)
+    */
+    detectAudioType(buffer) {
+        if (!buffer || buffer.length < 12)
+            return 'unknown';
+        const header = buffer.slice(0, 4).toString('hex').toLowerCase();
+        // OGG Vorbis
+        if (header === '4f676753')
+            return 'ogg';
+        // RIFF (WAV)
+        if (header === '52494646')
+            return 'wav';
+        // MP3
+        if (header === '494433' || header === 'fffb')
+            return 'mp3';
+        // FLAC
+        if (header === '664c6143')
+            return 'flac';
+        // AAC
+        if (header === 'fff1' || header === 'fff9')
+            return 'aac';
+        return 'unknown';
+    }
+    /**
+    * Aplica efeito de áudio (nightcore, slow, bass, etc)
+    */
+    /**
+    * Aplica efeito de áudio (nightcore, slow, bass, etc)
+    */
+    async applyAudioEffect(inputBuffer, effectName = 'normal') {
+        try {
+            const effectKey = effectName.toLowerCase();
+            const filterStr = this.AUDIO_FILTERS[effectKey];
+            if (!filterStr && effectKey !== 'normal') {
+                return {
+                    sucesso: false,
+                    error: `Efeito '${effectName}' não encontrado.`
+                };
+            }
+            // Se for normal ou sem filtro, retorna original
+            if (effectKey === 'normal' || !filterStr) {
+                return { sucesso: true, buffer: inputBuffer, effect: 'normal' };
+            }
+            const inputPath = this.generateRandomFilename('mp3');
+            const outputPath = this.generateRandomFilename('mp3');
+            await fs.promises.writeFile(inputPath, inputBuffer);
+            this.logger?.info(`🎵 Aplicando efeito '${effectName}'...`);
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputPath)
+                    .audioFilters(filterStr)
+                    .outputOptions('-q:a 5') // Qualidade VBR
+                    .save(outputPath)
+                    .on('end', resolve)
+                    .on('error', (err) => {
+                    this.logger?.error(`❌ Erro FFmpeg (${effectName}):`, err.message);
+                    reject(err);
+                });
+            });
+            const processedBuffer = fs.readFileSync(outputPath);
+            // 🛠️ CONVERSÃO PARA OGG OPUS (VOICE NOTE STYLE)
+            this.logger?.info(`🛠️ Convertendo áudio com efeito '${effectName}' para Ogg Opus...`);
+            const opusPath = this.generateRandomFilename('opus');
+            try {
+                await new Promise((resolve, reject) => {
+                    ffmpeg(outputPath)
+                        .toFormat('opus')
+                        .audioCodec('libopus')
+                        .audioBitrate('32k')
+                        .audioFrequency(48000)
+                        .audioChannels(1)
+                        .on('end', resolve)
+                        .on('error', reject)
+                        .save(opusPath);
+                });
+                const resultBuffer = fs.readFileSync(opusPath);
+                // Cleanup
+                await Promise.all([
+                    this.cleanupFile(inputPath),
+                    this.cleanupFile(outputPath),
+                    this.cleanupFile(opusPath)
+                ]);
+                return {
+                    sucesso: true,
+                    buffer: resultBuffer,
+                    effect: effectName,
+                    size: resultBuffer.length,
+                    mimetype: 'audio/ogg; codecs=opus'
+                };
+            }
+            catch (opusError) {
+                this.logger?.error('⚠️ Erro na conversão para Opus, enviando MP3 processado:', opusError.message);
+                const resultBuffer = fs.readFileSync(outputPath);
+                await Promise.all([
+                    this.cleanupFile(inputPath),
+                    this.cleanupFile(outputPath)
+                ]);
+                return {
+                    sucesso: true,
+                    buffer: resultBuffer,
+                    effect: effectName,
+                    size: resultBuffer.length,
+                    mimetype: 'audio/mpeg'
+                };
+            }
+        }
+        catch (error) {
+            this.logger?.error(`❌ Erro ao aplicar efeito ${effectName}:`, error.message);
+            return {
+                sucesso: false,
+                error: error.message
+            };
+        }
+    }
+    /**
+    * Alias para textToSpeech (compatibilidade com CommandHandler)
+    * Converte códigos de idioma para formato correto (ex: 'en' -> 'en-US')
+    */
+    async generateTTS(text, language = 'pt') {
+        const langMap = {
+            'pt': 'pt-BR',
+            'en': 'en-US',
+            'es': 'es-ES',
+            'fr': 'fr-FR',
+            'de': 'de-DE',
+            'it': 'it-IT',
+            'ja': 'ja-JP',
+            'zh': 'zh-CN',
+            'ar': 'ar-SA'
+        };
+        const langCode = langMap[language.toLowerCase()] || language;
+        return await this.textToSpeech(text, langCode);
+    }
+    /**
+    * Limpa cache de TTS
+    */
+    clearCache() {
+        this.sttCache?.clear();
+        this.ttsCache?.clear();
+        this.logger?.info('💾 Caches de áudio limpos');
+    }
+    /**
+    * Retorna estatísticas
+    */
+    getStats() {
+        return {
+            sttCacheSize: this.sttCache?.size,
+            ttsCacheSize: this.ttsCache?.size,
+            deepgramConfigured: !!this.config?.DEEPGRAM_API_KEY,
+            sttEnabled: this.config?.FEATURE_STT_ENABLED,
+            ttsEnabled: this.config?.FEATURE_TTS_ENABLED
+        };
+    }
+}
+export default AudioProcessor;
