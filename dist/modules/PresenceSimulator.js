@@ -11,9 +11,9 @@ import { delay } from '@whiskeysockets/baileys';
 class PresenceSimulator {
     sock;
     logger;
-    constructor(sock, logger = null) {
+    constructor(sock) {
         this.sock = sock;
-        this.logger = logger || console;
+        this.logger = console;
     }
     /**
      * Aguarda a conexão ficar estável (OPEN) por um tempo limitado
@@ -65,7 +65,7 @@ class PresenceSimulator {
             await delay(300);
             // Step 2: Começar a digitar
             await this.safeSendPresenceUpdate('composing', jid);
-            this.logger.info(`⌨️  [DIGITANDO] Simulando digitação por ${(durationMs / 1000).toFixed(1)}s...`);
+            this.logger.log(`⌨️  [DIGITANDO] Simulando digitação por ${(durationMs / 1000).toFixed(1)}s...`);
             // Step 3: Aguardar conforme tamanho da mensagem
             await delay(durationMs);
             // Step 4: Parar de digitar (transição)
@@ -73,7 +73,7 @@ class PresenceSimulator {
             await delay(300);
             // Step 5: Voltar ao normal
             await this.safeSendPresenceUpdate('available', jid);
-            this.logger.info('✅ [PRONTO] Digitação simulada concluída');
+            this.logger.log('✅ [PRONTO] Digitação simulada concluída');
             return true;
         }
         catch (e) {
@@ -89,14 +89,14 @@ class PresenceSimulator {
      */
     async simulateRecording(jid, durationMs = 2000) {
         try {
-            this.logger.info(`🎤 [GRAVANDO] Preparando áudio por ${(durationMs / 1000).toFixed(1)}s...`);
+            this.logger.log(`🎤 [GRAVANDO] Preparando áudio por ${(durationMs / 1000).toFixed(1)}s...`);
             // Step 1: Começar a "gravar"
             await this.safeSendPresenceUpdate('recording', jid);
             // Step 2: Aguardar processamento
             await delay(durationMs);
             // Step 3: Concluir gravação
             await this.safeSendPresenceUpdate('paused', jid);
-            this.logger.info('✅ [PRONTO] Áudio preparado para envio');
+            this.logger.log('✅ [PRONTO] Áudio preparado para envio');
             return true;
         }
         catch (e) {
@@ -130,7 +130,7 @@ class PresenceSimulator {
                     // Não foi ativada: Apenas um tick (entregue)
                     try {
                         await this.sock.sendReadReceipt(jid, participant, [messageId]);
-                        this.logger.info('✓ [ENTREGUE] Grupo');
+                        this.logger.log('✓ [ENTREGUE] Grupo');
                         return true;
                     }
                     catch (err) {
@@ -141,7 +141,7 @@ class PresenceSimulator {
                     // Foi ativada: Dois ticks azuis (lido)
                     try {
                         await this.sock.readMessages([m.key]);
-                        this.logger.info('✓✓ [LIDO] Grupo');
+                        this.logger.log('✓✓ [LIDO] Grupo');
                         return true;
                     }
                     catch (err) {
@@ -154,7 +154,7 @@ class PresenceSimulator {
                 if (wasActivated || isAudio) {
                     try {
                         await this.sock.readMessages([m.key]);
-                        this.logger.info(isAudio ? '▶️ [REPRODUZIDO] PV' : '✓✓ [LIDO] PV');
+                        this.logger.log(isAudio ? '▶️ [REPRODUZIDO] PV' : '✓✓ [LIDO] PV');
                         return true;
                     }
                     catch (err) {
@@ -164,7 +164,7 @@ class PresenceSimulator {
                 else {
                     try {
                         await this.sock.sendReadReceipt(jid, participant, [messageId]);
-                        this.logger.info('✓ [ENTREGUE] PV');
+                        this.logger.log('✓ [ENTREGUE] PV');
                         return true;
                     }
                     catch (err) {
@@ -185,7 +185,7 @@ class PresenceSimulator {
             if (!this.sock)
                 return false;
             await this.sock.readMessages([m.key]);
-            this.logger.info('✓✓ [LIDO] Mensagem marcada');
+            this.logger.log('✓✓ [LIDO] Mensagem marcada');
             return true;
         }
         catch (e) {
@@ -233,9 +233,11 @@ class PresenceSimulator {
             // Agora confiamos no safeSendPresenceUpdate para lidar com erros silenciosamente
             const jid = m.key.remoteJid;
             const isGroup = String(jid || '').endsWith('@g.us');
-            // Step 1: Marcar como entregue (PV e Grupos)
-            await this.simulateTicks(m, false, false);
-            await delay(300);
+            // Step 1: Marcar como entregue (em grupos)
+            if (isGroup) {
+                await this.simulateTicks(m, false, false);
+                await delay(300);
+            }
             // Step 2: Simular digitação ou gravação
             if (isAudio) {
                 const estimatedDuration = this.calculateRecordingDuration(responseText);
@@ -259,20 +261,20 @@ class PresenceSimulator {
      * Calcula duração realista de digitação baseado no tamanho da resposta
      * Fórmula: 30-50ms por caractere, mínimo 1s, máximo 15s
      */
-    calculateTypingDuration(text, minMs = 500, maxMs = 8000) {
+    calculateTypingDuration(text, minMs = 1000, maxMs = 15000) {
         if (!text)
             return minMs;
-        const estimatedMs = Math.max(text.length * 30, minMs);
+        const estimatedMs = Math.max(text.length * 40, minMs);
         return Math.min(estimatedMs, maxMs);
     }
     /**
      * Calcula duração realista de gravação de áudio
      * Fórmula: 100ms por 10 caracteres, mínimo 2s, máximo 10s
      */
-    calculateRecordingDuration(text, minMs = 500, maxMs = 2500) {
+    calculateRecordingDuration(text, minMs = 2000, maxMs = 10000) {
         if (!text)
             return minMs;
-        const estimatedMs = Math.max((text.length / 10) * 40, minMs);
+        const estimatedMs = Math.max((text.length / 10) * 100, minMs);
         return Math.min(estimatedMs, maxMs);
     }
 }

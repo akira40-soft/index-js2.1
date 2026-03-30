@@ -1,10 +1,11 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * CLASSE: BotCore V21 - SOCKET INSTANT + RAILWAY OK
+ * CLASSE: BotCore
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Núcleo central do bot Akira.
  * ═══════════════════════════════════════════════════════════════════════════
  */
-/// <reference path="./declarations.d.ts" />
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay, Browsers } from '@whiskeysockets/baileys';
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, delay, Browsers, getContentType } from '@whiskeysockets/baileys';
 import fs from 'fs';
 import pino from 'pino';
 import { exec } from 'child_process';
@@ -30,8 +31,6 @@ import GroupManagement from './GroupManagement.js';
 import ImageEffects from './ImageEffects.js';
 import StickerViewOnceHandler from './StickerViewOnceHandler.js';
 import PermissionManager from './PermissionManager.js';
-import RateLimiter from './RateLimiter.js';
-import JidUtils from './JidUtils.js';
 class BotCore {
     config;
     logger;
@@ -61,7 +60,6 @@ class BotCore {
     imageEffects;
     permissionManager;
     stickerViewOnceHandler;
-    rateLimiter;
     // Event listeners
     eventListeners = {
         onQRGenerated: null,
@@ -86,7 +84,6 @@ class BotCore {
             this.logger.info('🚀 Inicializando BotCore...');
             HFCorrections.apply();
             this.config.validate();
-            this.config.logConfig();
             await this.initializeComponents();
             return true;
         }
@@ -99,6 +96,10 @@ class BotCore {
         await this.initialize();
         await this.connect();
     }
+    /**
+     * Auto-atualiza o yt-dlp em background para garantir downloads funcionando
+     * Essencial para Railway onde o build envelhece mas o bot continua rodando
+     */
     async _selfUpdateYtdlp() {
         try {
             this.logger.info('🔄 [yt-dlp] Verificando atualizações...');
@@ -111,31 +112,22 @@ class BotCore {
             }
         }
         catch (err) {
+            // Falha silenciosa — não bloqueia o startup
             this.logger.warn(`⚠️ [yt-dlp] Não foi possível atualizar: ${err.message?.substring(0, 80)}`);
         }
     }
     async initializeComponents() {
         try {
             this.logger.debug('🔧 Inicializando componentes..');
+            // Auto-atualiza yt-dlp em background (não bloqueia o startup)
             this._selfUpdateYtdlp().catch(() => { });
             this.apiClient = new APIClient(this.logger);
-            // Teste de conectividade inicial (Não bloqueante)
-            this.apiClient.healthCheck().then((health) => {
-                if (health.success) {
-                    this.logger.info('✅ [API] Teste de conectividade: OK!');
-                }
-                else {
-                    this.logger.warn(`⚠️ [API] Teste de conectividade: API offline ou inacessível (${health.error || 'Status ' + health.status})`);
-                }
-            }).catch((e) => {
-                this.logger.error(`🚨 [API] Falha crítica de rede no startup: ${e.message}`);
-            });
             this.audioProcessor = new AudioProcessor(this.logger);
             this.mediaProcessor = new MediaProcessor(this.logger);
             this.messageProcessor = new MessageProcessor(this.logger);
-            this.moderationSystem = ModerationSystem.getInstance(this.logger);
-            this.levelSystem = LevelSystem.getInstance(this.logger);
-            this.registrationSystem = RegistrationSystem.getInstance(this.logger);
+            this.moderationSystem = new ModerationSystem(this.logger);
+            this.levelSystem = new LevelSystem(this.logger);
+            this.registrationSystem = new RegistrationSystem(this.logger);
             this.subscriptionManager = new SubscriptionManager(this.config);
             this.userProfile = new UserProfile(this.sock, this.config);
             this.botProfile = new BotProfile(this.sock, this.logger);
@@ -143,18 +135,13 @@ class BotCore {
             this.imageEffects = new ImageEffects(this.logger);
             this.permissionManager = new PermissionManager(this.logger);
             this.stickerViewOnceHandler = new StickerViewOnceHandler(this.sock, this.config);
-            this.rateLimiter = new RateLimiter({
-                pvLimit: this.config.RATE_LIMIT_PV,
-                groupLimit: this.config.RATE_LIMIT_GROUP,
-                maxViolations: this.config.MAX_VIOLATIONS
-            });
             this.paymentManager = new PaymentManager(this, this.subscriptionManager);
-            this.presenceSimulator = new PresenceSimulator(this.sock || null, this.logger);
-            this.economySystem = EconomySystem.getInstance(this.logger);
+            this.presenceSimulator = new PresenceSimulator(this.sock || null);
+            this.economySystem = new EconomySystem(this.logger);
             try {
                 this.commandHandler = new CommandHandler(this.sock, this.config, this, this.messageProcessor);
                 this.commandHandler.economySystem = this.economySystem;
-                this.commandHandler.gameSystem = await import('./GameSystem.js').then(mod => mod.default);
+                this.commandHandler.gameSystem = (await import('./GameSystem.js')).default;
                 this.logger.debug('✅ CommandHandler inicializado');
             }
             catch (err) {
@@ -206,13 +193,11 @@ class BotCore {
                 browser: Browsers.macOS('Akira-Bot'),
                 generateHighQualityLinkPreview: true,
                 getMessage: async (key) => ({ conversation: 'hello' }),
-                connectTimeoutMs: 120000,
-                defaultQueryTimeoutMs: 120000,
-                keepAliveIntervalMs: 15000,
-                markOnlineOnConnect: true,
+                connectTimeoutMs: 60000,
+                defaultQueryTimeoutMs: 60000,
+                keepAliveIntervalMs: 10000,
                 emitOwnEvents: false,
-                retryRequestDelayMs: 500,
-                shouldIgnoreJid: (jid) => jid === 'status@broadcast'
+                retryRequestDelayMs: 250
             };
             const agent = HFCorrections.createHFAgent();
             if (agent) {
@@ -236,26 +221,16 @@ class BotCore {
                     this.isConnected = false;
                     this.currentQR = null;
                     const reason = lastDisconnect?.error?.output?.statusCode;
-                    let shouldReconnect = reason !== DisconnectReason.loggedOut;
-                    if (reason === 401) {
-                        this.logger.warn('🔄 401 → Clearing auth');
-                        this._cleanAuthOnError();
-                        shouldReconnect = true;
-                        this.reconnectAttempts = 0;
-                    }
-                    else if (reason === 500) {
-                        this.logger.warn('🔄 500 Internal Server Error → Force Reconnect without clearing auth');
-                        shouldReconnect = true;
-                        this.reconnectAttempts = 0;
-                    }
+                    const shouldReconnect = reason !== DisconnectReason.loggedOut;
                     this.logger.warn(`🔴 Conexão fechada. Motivo: ${reason}. Reconectar: ${shouldReconnect}`);
                     if (this.eventListeners.onDisconnected)
                         this.eventListeners.onDisconnected(reason);
                     if (shouldReconnect) {
                         if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
                             this.reconnectAttempts++;
-                            const baseDelay = Math.min(Math.pow(1.8, this.reconnectAttempts) * 1000, 300000);
-                            const delayMs = Math.floor(baseDelay + Math.random() * 5000);
+                            // Exponential backoff com jitter (até 30s)
+                            const baseDelay = Math.min(Math.pow(1.5, this.reconnectAttempts) * 1000, 30000);
+                            const delayMs = Math.floor(baseDelay + Math.random() * 1000);
                             this.logger.info(`⏳ Reconectando em ${delayMs}ms (Tentativa ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`);
                             await delay(delayMs);
                             this.connect();
@@ -276,9 +251,12 @@ class BotCore {
                     this.reconnectAttempts = 0;
                     this.currentQR = null;
                     this.connectionStartTime = Date.now();
+                    // Warm-up delay: Aguarda 3s para o socket estabilizar antes de permitir comandos pesados
+                    this.logger.info('⏳ Aguardando warm-up de 3s...');
+                    await delay(3000);
                     this._updateComponentsSocket(this.sock);
                     this.BOT_JID = this.sock.user?.id;
-                    this.logger.info(`🤖 Logado como: ${this.BOT_JID} | Socket INSTANT para GroupManagement`);
+                    this.logger.info(`🤖 Logado como: ${this.BOT_JID}`);
                     if (this.eventListeners.onConnected)
                         this.eventListeners.onConnected(this.BOT_JID);
                 }
@@ -287,140 +265,39 @@ class BotCore {
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
                 if (type !== 'notify')
                     return;
-                // Processa mensagens em paralelo para evitar que uma mensagem lenta (ex: vídeo) trave as outras (ex: *ping)
-                Promise.all(messages.map((m) => this.processMessage(m))).catch(err => {
-                    this.logger.error('❌ Erro no processamento paralelo:', err.message);
-                });
+                for (const m of messages)
+                    await this.processMessage(m);
             });
             this.sock.ev.on('group-participants.update', async (update) => {
                 const { id, participants, action } = update;
-                if (!id || !participants || participants.length === 0)
-                    return;
-                this.logger.info(`👥 [GROUP-EVENT] ${action} em ${id} para ${participants.length} participantes.`);
-                // Limpeza de cache para garantir dados frescos no welcome/goodbye
-                if (this.groupManagement)
-                    this.groupManagement.clearMetadataCache(id);
-                const cleanParticipants = participants.map((p) => {
-                    const [user, domain] = p.split('@');
-                    return `${user.split(':')[0]}@${domain || 's.whatsapp.net'}`;
-                });
-                let validParticipants = [...cleanParticipants];
-                // Anti-Fake Check
                 if (action === 'add' && this.moderationSystem?.isAntiFakeActive(id)) {
-                    const fakeParticipants = validParticipants.filter((p) => this.moderationSystem.isFakeNumber(id, p));
-                    validParticipants = validParticipants.filter((p) => !this.moderationSystem.isFakeNumber(id, p));
-                    if (fakeParticipants.length > 0) {
-                        for (const p of fakeParticipants) {
-                            this.logger.warn(`🚫 [ANTI-FAKE] Removendo ${p} de ${id}`);
-                            try {
-                                await this.sock.groupParticipantsUpdate(id, [p], 'remove');
-                            }
-                            catch (e) {
-                                this.logger.error(`Erro ao remover fake: ${e.message}`);
-                            }
+                    for (const participant of participants) {
+                        if (this.moderationSystem.isFakeNumber(participant)) {
+                            this.logger.warn(`🚫 [ANTI-FAKE] ${participant}`);
+                            await this.sock.sendMessage(id, { text: '⚠️ Número fake removido.' });
+                            await this.sock.groupParticipantsUpdate(id, [participant], 'remove');
+                            participants.splice(participants.indexOf(participant), 1);
                         }
-                        await this.sock.sendMessage(id, { text: '⚠️ Números não-autorizados removidos (Anti-Fake ativo).' }).catch(() => { });
                     }
                 }
-                // X9 - Promote/Demote
-                if (this.moderationSystem?.isX9Active(id)) {
-                    if (action === 'promote') {
+                if (action === 'add' && this.groupManagement && participants.length > 0) {
+                    const isWelcomeOn = this.groupManagement.groupSettings?.[id]?.welcome;
+                    if (isWelcomeOn) {
                         for (const p of participants) {
-                            await this.sock.sendMessage(id, {
-                                text: `⚡ [X9 - PROMOÇÃO]\n@${p.split('@')[0]} foi promovido a administrador!`,
-                                mentions: [p]
-                            }).catch(() => { });
+                            const template = this.groupManagement.getCustomMessage(id, 'welcome') || 'Olá @user!';
+                            const formatted = await this.groupManagement.formatMessage(id, p, template);
+                            await this.sock.sendMessage(id, { text: formatted, mentions: [p] });
                         }
                     }
-                    else if (action === 'demote') {
+                }
+                if (action === 'remove' && this.groupManagement) {
+                    const isGoodbyeOn = this.groupManagement.groupSettings?.[id]?.goodbye;
+                    if (isGoodbyeOn) {
                         for (const p of participants) {
-                            await this.sock.sendMessage(id, {
-                                text: `📉 [X9 - REBAIXAMENTO]\n@${p.split('@')[0]} perdeu o cargo de administrador.`,
-                                mentions: [p]
-                            }).catch(() => { });
+                            const template = this.groupManagement.getCustomMessage(id, 'goodbye') || 'Adeus @user!';
+                            const formatted = await this.groupManagement.formatMessage(id, p, template);
+                            await this.sock.sendMessage(id, { text: formatted, mentions: [p] });
                         }
-                    }
-                }
-                // Welcome Trigger (Saudação Visual Premium)
-                if (action === 'add' && this.groupManagement && validParticipants.length > 0) {
-                    try {
-                        const isWelcomeOn = this.groupManagement.getWelcomeStatus(id);
-                        if (isWelcomeOn) {
-                            this.logger.info(`👋 Gerando Welcome Visual para ${validParticipants.length} novos membros em ${id}`);
-                            const metadata = await this.sock.groupMetadata(id);
-                            const groupName = metadata.subject;
-                            const memberCount = metadata.participants.length;
-                            for (const p of validParticipants) {
-                                let ppUrl;
-                                try {
-                                    ppUrl = await this.sock.profilePictureUrl(p, 'image');
-                                }
-                                catch {
-                                    ppUrl = 'https://i.ibb.co/0Q9Sv9m/avatar-placeholder.png';
-                                }
-                                // API de Card de Boas-vindas (Estética Premium)
-                                const welcomeCardUrl = `https://api.popcat.xyz/welcomecard?background=https://i.ibb.co/XyS1DLw/cdfbdf66f07b.jpg&text1=${encodeURIComponent('BEM-VINDO!')}&text2=${encodeURIComponent(groupName)}&text3=${encodeURIComponent('Membro #' + memberCount)}&avatar=${encodeURIComponent(ppUrl)}`;
-                                const template = this.groupManagement.getCustomMessage(id, 'welcome') || 'Olá @user, bem-vindo ao @group!';
-                                const formatted = await this.groupManagement.formatMessage(id, p, template);
-                                await this.sock.sendMessage(id, {
-                                    image: { url: welcomeCardUrl },
-                                    caption: formatted,
-                                    mentions: [p]
-                                }).catch(async (err) => {
-                                    this.logger.error(`[Welcome] Falha ao enviar card visual: ${err.message}`);
-                                    // Fallback para texto
-                                    await this.sock.sendMessage(id, { text: formatted, mentions: [p] }).catch(() => { });
-                                });
-                            }
-                        }
-                    }
-                    catch (e) {
-                        this.logger.error(`Erro no Welcome Visual: ${e.message}`);
-                    }
-                }
-                // Goodbye Trigger (Despedida)
-                if ((action === 'remove' || action === 'leave') && this.groupManagement && cleanParticipants.length > 0) {
-                    try {
-                        const isGoodbyeOn = this.groupManagement.getGoodbyeStatus(id);
-                        if (isGoodbyeOn) {
-                            this.logger.info(`👋 Despedindo de ${cleanParticipants.length} membros em ${id}`);
-                            for (const p of cleanParticipants) {
-                                const template = this.groupManagement.getCustomMessage(id, 'goodbye') || 'Adeus @user!';
-                                const formatted = await this.groupManagement.formatMessage(id, p, template);
-                                await this.sock.sendMessage(id, { text: formatted, mentions: [p] }).catch(() => { });
-                            }
-                        }
-                    }
-                    catch (e) {
-                        this.logger.error(`Erro no Goodbye: ${e.message}`);
-                    }
-                }
-            });
-            // X9 - Group Update (Metadata)
-            this.sock.ev.on('groups.update', async (groups) => {
-                for (const update of groups) {
-                    const id = update.id;
-                    if (id && this.moderationSystem?.isX9Active(id)) {
-                        if (update.subject) {
-                            await this.sock.sendMessage(id, { text: `🏷️ [X9 - NOME]\nO nome do grupo foi alterado para: *${update.subject}*` }).catch(() => { });
-                        }
-                        if (update.desc) {
-                            await this.sock.sendMessage(id, { text: `📝 [X9 - DESCRIÇÃO]\nA descrição do grupo foi atualizada.` }).catch(() => { });
-                        }
-                        if (update.announce !== undefined) {
-                            const status = update.announce ? 'FECHADO 🔐 (apenas admins)' : 'ABERTO 🔓 (todos podem falar)';
-                            await this.sock.sendMessage(id, { text: `⚙️ [X9 - CONFIGURAÇÃO]\nO grupo agora está: *${status}*` }).catch(() => { });
-                        }
-                    }
-                }
-            });
-            // Auto-Block Call
-            this.sock.ev.on('call', async (call) => {
-                for (const c of call) {
-                    if (c.status === 'offer') {
-                        this.logger.warn(`📞 [AUTO-BLOCK] Chamada de ${c.from}`);
-                        await this.sock.sendMessage(c.from, { text: '❌ O bot não aceita chamadas. Você foi bloqueado automaticamente.' }).catch(() => { });
-                        await this.sock.updateBlockStatus(c.from, 'block').catch(() => { });
                     }
                 }
             });
@@ -454,449 +331,431 @@ class BotCore {
             const shouldLog = this.pipelineLogCounter % this.PIPELINE_LOG_INTERVAL === 1;
             if (shouldLog)
                 this.logger.debug('🔹 [PIPELINE] Iniciando');
-            if (!m || !m.message || m.key.fromMe || m.message.protocolMessage)
+            if (!m) {
+                this.logger.debug('🔹 [PIPELINE] m null');
                 return;
+            }
+            if (!m.message) {
+                this.logger.debug('🔹 [PIPELINE] msg vazia');
+                return;
+            }
+            if (m.key.fromMe)
+                return;
+            if (m.message.protocolMessage)
+                return;
+            if (shouldLog)
+                this.logger.debug('🔹 [PIPELINE] Válida');
             const remoteJid = m.key.remoteJid;
             const ehGrupo = remoteJid.endsWith('@g.us');
-            if (remoteJid === 'status@broadcast')
+            const ehStatus = remoteJid === 'status@broadcast';
+            if (ehStatus)
                 return;
             if (!this.messageProcessor)
-                return;
+                throw new Error('messageProcessor não inicializado');
             const nome = m.pushName || 'Usuário';
-            let participantJidRaw = this.messageProcessor.extractParticipantJid(m);
             const numeroReal = this.messageProcessor.extractUserNumber(m);
-            // NORMALIZAÇÃO DE JID: Usando JidUtils para suporte a Multi-Device e LID
-            const participantJid = JidUtils.normalize(participantJidRaw);
-            if (this.moderationSystem?.isBlacklisted(numeroReal))
+            if (shouldLog)
+                this.logger.debug(`🔹 [PIPELINE] ${numeroReal}`);
+            if (this.moderationSystem?.isBlacklisted(numeroReal)) {
+                this.logger.debug(`🚫 Banido: ${nome}`);
                 return;
-            // ═══ BLACKLIST CHECK ═══
-            if (this.rateLimiter?.isBlacklisted(numeroReal))
-                return;
-            if (ehGrupo && this.moderationSystem?.isMuted(remoteJid, participantJid)) {
-                // MUTE VIOLATION: Delete message and autoban user
-                this.logger.warn(`🔇 MUTE VIOLATION: @${participantJid.split('@')[0]} falou enquanto mutado. BANINDO.`);
-                try {
-                    await this.sock.sendMessage(remoteJid, {
-                        delete: { remoteJid, fromMe: false, id: m.key.id, participant: participantJid }
-                    });
-                    // Remove participant immediately as requested
-                    await this.sock.groupParticipantsUpdate(remoteJid, [participantJid], 'remove');
-                    await this.sock.sendMessage(remoteJid, {
-                        text: `🚫 @${participantJid.split('@')[0]} foi removido por falar durante o período de Mute!`,
-                        mentions: [participantJid]
-                    });
-                }
-                catch (e) { }
+            }
+            if (ehGrupo && this.moderationSystem?.isMuted(remoteJid, m.key.participant)) {
+                await this.handleMutedUserMessage(m, nome);
                 return;
             }
             const texto = this.messageProcessor.extractText(m);
             const temImagem = this.messageProcessor.hasImage(m);
             const temAudio = this.messageProcessor.hasAudio(m);
-            const temVideo = this.messageProcessor.hasVideo(m);
-            const temDoc = this.messageProcessor.hasDocument(m);
+            if (shouldLog)
+                this.logger.debug(`🔹 [PIPELINE] txt=${!!texto} img=${temImagem} aud=${temAudio}`);
             if (ehGrupo && texto && this.moderationSystem) {
                 let isAdmin = false;
                 try {
                     if (this.groupManagement)
-                        isAdmin = await this.groupManagement.isUserAdmin(remoteJid, participantJid);
+                        isAdmin = await this.groupManagement.isUserAdmin(remoteJid, m.key.participant);
                 }
-                catch (e) { }
-                // Antilink rigoroso (apenas para não-admins)
-                if (!isAdmin && this.moderationSystem.isAntiLinkActive(remoteJid) && this.moderationSystem.isLink(texto)) {
-                    this.logger.warn(`🔗 ANTI-LINK DETECTADO: @${participantJid}`);
-                    try {
-                        // 1. Deleta a mensagem com o link imediatamente
-                        await this.sock.sendMessage(remoteJid, {
-                            delete: { remoteJid, fromMe: false, id: m.key.id, participant: participantJid }
-                        });
-                        // 2. Remove o membro conforme pedido
-                        await this.sock.groupParticipantsUpdate(remoteJid, [participantJid], 'remove');
-                        // 3. Notifica o grupo
-                        await this.sock.sendMessage(remoteJid, {
-                            text: `🚫 @${participantJid.split('@')[0]} foi expulso e seu rasto apagado por enviar link proibido!`,
-                            mentions: [participantJid]
-                        });
-                    }
-                    catch (e) {
-                        this.logger.error(`Erro ao aplicar Anti-Link: ${e.message}`);
-                    }
+                catch (e) {
+                    isAdmin = false;
+                }
+                if (!isAdmin && this.moderationSystem.checkLink(texto, remoteJid, m.key.participant, isAdmin)) {
+                    await this.handleAntiLinkViolation(m, nome);
                     return;
                 }
             }
             const replyInfo = this.messageProcessor.extractReplyInfo(m);
-            // ═══ GANHO DE XP POR MENSAGEM (SISTEMA DE NÍVEIS) ═══
-            const levelingSetting = this.groupManagement?.groupSettings?.[remoteJid]?.leveling;
-            const levelingAtivo = ehGrupo && (levelingSetting === true || levelingSetting === 'on' || levelingSetting === 1);
-            if (levelingAtivo && this.levelSystem) {
-                try {
-                    const resultXp = this.levelSystem.awardXp(remoteJid, participantJid, 10);
-                    this.logger.info(`✨ [LevelSystem] +10 XP para @${participantJid.split('@')[0]} em ${remoteJid}. Level: ${resultXp?.rec?.level}`);
-                    if (resultXp && resultXp.leveled) {
-                        const newLevel = resultXp.rec.level;
-                        const patente = this.levelSystem.getPatente(newLevel);
-                        const msgLvl = `🎉 *LEVEL UP!* 🔥\n\n@${participantJid.split('@')[0]} subiu para o Nível *${newLevel}*!\n\n👑 *Nova Patente:* ${patente}`;
-                        await this.sock.sendMessage(remoteJid, { text: msgLvl, mentions: [participantJid] });
-                        // Verifica Auto-ADM
-                        if (newLevel >= this.levelSystem.maxLevel) {
-                            const resultPromo = await this.levelSystem.registerMaxLevelUser(remoteJid, participantJid, m.pushName || 'Usuário', this.sock);
-                            if (resultPromo && resultPromo.message) {
-                                await this.sock.sendMessage(remoteJid, { text: resultPromo.message, mentions: [participantJid] });
-                            }
-                        }
-                    }
-                }
-                catch (e) {
-                    this.logger.error(`🚨 [LVL] Erro ao atribuir XP: ${e.message}`);
-                }
-            }
-            else if (ehGrupo && this.levelSystem) {
-                // Log opcional para debug se o leveling está desligado mas deveria estar ligado
-                if (this.levelSystem.enableDetailedLogging) {
-                    this.logger.debug(`[LVL] Ignorado para ${remoteJid}: Status=${this.groupManagement?.groupSettings?.[remoteJid]?.leveling}`);
-                }
-            }
-            // ═══ NOVO RATE LIMIT CHECK (SELETIVO) ═══
-            if (this.rateLimiter) {
-                const isDirected = this.messageProcessor.isDirectedToBot(m);
-                if (isDirected) {
-                    const isOwner = this.config.isDono(numeroReal);
-                    // 1. Check Command Spam (Rapid Fire) - Se ativo no grupo
-                    if (ehGrupo && this.groupManagement && this.moderationSystem) {
-                        const settings = this.groupManagement.groupSettings?.[remoteJid] || {};
-                        if (settings.antispam && !isOwner) {
-                            if (this.moderationSystem.checkSpam(numeroReal)) {
-                                this.logger.warn(`🚫 [COMMAND-SPAM] ${numeroReal} bloqueado por rapid-fire em ${remoteJid}`);
-                                return;
-                            }
-                        }
-                    }
-                    // 2. Check Hourly Rate Limit (Avisos Progressivos)
-                    const rateCheck = this.rateLimiter.check(numeroReal, ehGrupo, isOwner, nome);
-                    if (!rateCheck.allowed) {
-                        if (rateCheck.message) {
-                            await this.sock.sendMessage(remoteJid, { text: rateCheck.message }, { quoted: m });
-                        }
-                        this.logger.warn(`🛑 [RATE-LIMIT] ${numeroReal} interceptado (${ehGrupo ? 'Grupo' : 'PV'})`);
-                        return;
-                    }
-                }
-            }
-            // ═══ BARREIRA ANTI-MODERAÇÃO DE MÍDIA ═══
-            // Executa para qualquer mídia em grupos, desde que o sender NÃO seja admin
-            if (ehGrupo && this.moderationSystem && this.groupManagement) {
-                let senderIsAdmin = false;
-                try {
-                    senderIsAdmin = await this.groupManagement.isUserAdmin(remoteJid, participantJid);
-                }
-                catch (e) { }
-                const deletarMídia = async (motivo, aviso) => {
-                    this.logger.warn(`🛡️ [ANTI-MEDIA] ${motivo}: ${participantJid}`);
-                    try {
-                        await this.sock.sendMessage(remoteJid, {
-                            delete: { remoteJid, fromMe: false, id: m.key.id, participant: participantJid }
-                        });
-                        await this.sock.sendMessage(remoteJid, {
-                            text: aviso,
-                            mentions: [participantJid]
-                        });
-                    }
-                    catch (e) { }
-                };
-                if (!senderIsAdmin) {
-                    // Anti-Image
-                    const settings = this.groupManagement.groupSettings?.[remoteJid] || {};
-                    if (temImagem && settings.antiimage) {
-                        await deletarMídia('ANTI-IMAGE', `🚫 @${participantJid.split('@')[0]} — Envio de imagens está desactivado neste grupo.`);
-                        return;
-                    }
-                    // Anti-Video
-                    if (temVideo && (settings.antivideo || this.moderationSystem.isAntiVideoActive?.(remoteJid))) {
-                        await deletarMídia('ANTI-VIDEO', `🚫 @${participantJid.split('@')[0]} — Envio de vídeos está desactivado neste grupo.`);
-                        return;
-                    }
-                    // Anti-Sticker (detectamos via messageType)
-                    const msgType = this.messageProcessor?.getMessageType?.(m) || Object.keys(m.message || {})[0];
-                    if (msgType === 'stickerMessage' && (settings.antisticker || this.moderationSystem.isAntiStickerActive?.(remoteJid))) {
-                        await deletarMídia('ANTI-STICKER', `🚫 @${participantJid.split('@')[0]} — Envio de stickers está desactivado neste grupo.`);
-                        return;
-                    }
-                    // Anti-Audio/PTT
-                    if (temAudio && settings.antiaudio) {
-                        await deletarMídia('ANTI-AUDIO', `🚫 @${participantJid.split('@')[0]} — Envio de áudios está desactivado neste grupo.`);
-                        return;
-                    }
-                    // Anti-Doc
-                    if (temDoc && settings.antidoc) {
-                        await deletarMídia('ANTI-DOC', `🚫 @${participantJid.split('@')[0]} — Envio de documentos está desactivado neste grupo.`);
-                        return;
-                    }
-                }
+            const temSticker = !!m.message?.stickerMessage;
+            if (temSticker && ehGrupo && this.moderationSystem?.isAntiStickerActive(remoteJid)) {
+                await this.handleAntiMediaViolation(m, 'sticker');
+                return;
             }
             if (temImagem) {
-                await this.handleImageMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo);
-            }
-            else if (temVideo) {
-                await this.handleVideoMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo);
-            }
-            else if (temDoc) {
-                await this.handleDocumentMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo);
+                if (ehGrupo && this.moderationSystem?.isAntiImageActive(remoteJid)) {
+                    await this.handleAntiMediaViolation(m, 'imagem');
+                    return;
+                }
+                await this.handleImageMessage(m, nome, numeroReal, replyInfo, ehGrupo);
             }
             else if (temAudio) {
-                await this.handleAudioMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo);
+                await this.handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo);
             }
             else if (texto) {
-                await this.handleTextMessage(m, nome, numeroReal, participantJid, texto, replyInfo, ehGrupo);
+                await this.handleTextMessage(m, nome, numeroReal, texto, replyInfo, ehGrupo);
             }
         }
         catch (error) {
+            console.error('❌ [CRITICAL]:', error);
             this.logger.error('❌ Erro pipeline:', error?.message);
         }
     }
-    async handleImageMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo) {
-        const caption = this.messageProcessor.extractText(m) || '';
-        const allowed = await this.handleRateLimitAndBlacklist(m, nome, numeroReal, caption || '<IMAGEM>', ehGrupo);
-        if (!allowed)
-            return;
+    async handleImageMessage(m, nome, numeroReal, replyInfo, ehGrupo) {
         this.logger.info(`🖼️ [IMAGEM] ${nome}`);
-        // Leveling...
+        if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
+            const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 15);
+            if (xp)
+                this.logger.info(`📈 [LEVEL] ${nome} +15 XP`);
+        }
         try {
-            // CommandHandler primeiro - Comandos respondem INSTANTANEAMENTE sem delay
-            if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
-                if (this.presenceSimulator) {
-                    await this.presenceSimulator.simulateTicks(m, true);
-                }
-                const handled = await this.commandHandler.handle(m, { nome, numeroReal, participantJid, texto: caption, replyInfo, ehGrupo });
-                if (handled)
-                    return;
-            }
-            // BARREIRA ANTI-TAGARELICE
-            if (!this.shouldRespondToAI(m, caption, replyInfo, ehGrupo)) {
+            let deveResponder = false;
+            const caption = this.messageProcessor.extractText(m) || '';
+            const captionLower = caption.toLowerCase();
+            const botNameLower = (this.config.BOT_NAME || 'belmira').toLowerCase();
+            if (!ehGrupo)
+                deveResponder = true;
+            else if (this.messageProcessor.isBotMentioned(m))
+                deveResponder = true;
+            else if (replyInfo?.ehRespostaAoBot)
+                deveResponder = true;
+            else if (captionLower.includes(botNameLower))
+                deveResponder = true;
+            else if (this.messageProcessor.isCommand(caption))
+                deveResponder = true;
+            if (!deveResponder) {
+                this.logger.debug(`⏭️ Imagem ignorada: ${caption.substring(0, 30)}`);
                 return;
             }
-            if (this.presenceSimulator) {
-                await this.presenceSimulator.simulateTicks(m, replyInfo, ehGrupo);
+            if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
+                try {
+                    const handled = await this.commandHandler.handle(m, { nome, numeroReal, texto: caption, replyInfo, ehGrupo });
+                    if (handled) {
+                        this.logger.info(`⚡ Comando imagem: ${caption.substring(0, 30)}`);
+                        return;
+                    }
+                }
+                catch (err) {
+                    this.logger.warn(`⚠️ Comando legenda: ${err.message}`);
+                }
             }
-            // API análise imagem...
-            let grupo_nome = '';
-            if (ehGrupo) {
-                grupo_nome = await this._getGrupoNome(m.key.remoteJid);
+            await this.presenceSimulator.simulateTicks(m, true, false);
+            await this.presenceSimulator.simulateTyping(m.key.remoteJid, 1500);
+            const tipoMsg = getContentType(m.message);
+            let imgMsg = m.message.imageMessage;
+            if (tipoMsg === 'viewOnceMessage' || tipoMsg === 'viewOnceMessageV2') {
+                imgMsg = m.message[tipoMsg].message?.imageMessage;
             }
-            const resultado = await this.apiClient.processMessage({
+            if (!imgMsg) {
+                this.logger.error('❌ Imagem inválida');
+                return;
+            }
+            this.logger.debug('⬇️ Baixando imagem...');
+            const imageBuffer = await this.mediaProcessor.downloadMedia(imgMsg, 'image');
+            if (!imageBuffer?.length) {
+                this.logger.error('❌ Buffer vazio');
+                await this.reply(m, '❌ Não consegui baixar a imagem.');
+                return;
+            }
+            this.logger.debug(`✅ Imagem: ${imageBuffer.length} bytes`);
+            let base64Image;
+            try {
+                base64Image = imageBuffer.toString('base64');
+                if (!base64Image || base64Image.length < 100)
+                    throw new Error('Base64 inválido');
+            }
+            catch (err) {
+                this.logger.error('❌ Erro base64:', err.message);
+                await this.reply(m, '❌ Erro ao processar imagem.');
+                return;
+            }
+            const payload = this.apiClient.buildPayload({
                 usuario: nome,
                 numero: numeroReal,
-                pushName: nome,
-                mensagem: caption,
+                mensagem: caption || 'O que tem nesta imagem?',
                 tipo_conversa: ehGrupo ? 'grupo' : 'pv',
-                tipo_mensagem: 'imagem',
-                reply_metadata: replyInfo,
-                grupo_id: ehGrupo ? m.key.remoteJid : '',
-                grupo_nome: grupo_nome,
+                grupo_id: ehGrupo ? m.key.remoteJid : null,
+                grupo_nome: ehGrupo ? (m.key.remoteJid.split('@')[0] || 'Grupo') : null,
+                tipo_mensagem: 'image',
                 imagem_dados: {
-                    m: m // O APIClient vai baixar se necessário
-                }
+                    dados: base64Image,
+                    mime_type: imgMsg.mimetype || 'image/jpeg',
+                    descricao: caption || 'Imagem'
+                },
+                mensagem_citada: replyInfo?.textoMensagemCitada || '',
+                reply_metadata: replyInfo ? {
+                    is_reply: replyInfo.isReply || true,
+                    reply_to_bot: replyInfo.ehRespostaAoBot,
+                    quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido'
+                } : null
             });
+            this.logger.info(`👁️ Analisando imagem...`);
+            const resultado = await this.apiClient.processMessage(payload);
             if (!resultado.success) {
+                this.logger.error('❌ Erro API:', resultado.error);
                 await this.sock.sendMessage(m.key.remoteJid, { text: 'Não consegui analisar a imagem.' });
                 return;
             }
             const resposta = resultado.resposta || 'Sem resposta.';
-            const shouldReply = ehGrupo || (replyInfo?.ehRespostaAoBot);
-            const sendOptions = shouldReply ? { quoted: m } : {};
-            if (this.presenceSimulator) {
-                await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta);
-            }
-            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, sendOptions);
+            await this.presenceSimulator.simulateTyping(m.key.remoteJid, this.presenceSimulator.calculateTypingDuration(resposta));
+            const opcoes = ehGrupo ? { quoted: m } : (replyInfo?.ehRespostaAoBot) ? { quoted: m } : {};
+            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
+            await this.presenceSimulator.simulateTicks(m, true, false);
         }
         catch (error) {
             this.logger.error('❌ Erro imagem:', error.message);
         }
     }
-    async handleVideoMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo) {
-        // Similar a imagem, stub completo
-        this.logger.info(`🎥 [VIDEO] ${nome}`);
+    async handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo) {
+        this.logger.info(`🎤 [ÁUDIO] ${nome}`);
         try {
-            const caption = this.messageProcessor.extractText(m) || '';
-            if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
-                if (this.presenceSimulator) {
-                    await this.presenceSimulator.simulateTicks(m, true);
-                }
-                const handled = await this.commandHandler.handle(m, { nome, numeroReal, participantJid, texto: caption, replyInfo, ehGrupo });
-                if (handled)
-                    return;
+            const tipoMsg = getContentType(m.message);
+            let audMsg = m.message.audioMessage;
+            if (tipoMsg === 'viewOnceMessage' || tipoMsg === 'viewOnceMessageV2') {
+                audMsg = m.message[tipoMsg].message?.audioMessage;
             }
-            if (!this.shouldRespondToAI(m, caption, replyInfo, ehGrupo)) {
+            if (!audMsg) {
+                this.logger.error('❌ Áudio inválido');
                 return;
             }
-            if (this.presenceSimulator) {
-                await this.presenceSimulator.simulateTicks(m, replyInfo, ehGrupo);
-            }
-            let grupo_nome = '';
-            if (ehGrupo) {
-                grupo_nome = await this._getGrupoNome(m.key.remoteJid);
-            }
-            const resultado = await this.apiClient.processMessage({
-                usuario: nome,
-                numero: numeroReal,
-                pushName: nome,
-                mensagem: this.messageProcessor.extractText(m) || '',
-                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
-                tipo_mensagem: 'video',
-                reply_metadata: replyInfo,
-                grupo_id: ehGrupo ? m.key.remoteJid : '',
-                grupo_nome: grupo_nome,
-                video_dados: { m: m }
-            });
-            const resposta = resultado.resposta || 'Vídeo recebido.';
-            const shouldReply = ehGrupo || (replyInfo?.ehRespostaAoBot);
-            const sendOptions = shouldReply ? { quoted: m } : {};
-            if (this.presenceSimulator) {
-                await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta);
-            }
-            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, sendOptions);
+            const audioBuffer = await this.mediaProcessor.downloadMedia(audMsg, 'audio');
+            await this.handleAudioMessage_internal(m, nome, numeroReal, replyInfo, ehGrupo, audioBuffer);
         }
-        catch (e) { }
-    }
-    async handleDocumentMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo) {
-        this.logger.info(`📄 [DOC] ${nome}`);
-        try {
-            const caption = this.messageProcessor.extractText(m) || '';
-            if (this.commandHandler && this.messageProcessor.isCommand(caption)) {
-                if (this.presenceSimulator) {
-                    await this.presenceSimulator.simulateTicks(m, true);
-                }
-                const handled = await this.commandHandler.handle(m, { nome, numeroReal, participantJid, texto: caption, replyInfo, ehGrupo });
-                if (handled)
-                    return;
-            }
-            if (!this.shouldRespondToAI(m, caption, replyInfo, ehGrupo)) {
-                return;
-            }
-            if (this.presenceSimulator) {
-                await this.presenceSimulator.simulateTicks(m, replyInfo, ehGrupo);
-            }
-            let grupo_nome = '';
-            if (ehGrupo) {
-                grupo_nome = await this._getGrupoNome(m.key.remoteJid);
-            }
-            const resultado = await this.apiClient.processMessage({
-                usuario: nome,
-                numero: numeroReal,
-                pushName: nome,
-                mensagem: this.messageProcessor.extractText(m) || '',
-                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
-                tipo_mensagem: 'documento',
-                reply_metadata: replyInfo,
-                grupo_id: ehGrupo ? m.key.remoteJid : '',
-                grupo_nome: grupo_nome,
-                documento_dados: { m: m }
-            });
-            const resposta = resultado.resposta || 'Doc recebido.';
-            const shouldReply = ehGrupo || (replyInfo?.ehRespostaAoBot);
-            const sendOptions = shouldReply ? { quoted: m } : {};
-            if (this.presenceSimulator) {
-                await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta);
-            }
-            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, sendOptions);
+        catch (error) {
+            this.logger.error('❌ Erro áudio:', error.message);
         }
-        catch (e) { }
     }
-    async handleAudioMessage(m, nome, numeroReal, participantJid, replyInfo, ehGrupo) {
-        this.logger.info(`🎤 [AUDIO] ${nome}`);
+    async handleAudioMessage_internal(m, nome, numeroReal, replyInfo, ehGrupo, audioBuffer) {
         try {
-            const transcricao = await this.audioProcessor.speechToText(await this.mediaProcessor.downloadMedia(m.message, 'audio'));
-            if (transcricao.sucesso) {
-                await this.handleTextMessage(m, nome, numeroReal, participantJid, transcricao.texto, replyInfo, ehGrupo, true);
+            if (!audioBuffer) {
+                this.logger.error('❌ Buffer áudio vazio');
+                return;
             }
+            const transcricao = await this.audioProcessor.speechToText(audioBuffer);
+            if (!transcricao.sucesso) {
+                this.logger.warn('⚠️ Falha transcrição');
+                return;
+            }
+            this.logger.info(`📝 Transcrição: ${transcricao.texto.substring(0, 80)}`);
+            await this.handleTextMessage(m, nome, numeroReal, transcricao.texto, replyInfo, ehGrupo, true);
         }
-        catch (e) { }
+        catch (error) {
+            this.logger.error('❌ Erro áudio interno:', error.message);
+        }
     }
-    shouldRespondToAI(m, texto, replyInfo, ehGrupo) {
-        if (!ehGrupo)
-            return true; // PV sempre responde
-        const textoLower = (texto || '').toLowerCase();
-        const isReplyToBot = replyInfo?.ehRespostaAoBot || false;
-        // Verifica se é dono (apenas donos podem usar "bot" ou "morena" para ativar)
-        const numeroReal = this.messageProcessor?.extractUserNumber?.(m) || '';
-        const isOwner = this.config.isDono(numeroReal);
-        // Palavras de ativação
-        const hasAkiraMention = textoLower.includes('akira');
-        const hasSpecialMention = (textoLower.includes('pretinha') || textoLower.includes('morena')) && isOwner;
-        const mentions = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-        const isMentioned = mentions.some((jid) => jid === this.BOT_JID);
-        return isReplyToBot || hasAkiraMention || hasSpecialMention || isMentioned;
-    }
-    async handleTextMessage(m, nome, numeroReal, participantJid, texto, replyInfo, ehGrupo, foiAudio = false) {
+    async handleTextMessage(m, nome, numeroReal, texto, replyInfo, ehGrupo, foiAudio = false) {
         try {
-            if (this.commandHandler && (this.messageProcessor.isCommand(texto) || texto.startsWith('#') || texto.startsWith('.'))) {
-                // Comandos não devem ter delay de presença (ex: *ping deve ser instantâneo)
-                // Mas DEVEM marcar como lido
-                if (this.presenceSimulator) {
-                    await this.presenceSimulator.simulateTicks(m, true);
-                }
-                const handled = await this.commandHandler.handle(m, { nome, numeroReal, participantJid, texto, replyInfo, ehGrupo });
-                if (handled)
-                    return;
-            }
-            // BARREIRA ANTI-TAGARELICE
-            if (!this.shouldRespondToAI(m, texto, replyInfo, ehGrupo)) {
-                return;
-            }
-            if (this.presenceSimulator) {
-                await this.presenceSimulator.simulateTicks(m, replyInfo, ehGrupo);
-            }
-            let grupo_nome = '';
-            if (ehGrupo) {
-                grupo_nome = await this._getGrupoNome(m.key.remoteJid);
-            }
-            const resultado = await this.apiClient.processMessage({
-                usuario: nome,
-                numero: numeroReal,
-                pushName: nome,
-                mensagem: texto,
-                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
-                tipo_mensagem: foiAudio ? 'audio' : 'texto',
-                reply_metadata: replyInfo,
-                grupo_id: ehGrupo ? m.key.remoteJid : '',
-                grupo_nome: grupo_nome
-            });
-            if (!resultado.success)
-                return;
-            const resposta = resultado.resposta || 'OK';
-            const shouldReply = ehGrupo || (replyInfo?.ehRespostaAoBot);
-            const sendOptions = shouldReply ? { quoted: m } : {};
-            // Resposta em Áudio se o input foi Áudio
-            if (foiAudio && this.audioProcessor) {
-                try {
-                    const tts = await this.audioProcessor.generateTTS(resposta);
-                    if (tts && tts.sucesso) {
-                        if (this.presenceSimulator) {
-                            await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta, true);
-                        }
-                        await this.sock.sendMessage(m.key.remoteJid, {
-                            audio: tts.buffer,
-                            mimetype: 'audio/ogg; codecs=opus',
-                            ptt: true
-                        }, sendOptions);
+            let allowed = true;
+            try {
+                const isDono = typeof this.config?.isDono === 'function' ? this.config.isDono(numeroReal, nome) : false;
+                if (this.moderationSystem?.checkAndLimitHourlyMessages) {
+                    const res = this.moderationSystem.checkAndLimitHourlyMessages(numeroReal, nome, numeroReal, texto, null, isDono);
+                    allowed = !!res?.allowed;
+                    if (!allowed) {
+                        const msg = res?.reason === 'LIMITE_HORARIO_EXCEDIDO' ? '⏰ Limite por hora excedido.' : '⏰ Muitas mensagens. Aguarde.';
+                        await this.sock.sendMessage(m.key.remoteJid, { text: msg });
                         return;
                     }
-                    else {
-                        this.logger.warn(`⚠️ [TTS] Falha ao gerar resposta em áudio: ${tts?.error || 'Erro desconhecido'}`);
+                }
+                else if (!this.messageProcessor.checkRateLimit(numeroReal)) {
+                    await this.sock.sendMessage(m.key.remoteJid, { text: '⏰ Muitas mensagens. Aguarde.' });
+                    return;
+                }
+            }
+            catch (err) {
+                this.logger?.warn('Erro rate limit:', err?.message);
+                if (!this.messageProcessor.checkRateLimit(numeroReal)) {
+                    await this.sock.sendMessage(m.key.remoteJid, { text: '⏰ Muitas mensagens. Aguarde.' });
+                    return;
+                }
+            }
+            try {
+                if (this.commandHandler) {
+                    const handled = await this.commandHandler.handle(m, { nome, numeroReal, texto, replyInfo, ehGrupo });
+                    if (handled) {
+                        this.logger.info(`⚡ Comando: ${texto.substring(0, 30)}`);
+                        if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
+                            const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
+                            if (xp)
+                                this.logger.info(`📈 [LEVEL] ${nome} +5 XP`);
+                        }
+                        return;
                     }
                 }
-                catch (ttsErr) {
-                    this.logger.error(`🚨 [TTS] Exceção ao processar áudio: ${ttsErr.message}`);
+            }
+            catch (err) {
+                this.logger.warn('Erro CommandHandler:', err.message);
+            }
+            let deveResponder = false;
+            const textoLower = texto.toLowerCase();
+            const botNameLower = (this.config.BOT_NAME || 'belmira').toLowerCase();
+            if (foiAudio) {
+                if (!ehGrupo)
+                    deveResponder = true;
+                else if (replyInfo?.ehRespostaAoBot)
+                    deveResponder = true;
+                else if (this.messageProcessor.isBotMentioned(m))
+                    deveResponder = true;
+                else if (textoLower.includes(botNameLower))
+                    deveResponder = true;
+            }
+            else {
+                if (replyInfo?.ehRespostaAoBot)
+                    deveResponder = true;
+                else if (!ehGrupo)
+                    deveResponder = true;
+                else if (this.messageProcessor.isBotMentioned(m))
+                    deveResponder = true;
+                else if (textoLower.includes(botNameLower))
+                    deveResponder = true;
+            }
+            if (!deveResponder) {
+                this.logger.debug(`⏭️ Ignorado: ${texto.substring(0, 50)}`);
+                return;
+            }
+            this.logger.info(`\n🔥 [PROCESSANDO] ${nome}: ${texto.substring(0, 60)}`);
+            const replyMetadata = replyInfo ? {
+                is_reply: replyInfo.isReply || true,
+                reply_to_bot: replyInfo.ehRespostaAoBot,
+                quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido',
+                quoted_author_numero: replyInfo.quotedAuthorNumero || 'desconhecido',
+                quoted_type: replyInfo.quotedType || 'texto',
+                quoted_text_original: replyInfo.quotedTextOriginal || '',
+                context_hint: replyInfo.contextHint || '',
+                priority_level: replyInfo.priorityLevel || 2
+            } : { is_reply: false, reply_to_bot: false };
+            if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
+                const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 10);
+                if (xp)
+                    this.logger.info(`📈 [LEVEL] ${nome} +10 XP`);
+            }
+            const payload = this.apiClient.buildPayload({
+                usuario: nome,
+                numero: numeroReal,
+                mensagem: texto,
+                tipo_conversa: ehGrupo ? 'grupo' : 'pv',
+                grupo_id: ehGrupo ? m.key.remoteJid : null,
+                grupo_nome: ehGrupo ? (m.key.remoteJid.split('@')[0] || 'Grupo') : null,
+                tipo_mensagem: foiAudio ? 'audio' : 'texto',
+                mensagem_citada: replyInfo?.textoMensagemCitada || '',
+                reply_metadata: replyMetadata
+            });
+            const resultado = await this.apiClient.processMessage(payload);
+            if (!resultado.success) {
+                this.logger.error('❌ Erro API:', resultado.error);
+                await this.sock.sendMessage(m.key.remoteJid, { text: 'Tive um problema. Tenta de novo?' });
+                return;
+            }
+            const resposta = resultado.resposta || 'Sem resposta';
+            if (foiAudio) {
+                this.logger.info('🎤 [AUDIO RESPONSE]');
+                if (this.presenceSimulator)
+                    await this.presenceSimulator.safeSendPresenceUpdate('recording', m.key.remoteJid);
+                try {
+                    const tts = await this.audioProcessor.textToSpeech(resposta);
+                    if (!tts.sucesso) {
+                        this.logger.warn('⚠️ Falha TTS');
+                        if (this.presenceSimulator)
+                            await this.presenceSimulator.safeSendPresenceUpdate('paused', m.key.remoteJid);
+                        await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, { quoted: m });
+                    }
+                    else {
+                        this.logger.info('📤 Voice Note...');
+                        await this.sock.sendMessage(m.key.remoteJid, {
+                            audio: tts.buffer,
+                            mimetype: tts.mimetype || 'audio/ogg; codecs=opus',
+                            ptt: true
+                        }, { quoted: m });
+                    }
                 }
+                catch (err) {
+                    this.logger.error('❌ Erro TTS:', err);
+                    await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, { quoted: m });
+                }
+                finally {
+                    if (this.presenceSimulator)
+                        await this.presenceSimulator.safeSendPresenceUpdate('paused', m.key.remoteJid);
+                }
+                if (this.presenceSimulator)
+                    await this.presenceSimulator.markAsRead(m);
             }
-            if (this.presenceSimulator) {
-                await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta);
+            else {
+                if (this.presenceSimulator) {
+                    await this.presenceSimulator.simulateFullResponse(this.sock, m, resposta, false);
+                }
+                else {
+                    await this.simulateTyping(m.key.remoteJid, Math.min(resposta.length * 50, 5000));
+                }
+                const opcoes = ehGrupo ? { quoted: m } : replyInfo ? { quoted: m } : {};
+                await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, opcoes);
+                if (this.presenceSimulator)
+                    await this.presenceSimulator.markAsRead(m);
             }
-            await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, sendOptions);
+            this.logger.info(`✅ [RESPONDIDO] ${resposta.substring(0, 80)}`);
         }
-        catch (e) { }
+        catch (error) {
+            this.logger.error('❌ Erro texto:', error.message);
+        }
     }
-    async handleRateLimitAndBlacklist(m, nome, numeroReal, texto, ehGrupo) {
-        // Stub - sempre true para teste
-        return true;
+    async simulateTyping(jid, durationMs) {
+        try {
+            if (!this.sock)
+                return;
+            await this.sock.sendPresenceUpdate('available', jid);
+            await delay(300);
+            await this.sock.sendPresenceUpdate('composing', jid);
+            await delay(durationMs);
+            await this.sock.sendPresenceUpdate('paused', jid);
+        }
+        catch (e) {
+            this.logger.debug('Erro typing:', e.message);
+        }
+    }
+    async reply(m, text, options = {}) {
+        try {
+            if (!this.sock) {
+                this.logger.warn('⚠️ Socket não disponível');
+                return false;
+            }
+            return await this.sock.sendMessage(m.key.remoteJid, { text, ...options }, { quoted: m });
+        }
+        catch (error) {
+            this.logger.error('❌ Erro reply:', error.message);
+            return false;
+        }
+    }
+    async handleMutedUserMessage(m, nome) {
+        try {
+            this.logger.warn(`🔇 ${nome} falou durante mute`);
+            await this.sock.groupParticipantsUpdate(m.key.remoteJid, [m.key.participant], 'remove');
+            await this.sock.sendMessage(m.key.remoteJid, { text: `🚫 *${nome} removido por mute!*` });
+        }
+        catch (error) {
+            this.logger.error('❌ Erro mute:', error.message);
+        }
+    }
+    async handleAntiLinkViolation(m, nome) {
+        try {
+            if (!this.sock)
+                return;
+            const jid = m.key.remoteJid;
+            const participant = m.key.participant;
+            this.logger.warn(`🔗 [ANTI-LINK] ${nome}`);
+            await this.reply(m, `🚫 @${participant.split('@')[0]}, links não permitidos!`, { mentions: [participant] });
+            await this.sock.sendMessage(jid, { delete: m.key });
+            await delay(1000);
+            await this.sock.groupParticipantsUpdate(jid, [participant], 'remove');
+        }
+        catch (error) {
+            this.logger.error('❌ Erro antilink:', error.message);
+        }
     }
     _cleanAuthOnError() {
         try {
@@ -912,6 +771,14 @@ class BotCore {
         catch (error) {
             this.logger.error('❌ Erro limpar credenciais:', error.message);
         }
+    }
+    async handleAntiMediaViolation(m, tipo) {
+        if (!this.sock)
+            return;
+        const jid = m.key.remoteJid;
+        const participant = m.key.participant;
+        this.logger.warn(`🚫 [ANTI-MEDIA] ${tipo} de ${participant}`);
+        await this.sock.sendMessage(jid, { delete: m.key });
     }
     getStatus() {
         return {
@@ -939,54 +806,55 @@ class BotCore {
             hasQR: !!this.currentQR,
             reconnectAttempts: this.reconnectAttempts,
             connectionStartTime: this.connectionStartTime,
-            features: this.config.FEATURES || {}
+            features: {
+                stt: this.config.FEATURE_STT_ENABLED,
+                tts: this.config.FEATURE_TTS_ENABLED,
+                youtube: this.config.FEATURE_YT_DOWNLOAD,
+                stickers: this.config.FEATURE_STICKERS,
+                moderation: this.config.FEATURE_MODERATION,
+                leveling: this.config.FEATURE_LEVELING,
+                vision: this.config.FEATURE_VISION
+            }
         };
+    }
+    async _forceQRGeneration() {
+        this.logger.info('🔄 Forçando geração de novo QR code...');
+        this.currentQR = null;
+        if (this.sock) {
+            try {
+                this.sock.ev.removeAllListeners();
+                this.sock.ws?.close();
+            }
+            catch (e) {
+                this.logger.warn('Erro ao limpar socket:', e.message);
+            }
+            this.sock = null;
+        }
+        this.isConnected = false;
+        this.BOT_JID = null;
+        await delay(1000);
+        await this.connect();
     }
     async disconnect() {
         try {
             this.logger.info('🔴 Desconectando...');
             if (this.sock) {
-                this.sock.ev.removeAllListeners();
-                this.sock.ws?.close();
+                try {
+                    this.sock.ev.removeAllListeners();
+                    this.sock.ws?.close();
+                }
+                catch (e) {
+                    this.logger.warn('Erro limpar socket:', e.message);
+                }
+                this.sock = null;
             }
             this.isConnected = false;
             this.currentQR = null;
             this.BOT_JID = null;
+            this.logger.info('✅ Desconectado');
         }
         catch (error) {
             this.logger.error('❌ Erro desconectar:', error.message);
-        }
-    }
-    async reply(m, text, options = {}) {
-        try {
-            if (!this.sock)
-                return false;
-            return await this.sock.sendMessage(m.key.remoteJid, { text, ...options }, { quoted: m });
-        }
-        catch (error) {
-            this.logger.error('❌ Erro reply:', error.message);
-            return false;
-        }
-    }
-    async _getGrupoNome(remoteJid) {
-        try {
-            if (!remoteJid || !remoteJid.endsWith('@g.us'))
-                return '';
-            // Tenta via GroupManagement (cache interno dele)
-            if (this.groupManagement) {
-                const meta = await this.groupManagement._getGroupMetadata(remoteJid);
-                if (meta?.subject)
-                    return meta.subject;
-            }
-            // Tenta via socket cache (Baileys nativo)
-            const socketCache = this.sock?.groupMetadataCache?.[remoteJid];
-            if (socketCache?.subject)
-                return socketCache.subject;
-            // Fallback: Nome genérico ou JID parcial
-            return 'Grupo';
-        }
-        catch (e) {
-            return 'Grupo';
         }
     }
 }

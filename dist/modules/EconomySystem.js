@@ -1,9 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import ConfigManager from './ConfigManager.js';
-import JidUtils from './JidUtils.js';
 class EconomySystem {
-    static instance;
     config;
     logger;
     dbPath;
@@ -13,20 +11,14 @@ class EconomySystem {
     constructor(logger = console) {
         this.config = ConfigManager.getInstance();
         this.logger = logger;
-        // Configurar persistência centralizada
-        const basePath = this.config.DATABASE_FOLDER || './database';
+        // HF SPACES: Usar /tmp para garantir permissões de escrita
+        const basePath = '/tmp/akira_data';
         this.dbPath = path.join(basePath, 'economy', 'economy.json');
         this._ensureFiles();
         this.users = this._load(this.dbPath, {});
         // Configurações
         this.dailyAmount = 500; // Moedas por daily
         this.dailyCooldown = 24 * 60 * 60 * 1000; // 24 horas
-    }
-    static getInstance(logger = console) {
-        if (!EconomySystem.instance) {
-            EconomySystem.instance = new EconomySystem(logger);
-        }
-        return EconomySystem.instance;
     }
     _ensureFiles() {
         try {
@@ -47,32 +39,7 @@ class EconomySystem {
             if (!fs.existsSync(filePath))
                 return fallback;
             const raw = fs.readFileSync(filePath, 'utf8');
-            let loaded = JSON.parse(raw || JSON.stringify(fallback));
-            // ═══════════════════════════════════════════════════════════════════
-            // MIGRATION: JID -> NUMERIC ID (Digits Only)
-            // ═══════════════════════════════════════════════════════════════════
-            if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
-                const migrated = {};
-                let migratedCount = 0;
-                for (const id in loaded) {
-                    const numericId = JidUtils.toNumeric(id);
-                    if (id !== numericId) {
-                        migrated[numericId] = loaded[id];
-                        migratedCount++;
-                    }
-                    else {
-                        migrated[id] = loaded[id];
-                    }
-                }
-                if (migratedCount > 0) {
-                    this.logger?.info(`✨ [EconomySystem] Migrados ${migratedCount} contas para ID Numérico.`);
-                    this.users = migrated;
-                    this._save();
-                    return migrated;
-                }
-                return loaded;
-            }
-            return loaded;
+            return JSON.parse(raw || JSON.stringify(fallback));
         }
         catch (e) {
             this.logger.warn(`EconomySystem: erro ao ler ${filePath}:`, e.message);
@@ -94,16 +61,15 @@ class EconomySystem {
      * Inicializa usuário se não existir
      */
     _initUser(userId) {
-        const normId = JidUtils.toNumeric(userId);
-        if (!this.users[normId]) {
-            this.users[normId] = {
+        if (!this.users[userId]) {
+            this.users[userId] = {
                 wallet: 0,
                 bank: 0,
                 lastDaily: 0,
                 transactions: []
             };
         }
-        return this.users[normId];
+        return this.users[userId];
     }
     /**
      * Retorna saldo do usuário
@@ -141,8 +107,7 @@ class EconomySystem {
      * Recompensa diária
      */
     daily(userId) {
-        const normId = JidUtils.toNumeric(userId);
-        const user = this._initUser(normId);
+        const user = this._initUser(userId);
         const now = Date.now();
         // Verifica cooldown
         if (user.lastDaily && (now - user.lastDaily) < this.dailyCooldown) {
@@ -171,8 +136,7 @@ class EconomySystem {
      * Retorna tempo restante para próximo daily
      */
     getDailyTimeLeft(userId) {
-        const normId = JidUtils.toNumeric(userId);
-        const user = this.users[normId];
+        const user = this.users[userId];
         if (!user || !user.lastDaily)
             return 0;
         const now = Date.now();
@@ -198,13 +162,13 @@ class EconomySystem {
         const now = Date.now();
         sender.transactions.push({
             type: 'transfer_out',
-            to: JidUtils.toNumeric(toId),
+            to: toId,
             amount: amount,
             timestamp: now
         });
         receiver.transactions.push({
             type: 'transfer_in',
-            from: JidUtils.toNumeric(fromId),
+            from: fromId,
             amount: amount,
             timestamp: now
         });
@@ -253,8 +217,7 @@ class EconomySystem {
      * Retorna histórico de transações
      */
     getTransactions(userId, limit = 10) {
-        const normId = JidUtils.toNumeric(userId);
-        const user = this.users[normId];
+        const user = this.users[userId];
         if (!user || !user.transactions)
             return [];
         return user.transactions.slice(-limit).reverse();

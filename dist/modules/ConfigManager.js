@@ -49,9 +49,6 @@ class ConfigManager {
     TTS_SLOW = false;
     RATE_LIMIT_WINDOW = 0;
     RATE_LIMIT_MAX_CALLS = 0;
-    RATE_LIMIT_PV = 0;
-    RATE_LIMIT_GROUP = 0;
-    MAX_VIOLATIONS = 0;
     MUTE_DEFAULT_MINUTES = 0;
     MUTE_MAX_DAILY = 0;
     AUTO_BAN_AFTER_MINUTES = 0;
@@ -89,19 +86,19 @@ class ConfigManager {
         }
         // ═══ PORTAS E URLS ═══
         this.PORT = Number(process.env?.PORT || process.env?.HF_PORT || 3000);
-        this.API_URL = process.env?.API_URL || process.env?.HF_API_URL || 'https://akra35567-akira-softedge.hf.space';
+        this.API_URL = process.env?.API_URL || process.env?.HF_API_URL || 'https://akra35567-akira-index.hf.space/api';
         this.API_TIMEOUT = Number(process.env?.API_TIMEOUT || 120000);
         this.API_RETRY_ATTEMPTS = Number(process.env?.API_RETRY_ATTEMPTS || 3);
         this.API_RETRY_DELAY = Number(process.env?.API_RETRY_DELAY || 1000);
         this.BASE_URL = process.env?.BASE_URL || 'https://index-js21-production.up.railway.app'; // URL de Produção
         // ═══ BOT IDENTITY ═══
-        this.BOT_NUMERO_REAL = process.env?.BOT_NUMERO || '3783926588639';
-        this.BOT_NAME = process.env?.BOT_NAME || 'akira';
+        this.BOT_NUMERO_REAL = process.env?.BOT_NUMERO || '40755431264474';
+        this.BOT_NAME = process.env?.BOT_NAME || 'belmira';
         this.BOT_VERSION = 'v21.1.02.2025';
-        this.PREFIXO = process.env?.PREFIXO || '#';
+        this.PREFIXO = process.env?.PREFIXO || '*';
         // ═══ PATHS E FOLDERS ═══
         const isHuggingFaceSpace = process.env?.HF_SPACE === 'true' || process.env?.NODE_ENV === 'production';
-        const baseDataPath = process.env?.DATA_DIR || (isHuggingFaceSpace ? '/tmp/akira_data' : '.');
+        const baseDataPath = isHuggingFaceSpace ? '/tmp/akira_data' : '.';
         this.TEMP_FOLDER = process.env?.TEMP_FOLDER || path.join(baseDataPath, 'temp');
         this.AUTH_FOLDER = process.env?.AUTH_FOLDER || path.join(baseDataPath, 'auth_info_baileys');
         this.DATABASE_FOLDER = process.env?.DATABASE_FOLDER || path.join(baseDataPath, 'database');
@@ -117,11 +114,8 @@ class ConfigManager {
         this.TTS_LANGUAGE = process.env?.TTS_LANGUAGE || 'pt';
         this.TTS_SLOW = process.env?.TTS_SLOW === 'true';
         // ═══ RATE LIMITING ═══
-        this.RATE_LIMIT_WINDOW = Number(process.env?.RATE_LIMIT_WINDOW || 3600); // 1 hora
-        this.RATE_LIMIT_MAX_CALLS = Number(process.env?.RATE_LIMIT_MAX_CALLS || 100);
-        this.RATE_LIMIT_PV = Number(process.env?.RATE_LIMIT_PV || 50);
-        this.RATE_LIMIT_GROUP = Number(process.env?.RATE_LIMIT_GROUP || 100);
-        this.MAX_VIOLATIONS = Number(process.env?.MAX_VIOLATIONS || 3);
+        this.RATE_LIMIT_WINDOW = Number(process.env?.RATE_LIMIT_WINDOW || 8);
+        this.RATE_LIMIT_MAX_CALLS = Number(process.env?.RATE_LIMIT_MAX_CALLS || 6);
         // ═══ MODERAÇÃO ═══
         this.MUTE_DEFAULT_MINUTES = Number(process.env?.MUTE_DEFAULT_MINUTES || 5);
         this.MUTE_MAX_DAILY = Number(process.env?.MUTE_MAX_DAILY || 5);
@@ -157,10 +151,8 @@ class ConfigManager {
         if (!this.YT_COOKIES_PATH) {
             const possiblePaths = [
                 path.join(process.cwd(), 'cookies.txt'),
-                path.join(process.cwd(), 'cookie.txt'),
                 path.join(process.cwd(), 'youtube_cookies.txt'),
                 '/app/cookies.txt',
-                '/app/cookie.txt',
                 '/app/youtube_cookies.txt',
                 path.join(baseDataPath, 'cookies', 'youtube_cookies.txt')
             ];
@@ -205,12 +197,8 @@ class ConfigManager {
         this.FEATURE_YT_DOWNLOAD = process.env?.FEATURE_YT !== 'false';
         this.FEATURE_STICKERS = process.env?.FEATURE_STICKERS !== 'false';
         this.FEATURE_MODERATION = process.env?.FEATURE_MODERATION !== 'false';
+        this.FEATURE_LEVELING = process.env?.FEATURE_LEVELING === 'true';
         this.FEATURE_VISION = process.env?.FEATURE_VISION !== 'false';
-        this.LEVEL_BASE_XP = Number(process.env?.LEVEL_BASE_XP || 100);
-        this.LEVEL_XP_MULTIPLIER = Number(process.env?.LEVEL_XP_MULTIPLIER || 10);
-        this.LEVEL_MAX = Number(process.env?.LEVEL_MAX || 60);
-        this.LEVEL_TOP_FOR_ADM = Number(process.env?.LEVEL_TOP_FOR_ADM || 3);
-        this.LEVEL_WINDOW_DAYS = Number(process.env?.LEVEL_WINDOW_DAYS || 3);
         ConfigManager.instance = this;
     }
     static getInstance() {

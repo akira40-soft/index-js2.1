@@ -29,14 +29,8 @@ class StickerViewOnceHandler {
     */
     async handleSticker(m, userData, texto, ehGrupo, isOwnerOrAdmin) {
         try {
-            // ✅ Parse metadados customizados: #sticker Pack | Autor
-            let packName = userData?.name?.split(' ')[0] || 'Akira';
-            let authorName = 'Akira-Bot';
-            if (texto && texto.includes('|')) {
-                const parts = texto.split('|');
-                packName = parts[0].trim() || packName;
-                authorName = parts[1].trim() || authorName;
-            }
+            // userData tem 'name', não 'nome'
+            const userName = userData?.name || 'User';
             // ✅ Verificar view-once DIRETO na mensagem atual
             const viewOnceDirect = this.media?.detectViewOnce(m.message);
             const hasViewOnceImage = viewOnceDirect?.imageMessage;
@@ -69,8 +63,8 @@ class StickerViewOnceHandler {
                         '✅ OU envie/imagem view-once com `#sticker`\n\n' +
                         '⚠️ Para stickers animados de vídeos, use `#gif`\n\n' +
                         '📝 Metadados:\n' +
-                        `🏷️ Pack: ${packName}\n` +
-                        `👤 Autor: ${authorName}\n` +
+                        `🏷️ Pack: ${userName.split(' ')[0]}\n` +
+                        '👤 Autor: Akira-Bot\n' +
                         '✨ Automaticamente personalizados!'
                 }, { quoted: m });
                 return true;
@@ -85,7 +79,7 @@ class StickerViewOnceHandler {
                     }, { quoted: m });
                     return true;
                 }
-                const out = await this.media?.addStickerMetadata(stickerBuf, packName, authorName);
+                const out = await this.media?.addStickerMetadata(stickerBuf, userName.split(' ')[0].toLowerCase(), 'Akira-Bot');
                 if (!out) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
                         text: '❌ Erro ao personalizar sticker.'
@@ -107,7 +101,7 @@ class StickerViewOnceHandler {
                     }, { quoted: m });
                     return true;
                 }
-                const out = await this.media?.addStickerMetadata(stickerBuf, packName, authorName);
+                const out = await this.media?.addStickerMetadata(stickerBuf, userName.split(' ')[0].toLowerCase(), 'Akira-Bot');
                 if (!out) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
                         text: '❌ Erro ao personalizar sticker.'
@@ -129,8 +123,8 @@ class StickerViewOnceHandler {
                     return true;
                 }
                 const result = await this.media?.createStickerFromImage(imgBuf, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
                 if (!result.sucesso) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
@@ -153,8 +147,8 @@ class StickerViewOnceHandler {
                     return true;
                 }
                 const result = await this.media?.createStickerFromImage(imgBuf, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
                 if (!result.sucesso) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
@@ -177,8 +171,8 @@ class StickerViewOnceHandler {
                     return true;
                 }
                 const result = await this.media?.createStickerFromImage(imgBuf, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
                 if (!result.sucesso) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
@@ -202,8 +196,8 @@ class StickerViewOnceHandler {
                     return true;
                 }
                 const result = await this.media?.createStickerFromImage(imgBuf, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
                 if (!result.sucesso) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
@@ -232,14 +226,8 @@ class StickerViewOnceHandler {
     */
     async handleGif(m, userData, texto, ehGrupo) {
         try {
-            // ✅ Parse metadados customizados
-            let packName = userData?.name?.split(' ')[0] || 'Akira';
-            let authorName = 'Akira-Bot';
-            if (texto && texto.includes('|')) {
-                const parts = texto.split('|');
-                packName = parts[0].trim() || packName;
-                authorName = parts[1].trim() || authorName;
-            }
+            // userData tem 'name', não 'nome'
+            const userName = userData?.name || 'User';
             // ✅ Verificar view-once DIRETO na mensagem atual
             const viewOnceDirect = this.media?.detectViewOnce(m.message);
             const hasViewOnceVideo = viewOnceDirect?.videoMessage;
@@ -285,7 +273,7 @@ class StickerViewOnceHandler {
                     }, { quoted: m });
                     return true;
                 }
-                const out = await this.media?.addStickerMetadata(stickerBuf, packName, authorName);
+                const out = await this.media?.addStickerMetadata(stickerBuf, userName.split(' ')[0].toLowerCase(), 'Akira-Bot');
                 if (out) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
                         sticker: out
@@ -308,7 +296,7 @@ class StickerViewOnceHandler {
                     }, { quoted: m });
                     return true;
                 }
-                const out = await this.media?.addStickerMetadata(stickerBuf, packName, authorName);
+                const out = await this.media?.addStickerMetadata(stickerBuf, userName.split(' ')[0].toLowerCase(), 'Akira-Bot');
                 if (out) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
                         sticker: out
@@ -334,8 +322,8 @@ class StickerViewOnceHandler {
                     return true;
                 }
                 const result = await this.media?.createAnimatedStickerFromVideo(vidBuf, 30, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
                 if (!result.sucesso) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
@@ -361,8 +349,8 @@ class StickerViewOnceHandler {
                     return true;
                 }
                 const result = await this.media?.createAnimatedStickerFromVideo(vidBuf, 30, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
                 if (!result.sucesso) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
@@ -388,8 +376,8 @@ class StickerViewOnceHandler {
                     return true;
                 }
                 const result = await this.media?.createAnimatedStickerFromVideo(vidBuf, 30, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
                 if (!result.sucesso) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
@@ -416,8 +404,8 @@ class StickerViewOnceHandler {
                     return true;
                 }
                 const result = await this.media?.createAnimatedStickerFromVideo(vidBuf, 30, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
                 if (!result.sucesso) {
                     await this.sock?.sendMessage(m.key?.remoteJid, {
@@ -575,16 +563,10 @@ class StickerViewOnceHandler {
     * Processa comando #vosticker / #vostk
     * Converte view-once image/video em sticker
     */
-    async handleViewOnceToSticker(m, userData, ehGrupo, texto = '') {
+    async handleViewOnceToSticker(m, userData, ehGrupo) {
         try {
-            // ✅ Parse metadados customizados
-            let packName = userData?.name?.split(' ')[0] || 'Akira';
-            let authorName = 'Akira-Bot';
-            if (texto && texto.includes('|')) {
-                const parts = texto.split('|');
-                packName = parts[0].trim() || packName;
-                authorName = parts[1].trim() || authorName;
-            }
+            // userData tem 'name', não 'nome'
+            const userName = userData?.name || 'User';
             const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
             if (!quoted) {
                 await this.sock?.sendMessage(m.key?.remoteJid, {
@@ -606,8 +588,8 @@ class StickerViewOnceHandler {
             let stickerResult;
             if (result.tipo === 'image') {
                 stickerResult = await this.media?.createStickerFromImage(result.buffer, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
             }
             else if (result.tipo === 'video') {
@@ -615,8 +597,8 @@ class StickerViewOnceHandler {
                     text: '⏳ Convertendo vídeo view-once para sticker animado...'
                 }, { quoted: m });
                 stickerResult = await this.media?.createAnimatedStickerFromVideo(result.buffer, 30, {
-                    packName,
-                    author: authorName
+                    userName,
+                    author: 'Akira-Bot'
                 });
             }
             else {

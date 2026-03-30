@@ -1,9 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import ConfigManager from './ConfigManager.js';
-import JidUtils from './JidUtils.js';
 class RegistrationSystem {
-    static instance;
     config;
     logger;
     dbPath;
@@ -16,12 +14,6 @@ class RegistrationSystem {
         this.dbPath = path.join(basePath, 'datauser', 'registered.json');
         this._ensureFiles();
         this.users = this._load(this.dbPath, []);
-    }
-    static getInstance(logger = console) {
-        if (!RegistrationSystem.instance) {
-            RegistrationSystem.instance = new RegistrationSystem(logger);
-        }
-        return RegistrationSystem.instance;
     }
     _ensureFiles() {
         try {
@@ -38,27 +30,7 @@ class RegistrationSystem {
     _load(p, fallback) {
         try {
             const raw = fs.readFileSync(p, 'utf8');
-            let loaded = JSON.parse(raw || '[]');
-            // ═══════════════════════════════════════════════════════════════════
-            // MIGRATION: JID -> NUMERIC ID (Digits Only)
-            // ═══════════════════════════════════════════════════════════════════
-            if (Array.isArray(loaded)) {
-                let migratedCount = 0;
-                loaded = loaded.map(u => {
-                    const numericId = JidUtils.toNumeric(u.id);
-                    if (u.id !== numericId) {
-                        u.id = numericId;
-                        migratedCount++;
-                    }
-                    return u;
-                });
-                if (migratedCount > 0) {
-                    this.logger.info(`✨ [RegistrationSystem] Migrados ${migratedCount} registros para ID Numérico.`);
-                    this.users = loaded;
-                    this._save();
-                }
-            }
-            return loaded;
+            return JSON.parse(raw || '[]');
         }
         catch (e) {
             return fallback;
@@ -97,8 +69,7 @@ class RegistrationSystem {
         return this.registerUser(uid, name, age, serial);
     }
     registerUser(uid, name, age, serial) {
-        const numericId = JidUtils.toNumeric(uid);
-        const existing = this.users.find(u => JidUtils.toNumeric(u.id) === numericId);
+        const existing = this.users.find(u => u.id === uid);
         if (existing) {
             return { success: false, message: 'Usuário já registrado.' };
         }
@@ -107,7 +78,7 @@ class RegistrationSystem {
         const userLink = this.generateLink(userSerial);
         const now = new Date().toISOString();
         const newUser = {
-            id: numericId,
+            id: uid,
             name: name,
             age: age,
             serial: userSerial,
@@ -127,16 +98,17 @@ class RegistrationSystem {
         return this.getUser(uid);
     }
     isRegistered(uid) {
-        const numericId = JidUtils.toNumeric(uid);
-        return !!this.users.find(u => JidUtils.toNumeric(u.id) === numericId);
+        // Normaliza UID para multi-device
+        const normalizedUid = uid.split(':')[0] + (uid.includes('@') ? '' : '@s.whatsapp.net');
+        return !!this.users.find(u => u.id.split(':')[0] === normalizedUid.split(':')[0]);
     }
     getUser(uid) {
-        const numericId = JidUtils.toNumeric(uid);
-        return this.users.find(u => JidUtils.toNumeric(u.id) === numericId);
+        const normalizedUid = uid.split(':')[0];
+        return this.users.find(u => u.id.split(':')[0] === normalizedUid);
     }
     unregisterUser(uid) {
-        const numericId = JidUtils.toNumeric(uid);
-        const index = this.users.findIndex(u => JidUtils.toNumeric(u.id) === numericId);
+        const normalizedUid = uid.split(':')[0];
+        const index = this.users.findIndex(u => u.id.split(':')[0] === normalizedUid);
         if (index > -1) {
             this.users.splice(index, 1);
             this._save();

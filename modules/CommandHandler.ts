@@ -632,7 +632,8 @@ class CommandHandler {
                 case 'doar':
                 case 'buy':
                 case 'comprar':
-                    return await this._handlePaymentCommand(m, args);
+                    await this.bot.reply(m, '❤️ *APOIE O PROJETO AKIRA* ❤️\n\nSe você gosta do bot e quer ajudar a mantê-lo online:\n\n*💰 Chave PIX:* `akira.bot.dev@gmail.com`\n\n*Ou compre um café:*\nhttps://ko-fi.com/isaacquarenta\n\nAgradeço qualquer contribuição! 💖');
+                    return true;
 
                 case 'shodan':
                 case 'cve':
@@ -776,6 +777,52 @@ class CommandHandler {
 
                 case 'blacklist':
                     if (!isOwner) return false;
+                    
+                    if (args[0] === 'add') {
+                        let targetUserId = null;
+                        const contextInfo = m.message?.extendedTextMessage?.contextInfo;
+                        if (contextInfo?.participant) {
+                            targetUserId = contextInfo.participant;
+                        } else if (contextInfo?.mentionedJid && contextInfo.mentionedJid.length > 0) {
+                            targetUserId = contextInfo.mentionedJid[0];
+                        } else if (args.length > 1) {
+                            targetUserId = args[1].replace(/\D/g, '') + '@s.whatsapp.net';
+                        }
+                        
+                        if (!targetUserId) {
+                            await this._reply(m, '❌ Marque alguém, responda a uma mensagem ou digite o número para adicionar à blacklist.\nEx: #blacklist add @usuario');
+                            return true;
+                        }
+                        
+                        const targetNumber = targetUserId.split('@')[0].split(':')[0];
+                        const targetJid = `${targetNumber}@s.whatsapp.net`;
+                        const res = this.moderationSystem.addToBlacklist(targetJid, 'Mencionado', targetNumber, 'Adicionado manualmente por admin');
+                        await this._reply(m, res.success ? `🚫 *@${targetNumber}* foi adicionado à *Blacklist Global* e será banido de todos os meus setores!` : `❌ Falha: ${res.message || 'Erro desconhecido.'}`);
+                        return true;
+                    }
+                    else if (args[0] === 'remove' || args[0] === 'del') {
+                        let targetUserId = null;
+                        const contextInfo = m.message?.extendedTextMessage?.contextInfo;
+                        if (contextInfo?.participant) {
+                            targetUserId = contextInfo.participant;
+                        } else if (contextInfo?.mentionedJid && contextInfo.mentionedJid.length > 0) {
+                            targetUserId = contextInfo.mentionedJid[0];
+                        } else if (args.length > 1) {
+                            targetUserId = args[1].replace(/\D/g, '') + '@s.whatsapp.net';
+                        }
+                        
+                        if (!targetUserId) {
+                            await this._reply(m, '❌ Marque alguém, responda a uma mensagem ou digite o número para remover da blacklist.\nEx: #blacklist remove @usuario');
+                            return true;
+                        }
+                        
+                        const targetNumber = targetUserId.split('@')[0].split(':')[0];
+                        const targetJid = `${targetNumber}@s.whatsapp.net`;
+                        const removed = this.moderationSystem.removeFromBlacklist(targetJid);
+                        await this._reply(m, removed ? `✅ *@${targetNumber}* foi removido da Blacklist Global com sucesso.` : `❌ Usuário não encontrado na blacklist.`);
+                        return true;
+                    }
+
                     const blReport = this.moderationSystem.getBlacklistReport();
                     return await this._reply(m, blReport);
 

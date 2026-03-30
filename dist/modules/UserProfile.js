@@ -13,7 +13,7 @@ class UserProfile {
     constructor(sock, config = null) {
         this.sock = sock;
         this.config = config || ConfigManager.getInstance();
-        this.logger = config?.logger || console;
+        this.logger = console;
     }
     setSocket(sock) {
         this.sock = sock;

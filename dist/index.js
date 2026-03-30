@@ -31,6 +31,7 @@
 import HFCorrections from './modules/HFCorrections.js';
 // Aplica correções globais (DNS, IPv4, Fallbacks)
 HFCorrections.apply();
+// @ts-nocheck
 import express from 'express';
 import QRCode from 'qrcode';
 import ConfigManager from './modules/ConfigManager.js';

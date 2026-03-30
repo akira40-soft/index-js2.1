@@ -12,8 +12,8 @@ class PaymentManager {
         this.bot = botCore;
         this.subscriptionManager = subscriptionManager;
         this.config = ConfigManager.getInstance();
-        // Configurar persistência com process.env.DATA_DIR para Railway
-        const basePath = process.env.DATA_DIR || '/tmp/akira_data';
+        // HF SPACES: Usar /tmp para garantir permissões de escrita
+        const basePath = '/tmp/akira_data';
         this.dbPath = path.join(basePath, 'payments');
         this.configPath = path.join(basePath, 'payplay_config.json');
         this._ensureFiles();
@@ -225,37 +225,6 @@ class PaymentManager {
     }
     getPlans() {
         return this.payConfig.plans;
-    }
-    /**
-     * Handler para o comando #donate
-     */
-    async handleDonateCommand(m) {
-        const jid = m.key.remoteJid;
-        const plans = this.getPlans();
-        let msg = `💝 *APOIE A AKIRA BOT*\n\n`;
-        msg += `Obrigado por considerar apoiar o desenvolvimento do bot! Seus recursos ajudam a manter o servidor (Railway) e as APIs de IA (Deepgram, etc) funcionando.\n\n`;
-        msg += `💎 *PLANOS VIP DISPONÍVEIS:*\n`;
-        for (const [key, plan] of Object.entries(plans)) {
-            msg += `• *${plan.name}:* R$ ${plan.price.toFixed(2)} (${plan.days} dias)\n`;
-        }
-        msg += `\n🎁 *BENEFÍCIOS VIP:*\n`;
-        msg += `- Sem limites de uso (Rate Limit removido)\n`;
-        msg += `- Acesso a comandos exclusivos\n`;
-        msg += `- Prioridade no processamento de áudio/vídeo\n`;
-        msg += `- Badge exclusiva no perfil\n\n`;
-        msg += `👇 *Escolha um plano abaixo para gerar o link ou use os dados de doação direta:*\n\n`;
-        const btcAddress = this.payConfig.btcAddress || '0xdb5f66e7707de55859b253adbee167e2e8594ba6';
-        const kofiPage = this.payConfig.kofiPage || '';
-        msg += `⚡ *PIX / BTC:* \`${btcAddress}\`\n`;
-        if (kofiPage && kofiPage !== 'seu_usuario_kofi') {
-            msg += `☕ *Ko-fi:* https://ko-fi.com/${kofiPage}\n`;
-        }
-        msg += `\n_Para gerar uma fatura de um plano específico, use: #vip [plano]_ (ex: #vip vip_30d)\n`;
-        msg += `_Envie o comprovante para o dono: @244937035662_`;
-        return await this.bot.sock.sendMessage(jid, {
-            text: msg,
-            mentions: ['244937035662@s.whatsapp.net']
-        }, { quoted: m });
     }
 }
 export default PaymentManager;
