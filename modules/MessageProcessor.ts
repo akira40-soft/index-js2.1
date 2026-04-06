@@ -9,6 +9,7 @@
 
 import { getContentType } from '@whiskeysockets/baileys';
 import ConfigManager from './ConfigManager.js';
+import JidUtils from './JidUtils.js';
 
 let parsePhoneNumberFromString: any = null;
 try {
@@ -23,59 +24,75 @@ class MessageProcessor {
     public config: any;
     public logger: any;
     public rateLimitMap: Map<string, number[]> = new Map();
+    public sock: any;
 
     constructor(logger: any = null) {
         this.config = ConfigManager.getInstance();
         this.logger = logger || console;
     }
 
+    public setSocket(sock: any): void {
+        this.sock = sock;
+    }
+
     /**
-    * Extrai número real do usuário
-    */
-    extractUserNumber(message: any) {
+     * Extrai número real do usuário, evitando LIDs em ambiente cloud
+     *
+     * Em Baileys Cloud, m.key.participant pode vir como:
+     *   - "12345:0@lid"  — Local ID (NÃO é número de telefone)
+     *   - "244956464620@s.whatsapp.net" — Número real
+     *   - "244956464620:0@s.whatsapp.net" — Número real com device ID
+     *
+     * Heurística: @lid = LID, @s.whatsapp.net = número real ou grupo.
+     * Se não consegue extrair o número real, retorna o LID como identificador.
+     */
+    async extractUserNumber(message: any, sock?: any) {
         try {
             const key = message.key || {};
+            const participant = key.participant || null;
             const remoteJid = key.remoteJid || '';
 
-            // Se for PV (não termina com @g.us)
-            if (!String(remoteJid).endsWith('@g.us')) {
-                return String(remoteJid).split(':')[0].split('@')[0];
+            // ✅ PRIORIDADE 1: Usar phone_number se disponível
+            if (message.phoneNumber) {
+                const phoneNum = JidUtils.extractPhoneNumber(String(message.phoneNumber));
+                if (this._isValidPhoneNumber(phoneNum)) return phoneNum;
             }
 
-            // Se for grupo, obtém do participant
-            if (key.participant) {
-                const participant = String(key.participant);
-                if (participant.includes('@s.whatsapp.net')) {
-                    return participant.split(':')[0].split('@')[0];
-                }
-                if (participant.includes('@lid')) {
-                    const limpo = participant.split(':')[0];
-                    const digitos = limpo.replace(/\D/g, '');
+            // ✅ PRIORIDADE 2: Usar participant
+            if (participant) {
+                const participantStr = String(participant);
 
-                    // If libphonenumber-js is available, try to normalize to E.164 (without '+')
-                    try {
-                        const cfg = ConfigManager.getInstance();
-                        let defaultCountry = null;
-                        if (cfg?.BOT_NUMERO_REAL && String(cfg.BOT_NUMERO_REAL).startsWith('244')) {
-                            defaultCountry = 'AO';
-                        }
-
-                        if (parsePhoneNumberFromString) {
-                            const pn = defaultCountry
-                                ? parsePhoneNumberFromString(digitos, defaultCountry)
-                                : parsePhoneNumberFromString(digitos);
-
-                            if (pn && pn.isValid && pn.isValid()) {
-                                // return E.164 without '+' to match JID numeric part
-                                return String(pn.number).replace(/^\+/, '');
-                            }
-                        }
-                    } catch (err) {
-                        // fallback to raw digits if parsing fails
+                // LID detectado — tenta resolver via onWhatsApp
+                if (participantStr.includes('@lid')) {
+                    this.logger?.debug(`🔍 [LID] Participant é LID, tentando resolver número real...`);
+                    const resolvedReal = await this._resolveLidToReal(participantStr, sock);
+                    if (resolvedReal && this._isValidPhoneNumber(resolvedReal)) {
+                        this.logger?.info(`✅ [LID] Resolvido → número real: ${resolvedReal}`);
+                        return resolvedReal;
                     }
+                    // Se não conseguiu resolver, retorna LID numérico como identificador fallback
+                    const lidNumeric = JidUtils.cleanPhoneNumber(participantStr);
+                    if (lidNumeric && lidNumeric.length >= 6) {
+                        this.logger?.debug(`⚠️ [LID] Não resolvido, usando LID como identificador: ${lidNumeric}`);
+                        return `lid_${lidNumeric}`;
+                    }
+                }
 
-                    // Fallback: return the raw extracted digits (no forced country prefix)
-                    if (digitos.length > 0) return digitos;
+                // Não é LID — extrai número normalmente
+                const normalized = JidUtils.normalize(participantStr);
+                const number = JidUtils.getNumber(normalized);
+                const rawNum = JidUtils.cleanPhoneNumber(number);
+                if (this._isValidPhoneNumber(rawNum)) {
+                    return rawNum;
+                }
+            }
+
+            // ✅ PRIORIDADE 3: Usar remoteJid para PV (não grupo)
+            if (remoteJid && !String(remoteJid).endsWith('@g.us') && !remoteJid.includes('@lid')) {
+                const number = JidUtils.getNumber(String(remoteJid));
+                const rawNum = JidUtils.cleanPhoneNumber(number);
+                if (this._isValidPhoneNumber(rawNum)) {
+                    return rawNum;
                 }
             }
 
@@ -85,6 +102,37 @@ class MessageProcessor {
             this.logger?.error('Erro ao extrair número:', e.message);
             return 'desconhecido';
         }
+    }
+
+    /**
+     * Tenta resolver LID para número real via onWhatsApp lookup
+     * e groupMetadata participants lookup.
+     */
+    private async _resolveLidToReal(lid: string, sock?: any): Promise<string | null> {
+        if (!sock) return null;
+        try {
+            // Método 1: sock.onWhatsApp — tenta encontrar o número real associado
+            const onWp = await sock.onWhatsApp(lid);
+            if (onWp && Array.isArray(onWp) && onWp.length > 0) {
+                const first = onWp[0];
+                if (first.jid && !String(first.jid).includes('@lid')) {
+                    const num = JidUtils.getNumber(String(first.jid));
+                    if (this._isValidPhoneNumber(num)) return num;
+                }
+            }
+        } catch (e: any) {
+            this.logger?.debug(`🔍 [LID] onWhatsApp falhou: ${e.message}`);
+        }
+        return null;
+    }
+
+    /**
+     * Valida se uma string é um número de telefone plausível (6-15 dígitos).
+     */
+    private _isValidPhoneNumber(num: string): boolean {
+        if (!num) return false;
+        const digits = num.replace(/\D/g, '');
+        return digits.length >= 6 && digits.length <= 15;
     }
 
     /**
@@ -120,11 +168,14 @@ class MessageProcessor {
                 case 'videoMessage':
                     return (msg.videoMessage && msg.videoMessage.caption) || '';
                 case 'audioMessage':
-                    return '[mensagem de voz]';
+                    return '[áudio]';
                 case 'stickerMessage':
                     return '[figurinha]';
                 case 'documentMessage':
                     return (msg.documentMessage && msg.documentMessage.caption) || '[documento]';
+                case 'pollCreationMessageV3':
+                case 'pollCreationMessage':
+                    return `[enquete: ${msg[tipo].name}]`;
                 default:
                     return '';
             }
@@ -219,7 +270,7 @@ class MessageProcessor {
     * Extrai informações de reply
     * Enhanced version adapted from akira's reply_context_handler.py
     */
-    extractReplyInfo(message: any): any {
+    async extractReplyInfo(message: any): Promise<any> {
         try {
             const context = message.message?.extendedTextMessage?.contextInfo;
             if (!context || !context.quotedMessage) return null;
@@ -282,7 +333,7 @@ class MessageProcessor {
             // Extract author number and name if available (name limited at API layer)
             let quotedAuthorNumero = 'desconhecido';
             if (participantJidCitado) {
-                quotedAuthorNumero = this.extractUserNumber({ key: { participant: participantJidCitado } });
+                quotedAuthorNumero = await this.extractUserNumber({ key: { participant: participantJidCitado } }, this.sock);
             }
 
             // Check if reply is to bot
@@ -424,11 +475,10 @@ class MessageProcessor {
     isReplyToBot(jid: string | null | undefined): boolean {
         if (!jid) return false;
 
-        const jidStr = String(jid).toLowerCase();
-        const jidNumero = jidStr.split('@')[0].split(':')[0];
-        const botNumero = String(this.config.BOT_NUMERO_REAL).toLowerCase();
+        const jidNumero = JidUtils.getNumber(String(jid));
+        const botNumero = JidUtils.getNumber(String(this.config.BOT_NUMERO_REAL));
 
-        return jidNumero === botNumero || jidStr.includes(botNumero);
+        return jidNumero === botNumero;
     }
 
     /**
