@@ -11,13 +11,57 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
-import { exec } from 'child_process';
+// ✅ Sharp com lazy loading - importado apenas quando necessário
+let sharp: any = null;
+const loadSharp = async () => {
+    if (!sharp) {
+        try {
+            // @ts-ignore - Sharp pode não estar instalado
+            sharp = await import('sharp').then(m => m.default || m);
+        } catch (e: any) {
+            console.warn('⚠️ Sharp não disponível. Stickers usarão ffmpeg como fallback.');
+            return null;
+        }
+    }
+    return sharp;
+};
+import { exec, execSync } from 'child_process';
 import util from 'util';
 const execAsync = util.promisify(exec);
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import ConfigManager from './ConfigManager.js';
+
+// ✅ Configurar ffmpeg path para fluent-ffmpeg
+try {
+    const ffmpegPath = execSync('which ffmpeg', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
+} catch (e) {
+    // Tentar paths comuns se which falhar
+    const possiblePaths = ['/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg', 'ffmpeg'];
+    for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+            ffmpeg.setFfmpegPath(p);
+            break;
+        }
+    }
+}
+
+// ✅ Configurar ffprobe path para fluent-ffmpeg
+try {
+    const ffprobePath = execSync('which ffprobe', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (ffprobePath) ffmpeg.setFfprobePath(ffprobePath);
+} catch (e) {
+    // Tentar paths comuns se which falhar
+    const possiblePaths = ['/usr/local/bin/ffprobe', '/usr/bin/ffprobe', 'ffprobe'];
+    for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+            ffmpeg.setFfprobePath(p);
+            break;
+        }
+    }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,12 +85,15 @@ class MediaProcessor {
     private logger: any;
     private tempFolder: string;
     private downloadCache: Map<string, any>;
+    private ytdlpCommand: string;
+    public sock: any;
 
     constructor(logger: any = null) {
         this.config = ConfigManager.getInstance();
         this.logger = logger || console;
         this.tempFolder = this.config?.TEMP_FOLDER || './temp';
         this.downloadCache = new Map();
+        this.ytdlpCommand = this._resolveYtdlpCommand();
 
         // Garante que a pasta temporária exista
         if (!fs.existsSync(this.tempFolder)) {
@@ -59,6 +106,10 @@ class MediaProcessor {
         }
     }
 
+    public setSocket(sock: any): void {
+        this.sock = sock;
+    }
+
     /**
      * Encontra o caminho do cookie válido
      */
@@ -67,7 +118,7 @@ class MediaProcessor {
             './cookies.txt',
             '/app/cookies.txt',
             './youtube_cookies.txt',
-            '/tmp/akira_data/cookies/youtube_cookies.txt',
+            path.join(this.config.DATABASE_FOLDER || './database', 'cookies', 'youtube_cookies.txt'),
             process.env.YT_COOKIES_PATH
         ].filter(Boolean);
 
@@ -80,116 +131,194 @@ class MediaProcessor {
         return '';
     }
 
-    /**
-     * Constrói o comando yt-dlp seguindo as NORMAS TÉCNICAS de 2026
-     * Usa Deno como runtime JS para decifrar assinaturas complexas (SABR/DPI)
-     */
-    private _buildYtdlpCommand(url: string, options: { type: 'audio' | 'video' | 'json', output?: string, isSearch?: boolean, clientOverride?: string }): string {
-        const cookiePath = this._findCookiePath();
-        const cookieArg = cookiePath ? `--cookies "${cookiePath}"` : '';
-        const poToken = this.config?.YT_PO_TOKEN;
-
-        // Padrão Industrial: Se houver Deno, use-o. Caso contrário, deixa o yt-dlp decidir.
-        const jsRuntime = fs.existsSync('/usr/local/bin/deno') || fs.existsSync('/root/.deno/bin/deno') ? '--js-runtime deno' : '';
-
-        // Clientes normatizados em ordem de prioridade
-        const clients = options.clientOverride || 'android_vr,ios,android,web_embedded,tv,web';
-
-        let extractorArgs = `youtube:player_client=${clients}`;
-        if (poToken) extractorArgs += `;po_token=web+${poToken}`;
-
-        const bypassFlags = [
-            `--extractor-args "${extractorArgs}"`,
-            jsRuntime,
-            '--force-ipv4',
-            '--no-check-certificates',
-            '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"',
-            '--add-header "Accept-Language:en-US,en;q=0.9"',
-            '--ignore-config',
-            '--no-warnings',
-            '--no-playlist',
-            '--geo-bypass',
-            '--socket-timeout 20',
-            '--retries 2'
-        ].filter(Boolean).join(' ');
-
-        let actionFlags = '';
-        if (options.type === 'audio') {
-            // ba/b: Tenta pegar só o áudio. Se não conseguir, baixa o melhor vídeo+áudio e extrai
-            actionFlags = `-f "ba/b" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
-        } else if (options.type === 'video') {
-            // SEM STRING DE FORMATO (-f): Deixa o yt-dlp usar o padrão oficial (bv*+ba/b)
-            // Apenas garantimos que o container final seja MP4 (compatível com WhatsApp)
-            // e forçamos o re-encode de áudio se for muito fora do padrão, mas "--merge-output-format" dá conta
-            actionFlags = `--merge-output-format mp4 -o "${options.output}"`;
-        } else if (options.type === 'json') {
-            actionFlags = '--dump-json --no-download';
+    private _resolveYtdlpCommand(): string {
+        try {
+            const binary = execSync('command -v yt-dlp || which yt-dlp', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+            if (binary) {
+                this.logger?.info(`✅ Usando yt-dlp do sistema: ${binary}`);
+                return binary;
+            }
+        } catch (error) {
+            this.logger?.warn('⚠️ yt-dlp não encontrado no PATH. Tentando python3 -m yt_dlp...');
         }
 
-        const target = options.isSearch ? `ytsearch1:${url}` : url;
-        return `yt-dlp ${cookieArg} ${bypassFlags} ${actionFlags} "${target}"`;
+        try {
+            execSync('python3 -m yt_dlp --version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+            this.logger?.info('✅ Usando python3 -m yt_dlp como fallback');
+            return 'python3 -m yt_dlp';
+        } catch (error) {
+            this.logger?.warn('⚠️ python3 -m yt_dlp não disponível. Usando comando genérico yt-dlp.');
+        }
+
+        return 'yt-dlp';
     }
 
     /**
-     * ═══════════════════════════════════════════════════════
-     * DOWNLOAD DE ÁUDIO - yt-dlp PURO COM ANTI-BLOQUEIO
-     * ═══════════════════════════════════════════════════════
+     * ═══════════════════════════════════════════════════════════════════════
+     * PO TOKEN - Gera argumentos --po-token para yt-dlp se variavel existir
+     * Formato esperado: <client>:<visitor_data>.<po_token>
+     * Se vier como token puro, prefixa com "WEB+"
+     * ═══════════════════════════════════════════════════════════════════════
      */
-    async downloadYouTubeAudio(url: string): Promise<{ sucesso: boolean; buffer?: Buffer; filePath?: string; error?: string; metadata?: any }> {
+    private _getPoTokenArgs(): string[] {
+        const poToken = this.config?.YT_PO_TOKEN;
+        if (!poToken || !poToken.trim()) return [];
+
+        // Pode vir já formatado como "WEB:data.token" ou apenas o token
+        if (poToken.includes(':')) {
+            return [`--po-token`, poToken.trim()];
+        }
+        this.logger?.info('🔑 Usando po_token com cliente WEB');
+        return [`--po-token`, `WEB+${poToken.trim()}`];
+    }
+
+    /**
+     * Constrói o comando yt-dlp para download YouTube.
+     *
+     * Clientes android e ios NÃO precisam de:
+     *   - JS runtime (EJS/Node.js) para signature solving
+     *   - PO Token (GVS) — bypassam a verificação
+     *   - player_skip — não usam webpage para gerar URLs
+     *
+     * POR QUE SEM tv_embedded, mweb, web_creator sem PO_TOKEN?
+     *   - tv_embedded: removido/ignorado nas versões recentes do yt-dlp
+     *   - mweb: desde 2025 exige GVS PO Token (erro 403 sem ele)
+     *   - web_creator/safari: exigem signature solve via JS runtime
+     *
+     * android e ios usam endpoints nativos da API do YouTube que
+     * entregam URLs stream direto (sem cipher), ideal para Railway/cloud.
+     */
+    private _buildYtdlpCommand(url: string, options: {
+        type: 'audio' | 'video' | 'json';
+        output?: string;
+        isSearch?: boolean;
+        playerClient?: string;
+        useCookies?: boolean;
+        customFlags?: string;
+    }): string {
+        const cookiePath = this._findCookiePath();
+        const cookieArg = (cookiePath && options.useCookies !== false) ? `--cookies "${cookiePath}"` : '';
+
+        // PO Token (só faz sentido com clients web)
+        const poTokenArgs = this._getPoTokenArgs();
+        const poTokenStr = poTokenArgs.length > 0 ? `${poTokenArgs[0]} "${poTokenArgs[1]}"` : '';
+
+        // Client padrão: android (melhor sem PO Token em cloud)
+        const playerClient = options.playerClient && options.playerClient !== 'default'
+            ? options.playerClient
+            : 'android';
+
+        // Extractor args — limpo
+        const clientArg = `--extractor-args "youtube:player_client=${playerClient}"`;
+
+        // Retry nativo do yt-dlp
+        const retryFlags = `--no-playlist --extractor-retries 2`;
+
+        let actionFlags = '';
+        if (options.type === 'audio') {
+            actionFlags = `-f "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best" -x --audio-format mp3 --audio-quality 0 -o "${options.output}"`;
+        } else if (options.type === 'video') {
+            actionFlags = `-f "bestvideo[height<=720]+bestaudio/best[height<=720]/best" -o "${options.output}"`;
+        } else if (options.type === 'json') {
+            actionFlags = `--dump-json --no-download`;
+        }
+
+        const custom = options.customFlags || '';
+        const target = options.isSearch ? `ytsearch1:${url}` : url;
+        const executable = this.ytdlpCommand || 'yt-dlp';
+        const parts = [executable, cookieArg, poTokenStr, clientArg, retryFlags, actionFlags, custom, `"${target}"`];
+        return parts.filter(Boolean).join(' ');
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * DOWNLOAD DE ÁUDIO - yt-dlp COM GAMBIARRAS CONTRA BLOQUEIO DO YOUTUBE
+     * ═══════════════════════════════════════════════════════════════════════
+     */
+    async downloadYouTubeAudio(url: string, retryCount: number = 0): Promise<{ sucesso: boolean; buffer?: Buffer; filePath?: string; error?: string; metadata?: any }> {
         try {
             this.logger?.info(`🎧 Download áudio: ${url}`);
 
             const metadata = await this._getYouTubeMetadataSimple(url);
             if (!metadata.sucesso) {
-                if (url.startsWith('http')) return await this._downloadWithYtdlCore(url, 'audio');
                 return { sucesso: false, error: 'Não foi possível encontrar música para esse nome.' };
             }
 
             const finalUrl = metadata.url || url;
             const outputPath = this.generateRandomFilename('mp3');
-            const cookiePath = this._findCookiePath();
 
-            // ================================================================
-            // GAMBIARRAS ANTI-BLOQUEIO: Rotação Pura de Clientes (Sem Format Override)
-            // O yt-dlp fará sua mágica nativa para encontrar o melhor áudio
-            // ================================================================
-            const tentativas = [
-                { cliente: 'android_vr', sleepMs: 0 },
-                { cliente: 'ios', sleepMs: 1500 },
-                { cliente: 'android', sleepMs: 2000 },
-                { cliente: 'web_embedded', sleepMs: 2500 },
-                { cliente: 'tv', sleepMs: 3000 },
-                { cliente: 'ios,android_vr,web,tv', sleepMs: 3500 } // Super-combo
-            ];
+            // TENTATIVAS: android/ios primeiro (não precisam PO Token nem JS signature)
+            // web_creator/w_creator só se tiver PO Token configurado
+            const hasPoToken = !!this.config?.YT_PO_TOKEN;
+            const fallbacks: { client: string; useCookies: boolean }[] = hasPoToken
+                ? [
+                    { client: 'android', useCookies: false },                // Android API (sem signature, cookies não suportados)
+                    { client: 'ios', useCookies: false },                    // iOS API (sem signature, cookies não suportados)
+                    { client: 'web_creator', useCookies: true },             // creator + PO Token
+                ]
+                : [
+                    { client: 'android', useCookies: false },                // Android API (sem signature)
+                    { client: 'ios', useCookies: false },                    // iOS API (sem signature)
+                ];
 
-            for (let i = 0; i < tentativas.length; i++) {
-                if (fs.existsSync(outputPath)) break;
-                const t = tentativas[i];
-                if (t.sleepMs > 0) await new Promise(r => setTimeout(r, t.sleepMs));
+            let lastError = '';
+            for (let i = 0; i < fallbacks.length; i++) {
+                const fb = fallbacks[i];
+                this.logger?.info(`[ÁUDIO] Tentativa ${i + 1}/${fallbacks.length} (client: ${fb.client}, cookies: ${fb.useCookies})...`);
 
-                this.logger?.info(`[ÁUDIO ${i + 1}/${tentativas.length}] Cliente: ${t.cliente}`);
                 const cmd = this._buildYtdlpCommand(finalUrl, {
                     type: 'audio',
                     output: outputPath,
-                    clientOverride: t.cliente
+                    playerClient: fb.client,
+                    useCookies: fb.useCookies
                 });
+
                 try {
+                    this.logger?.debug(`Comando executado: ${cmd.substring(0, 150)}...`);
                     await execAsync(cmd, { timeout: 180000, maxBuffer: 150 * 1024 * 1024 });
+
+                    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) {
+                        const buffer = await fs.promises.readFile(outputPath);
+                        await this.cleanupFile(outputPath);
+                        return { sucesso: true, buffer, metadata };
+                    }
                 } catch (e: any) {
-                    const msg = (e.stderr || e.message || '').split('\n')[0];
-                    this.logger?.warn(`⚠️ [${t.cliente}] ${msg.substring(0, 100)}`);
+                    const raw = (e.stderr || e.message || '').toString().trim();
+                    const lines = raw.split('\n').filter(l => l.trim());
+                    const errSummary = lines.slice(-5).join(' | ');
+                    const fullError = raw.substring(0, 500);
+                    this.logger?.warn(`⚠️ yt-dlp erro na tentativa ${i + 1}: ${errSummary}`);
+                    this.logger?.debug(`   Full error: ${fullError}`);
+                    lastError = raw.toLowerCase();
+
+                    // 🚨 GAMBIARRA CRÍTICA: Se o erro for de bot ("Sign in", 403, 429), pula logo para o Invidious/Piped
+                    // Não adianta tentar outros clientes se o IP já foi marcado ou o YouTube exige login
+                    if (lastError.includes('sign in') || lastError.includes('403') || lastError.includes('429') || lastError.includes('bot')) {
+                        this.logger?.warn('🚫 Bloqueio de bot detectado (403/429/Sign-in). Saltando retries locais e usando Invidious/Piped Proxy...');
+                        break;
+                    }
                 }
             }
 
-            if (fs.existsSync(outputPath)) {
+            // 🌊 FALLBACK FINAL: Tenta baixar via Outro Servidor (Invidious Proxy)
+            this.logger?.info('🚀 Iniciando download via INVIDIOUS PROXY (Bypass IP)...');
+            const invidiousRes = await this._downloadViaInvidiousProxy(metadata.videoId, outputPath, 'audio');
+
+            if (invidiousRes.sucesso && fs.existsSync(outputPath)) {
                 const buffer = await fs.promises.readFile(outputPath);
                 await this.cleanupFile(outputPath);
                 return { sucesso: true, buffer, metadata };
             }
 
-            // Último recurso: ytdl-core
-            this.logger?.warn('⚠️ [LAST RESORT] ytdl-core...');
-            return await this._downloadWithYtdlCore(finalUrl, 'audio', metadata);
+            // 🌊 ÚLTIMO RECURSO: Piped Global
+            const pipedRes = await this._downloadStreamFromPiped(metadata.videoId, outputPath);
+            if (pipedRes.sucesso && fs.existsSync(outputPath)) {
+                const buffer = await fs.promises.readFile(outputPath);
+                await this.cleanupFile(outputPath);
+                return { sucesso: true, buffer, metadata };
+            }
+
+            return { sucesso: false, error: `YouTube bloqueado (IP Railway). Fallbacks também falharam: ${lastError}` };
 
         } catch (error: any) {
             this.logger?.error(`❌ Erro download audio: ${error.message}`);
@@ -198,66 +327,114 @@ class MediaProcessor {
     }
 
     /**
-     * ═══════════════════════════════════════════════════════
-     * DOWNLOAD DE VÍDEO - yt-dlp PURO COM ANTI-BLOQUEIO
-     * ═══════════════════════════════════════════════════════
+     * ═══════════════════════════════════════════════════════════════════════
+     * DOWNLOAD DE VÍDEO - yt-dlp
+     * ═══════════════════════════════════════════════════════════════════════
      */
-    async downloadYouTubeVideo(url: string, quality: string = '720'): Promise<{ sucesso: boolean; buffer?: Buffer; error?: string; metadata?: any }> {
+    async downloadYouTubeVideo(url: string, retryCount: number = 0): Promise<{ sucesso: boolean; buffer?: Buffer; filePath?: string; error?: string; metadata?: any }> {
         try {
-            this.logger?.info(`🎥 Download vídeo: ${url} (qualidade: ${quality})`);
+            this.logger?.info(`🎬 Download vídeo: ${url}`);
 
             const metadata = await this._getYouTubeMetadataSimple(url);
             if (!metadata.sucesso) {
-                if (url.startsWith('http')) return await this._downloadWithYtdlCore(url, 'video');
-                return { sucesso: false, error: 'Metadados não encontrados.' };
+                return { sucesso: false, error: 'Não foi possível encontrar vídeo para esse nome.' };
             }
 
             const finalUrl = metadata.url || url;
             const outputPath = this.generateRandomFilename('mp4');
 
-            // ================================================================
-            // GAMBIARRAS ANTI-BLOQUEIO: Rotação Pura de Clientes (Sem Format Override)
-            // O yt-dlp fará a seleção nativa e juntará tudo em MP4
-            // ================================================================
-            const tentativas = [
-                { cliente: 'android_vr', sleepMs: 0 },
-                { cliente: 'ios', sleepMs: 1500 },
-                { cliente: 'android', sleepMs: 2000 },
-                { cliente: 'web_embedded', sleepMs: 2500 },
-                { cliente: 'tv', sleepMs: 3000 },
-                { cliente: 'ios,android_vr,web,mweb', sleepMs: 3500 } // Super-combo final
-            ];
+            // TENTATIVAS OTIMIZADAS VÍDEO + PO TOKEN
+            const hasPoToken = !!this.config?.YT_PO_TOKEN;
+            const fallbacks: { client: string; useCookies: boolean }[] = hasPoToken
+                ? [
+                    { client: 'android', useCookies: false },
+                    { client: 'ios', useCookies: false },
+                    { client: 'web_creator', useCookies: true },
+                ]
+                : [
+                    { client: 'android', useCookies: false },
+                    { client: 'ios', useCookies: false },
+                ];
 
-            for (let i = 0; i < tentativas.length; i++) {
-                if (fs.existsSync(outputPath)) break;
-                const t = tentativas[i];
-                if (t.sleepMs > 0) await new Promise(r => setTimeout(r, t.sleepMs));
+            let lastError = '';
+            for (let i = 0; i < fallbacks.length; i++) {
+                const fb = fallbacks[i];
+                this.logger?.info(`[VÍDEO] Tentativa ${i + 1}/${fallbacks.length} (client: ${fb.client}, cookies: ${fb.useCookies})...`);
 
-                this.logger?.info(`[VÍDEO ${i + 1}/${tentativas.length}] Cliente: ${t.cliente}`);
                 const cmd = this._buildYtdlpCommand(finalUrl, {
                     type: 'video',
                     output: outputPath,
-                    clientOverride: t.cliente
+                    playerClient: fb.client,
+                    useCookies: fb.useCookies
                 });
+
                 try {
-                    await execAsync(cmd, { timeout: 360000, maxBuffer: 500 * 1024 * 1024 });
+                    this.logger?.debug(`Comando executado: ${cmd.substring(0, 150)}...`);
+                    await execAsync(cmd, { timeout: 300000, maxBuffer: 300 * 1024 * 1024 }); // 5 mins
+
+                    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 50000) { // Vídeo deve ser maior que 50KB
+                        const stats = fs.statSync(outputPath);
+                        if (stats.size > this.config.YT_MAX_SIZE_MB * 1024 * 1024) {
+                            await this.cleanupFile(outputPath);
+                            return { sucesso: false, error: 'O vídeo final excedeu o tamanho máximo permitido.' };
+                        }
+
+                        // Buffer para vídeo (< 50MB) ou filepath
+                        if (stats.size < 50 * 1024 * 1024) {
+                            const buffer = await fs.promises.readFile(outputPath);
+                            await this.cleanupFile(outputPath);
+                            return { sucesso: true, buffer, metadata };
+                        } else {
+                            // Retorna o ficheiro para ser processado via stream se for imenso
+                            return { sucesso: true, filePath: outputPath, metadata };
+                        }
+                    }
                 } catch (e: any) {
-                    const msg = (e.stderr || e.message || '').split('\n')[0];
-                    this.logger?.warn(`⚠️ [${t.cliente}] ${msg.substring(0, 100)}`);
+                    const raw = (e.stderr || e.message || '').toString().trim();
+                    const lines = raw.split('\n').filter(l => l.trim());
+                    const errSummary = lines.slice(-5).join(' | ');
+                    const fullError = raw.substring(0, 500);
+                    this.logger?.warn(`⚠️ yt-dlp erro na tentativa ${i + 1}: ${errSummary}`);
+                    this.logger?.debug(`   Full error: ${fullError}`);
+                    lastError = raw.toLowerCase();
+
+                    // 🚨 GAMBIARRA CRÍTICA: Se o erro for de bot ("Sign in", 403, 429), pula logo para o Invidious/Piped
+                    if (lastError.includes('sign in') || lastError.includes('403') || lastError.includes('429') || lastError.includes('bot')) {
+                        this.logger?.warn('🚫 Bloqueio de bot detectado (Vídeo - 403/429). Usando fallbacks de Proxy...');
+                        break;
+                    }
                 }
             }
 
-            if (fs.existsSync(outputPath)) {
-                const buffer = await fs.promises.readFile(outputPath);
-                await this.cleanupFile(outputPath);
-                return { sucesso: true, buffer, metadata };
+            // 🌊 FALLBACK FINAL VÍDEO: Invidious Proxy
+            this.logger?.info('🚀 Iniciando download VÍDEO via INVIDIOUS PROXY...');
+            const invidiousRes = await this._downloadViaInvidiousProxy(metadata.videoId, outputPath, 'video');
+            if (invidiousRes.sucesso && fs.existsSync(outputPath)) {
+                const stats = fs.statSync(outputPath);
+                if (stats.size < 50 * 1024 * 1024) {
+                    const buffer = await fs.promises.readFile(outputPath);
+                    await this.cleanupFile(outputPath);
+                    return { sucesso: true, buffer, metadata };
+                }
+                return { sucesso: true, filePath: outputPath, metadata };
             }
 
-            // Último recurso: ytdl-core
-            this.logger?.warn('⚠️ [LAST RESORT] ytdl-core...');
-            return await this._downloadWithYtdlCore(finalUrl, 'video', metadata);
+            // 🌊 ÚLTIMO RECURSO: Piped VÍDEO
+            const pipedRes = await this._downloadVideoStreamFromPiped(metadata.videoId, outputPath);
+            if (pipedRes.sucesso && fs.existsSync(outputPath)) {
+                const stats = fs.statSync(outputPath);
+                if (stats.size < 50 * 1024 * 1024) {
+                    const buffer = await fs.promises.readFile(outputPath);
+                    await this.cleanupFile(outputPath);
+                    return { sucesso: true, buffer, metadata };
+                }
+                return { sucesso: true, filePath: outputPath, metadata };
+            }
+
+            return { sucesso: false, error: `Vídeo bloqueado. Fallbacks falharam: ${lastError}` };
 
         } catch (error: any) {
+            this.logger?.error(`❌ Erro download vídeo: ${error.message}`);
             return { sucesso: false, error: error.message };
         }
     }
@@ -431,15 +608,18 @@ class MediaProcessor {
      * Obtém metadados via Invidious API
      */
     private async _getMetadataFromInvidious(videoId: string): Promise<any> {
-        // Instâncias Invidious VERIFICADAS e ATIVAS (Março 2026)
+        // Instâncias Invidious VERIFICADAS e ATIVAS (Abril 2026)
         const invidiousInstances = [
+            'https://inv.tux.pizza',
+            'https://iv.ggtyler.dev',
+            'https://iv.datura.network',
+            'https://inv.bpbonline.co',
+            'https://invidious.fdn.frml.xyz',
+            'https://invidious.lunar.icu',
+            'https://vid.puffyan.us',
+            'https://inv.zzls.xyz',           // Existente
             'https://yewtu.be',
-            'https://inv.nadeko.net',
-            'https://invidious.flokinet.to',
-            'https://yt.artemislena.eu',
-            'https://invidious.privacydev.net',
-            'https://invidious.nerdvpn.de',
-            'https://invidious.v0l.io'
+            'https://invidious.ducks.party'
         ];
 
         for (const instance of invidiousInstances) {
@@ -477,11 +657,12 @@ class MediaProcessor {
      */
     private async _getMetadataFromPiped(videoId: string): Promise<any> {
         const pipedInstances = [
-            'https://pipedapi.kavin.rocks',
-            'https://pipedapi.tokhmi.xyz',
-            'https://pipedapi.syncpundit.io',
-            'https://api.piped.projectsegfau.lt',
-            'https://watchapi.whatever.social'
+            'https://api.piped.yt',                 // Oficial
+            'https://pipedapi.in.projectsegfau.lt',
+            'https://piped-api.privacy.com.de',
+            'https://pi.ppedata.live',
+            'https://pipedapi.adminforge.de',
+            'https://piped.kavin.rocks'
         ];
 
         for (const instance of pipedInstances) {
@@ -524,13 +705,14 @@ class MediaProcessor {
             return { sucesso: false, error: 'videoId não pode ser vazio' };
         }
 
-        // Instâncias Piped VERIFICADAS (Março 2026)
+        // Instâncias Piped VERIFICADAS (Abril 2026)
         const pipedInstances = [
-            'https://pipedapi.kavin.rocks',
-            'https://pipedapi.tokhmi.xyz',
-            'https://pipedapi.syncpundit.io',
-            'https://api.piped.projectsegfau.lt',
-            'https://watchapi.whatever.social'
+            'https://api.piped.yt',
+            'https://pipedapi.in.projectsegfau.lt',
+            'https://piped-api.privacy.com.de',
+            'https://pi.ppedata.live',
+            'https://pipedapi.adminforge.de',
+            'https://piped.kavin.rocks'
         ];
 
         for (const instance of pipedInstances) {
@@ -612,13 +794,14 @@ class MediaProcessor {
             return { sucesso: false, error: 'videoId não pode ser vazio' };
         }
 
-        // Instâncias Piped VERIFICADAS (Março 2026)
+        // Instâncias Piped VERIFICADAS (Abril 2026)
         const pipedInstances = [
-            'https://pipedapi.kavin.rocks',
-            'https://pipedapi.tokhmi.xyz',
-            'https://pipedapi.syncpundit.io',
-            'https://api.piped.projectsegfau.lt',
-            'https://watchapi.whatever.social'
+            'https://api.piped.yt',
+            'https://pipedapi.in.projectsegfau.lt',
+            'https://piped-api.privacy.com.de',
+            'https://pi.ppedata.live',
+            'https://pipedapi.adminforge.de',
+            'https://piped.kavin.rocks'
         ];
 
         for (const instance of pipedInstances) {
@@ -732,14 +915,18 @@ class MediaProcessor {
     ): Promise<{ sucesso: boolean; error?: string }> {
         if (!videoId) return { sucesso: false, error: 'videoId vazio' };
 
-        // Instâncias Invidious com suporte a streaming (Março 2026)
+        // Instâncias Invidious com suporte a streaming (Abril 2026)
         const instances = [
+            'https://inv.tux.pizza',
+            'https://iv.ggtyler.dev',
+            'https://iv.datura.network',
+            'https://inv.bpbonline.co',
+            'https://invidious.fdn.frml.xyz',
+            'https://invidious.lunar.icu',
+            'https://vid.puffyan.us',
+            'https://inv.zzls.xyz',
             'https://yewtu.be',
-            'https://inv.nadeko.net',
-            'https://invidious.flokinet.to',
-            'https://yt.artemislena.eu',
-            'https://invidious.nerdvpn.de',
-            'https://invidious.v0l.io'
+            'https://invidious.ducks.party'
         ];
 
         for (const instance of instances) {
@@ -1079,17 +1266,20 @@ class MediaProcessor {
     /**
      * Download de mídia via Baileys
      */
-    async downloadMedia(message: any, mimeType: string = 'image'): Promise<Buffer | null> {
+    async downloadMedia(message: any, mimeType: string = 'image'): Promise<{ buffer: Buffer; mediaContent: any } | null> {
         try {
             if (!message) {
                 this.logger?.error('❌ Mensagem é null');
                 return null;
             }
 
-            const extractMediaContainer = (msgObj: any): any => {
-                if (!msgObj || typeof msgObj !== 'object') return null;
+            const extractMediaContainer = (msgObj: any, depth: number = 0): any => {
+                if (!msgObj || typeof msgObj !== 'object' || depth > 5) return null;
+
+                // Se encontramos as chaves de mídia, retornamos este objeto
                 if (msgObj.mediaKey && (msgObj.url || msgObj.directPath)) return msgObj;
 
+                // Wrappers conhecidos
                 const wraps = [
                     msgObj.viewOnceMessageV2?.message,
                     msgObj.viewOnceMessageV2Extension?.message,
@@ -1098,20 +1288,25 @@ class MediaProcessor {
                     msgObj.documentWithCaptionMessage?.message,
                     msgObj.editMessage?.message,
                     msgObj.protocolMessage?.editedMessage,
-                    msgObj.message
+                    msgObj.extendedTextMessage?.contextInfo?.quotedMessage,
+                    msgObj.message // Caso a estrutura esteja um nível abaixo
                 ];
 
                 for (const w of wraps) {
                     if (w) {
-                        const found = extractMediaContainer(w);
+                        const found = extractMediaContainer(w, depth + 1);
                         if (found) return found;
                     }
                 }
 
+                // Sub-mensagens específicas
                 const subKeys = ['imageMessage', 'videoMessage', 'stickerMessage', 'audioMessage', 'documentMessage'];
                 for (const k of subKeys) {
                     if (msgObj[k]) {
-                        const found = extractMediaContainer(msgObj[k]);
+                        // Se o objeto em msgObj[k] já tem as chaves, retorna ele
+                        if (msgObj[k].mediaKey) return msgObj[k];
+                        // Senão, aprofunda
+                        const found = extractMediaContainer(msgObj[k], depth + 1);
                         if (found) return found;
                     }
                 }
@@ -1121,7 +1316,7 @@ class MediaProcessor {
 
             const mediaContent = extractMediaContainer(message);
             if (!mediaContent) {
-                this.logger?.error('❌ Mídia não encontrada');
+                this.logger?.error('❌ Mídia não encontrada. Estrutura:', JSON.stringify(message).substring(0, 200));
                 return null;
             }
 
@@ -1186,7 +1381,7 @@ class MediaProcessor {
                 return null;
             }
 
-            return buffer;
+            return { buffer, mediaContent };
         } catch (e: any) {
             this.logger?.error('❌ Erro ao baixar mídia:', e.message);
             return null;
@@ -1286,49 +1481,99 @@ class MediaProcessor {
      * Cria sticker de imagem
      */
     async createStickerFromImage(imageBuffer: Buffer, metadata: any = {}): Promise<any> {
+        const inputPath = this.generateRandomFilename('jpg');
+        const outputPath = this.generateRandomFilename('webp');
+
         try {
-            const inputPath = this.generateRandomFilename('jpg');
-            const outputPath = this.generateRandomFilename('webp');
-
-            await fs.promises.writeFile(inputPath, imageBuffer);
-
             const { packName = 'akira-bot', author = 'Akira-Bot' } = metadata;
-            const videoFilter = 'scale=512:512:flags=lanczos:force_original_aspect_ratio=increase,crop=512:512';
 
-            await new Promise((resolve, reject) => {
-                ffmpeg(inputPath)
-                    .outputOptions([
-                        '-vcodec', 'libwebp',
-                        '-vf', videoFilter,
-                        '-s', '512x512',
-                        '-lossless', '0',
-                        '-compression_level', '4',
-                        '-q:v', '75',
-                        '-preset', 'default',
-                        '-y'
-                    ])
-                    .on('end', () => resolve(void 0))
-                    .on('error', (err) => reject(err))
-                    .save(outputPath);
-            });
+            // ✅ NOVO: Carregar sharp dinamicamente
+            const sharpLib = await loadSharp();
 
-            if (!fs.existsSync(outputPath)) {
-                throw new Error('Arquivo não criado');
+            if (sharpLib) {
+                // ✅ FALLBACK: Usar Sharp em vez de ffmpeg (mais confiável)
+                try {
+                    let processado = sharpLib(imageBuffer);
+
+                    // Redimensionar para 512x512
+                    processado = processado
+                        .resize(512, 512, {
+                            fit: 'cover',
+                            position: 'center'
+                        })
+                        .webp({
+                            lossless: false,
+                            quality: 75,
+                            effort: 6
+                        });
+
+                    const webpBuffer = await processado.toBuffer();
+                    const stickerComMetadados = await this.addStickerMetadata(webpBuffer, packName, author);
+
+                    return {
+                        sucesso: true,
+                        buffer: stickerComMetadados,
+                        tipo: 'sticker_image',
+                        size: stickerComMetadados.length
+                    };
+                } catch (sharpError: any) {
+                    this.logger?.warn(`⚠️ Sharp falhou: ${sharpError.message}, tentando ffmpeg...`);
+                }
             }
 
-            const stickerBuffer = await fs.promises.readFile(outputPath);
-            const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, author);
+            // FALLBACK: Tentar com ffmpeg se sharp falhar ou não estiver disponível
+            await fs.promises.writeFile(inputPath, imageBuffer);
 
-            await this.cleanupFile(inputPath);
-            await this.cleanupFile(outputPath);
+            const videoFilter = 'scale=512:512:flags=lanczos:force_original_aspect_ratio=increase,crop=512:512';
 
-            return {
-                sucesso: true,
-                buffer: stickerComMetadados,
-                tipo: 'sticker_image',
-                size: stickerComMetadados.length
-            };
+            try {
+                await new Promise((resolve, reject) => {
+                    const proc = ffmpeg(inputPath)
+                        .outputOptions([
+                            '-vcodec', 'libwebp',
+                            '-vf', videoFilter,
+                            '-s', '512x512',
+                            '-lossless', '0',
+                            '-compression_level', '4',
+                            '-q:v', '75',
+                            '-preset', 'default',
+                            '-y'
+                        ])
+                        .on('start', (cmd: string) => {
+                            this.logger?.debug(`🎬 ffmpeg cmd: ${cmd}`);
+                        })
+                        .on('end', () => resolve(void 0))
+                        .on('error', (err: any) => {
+                            this.logger?.error(`❌ ffmpeg error: ${err.message}`);
+                            reject(err);
+                        })
+                        .save(outputPath);
+                });
+
+                if (!fs.existsSync(outputPath)) {
+                    throw new Error('Arquivo não criado pelo ffmpeg');
+                }
+
+                const stickerBuffer = await fs.promises.readFile(outputPath);
+                const stickerComMetadados = await this.addStickerMetadata(stickerBuffer, packName, author);
+
+                await this.cleanupFile(inputPath);
+                await this.cleanupFile(outputPath);
+
+                return {
+                    sucesso: true,
+                    buffer: stickerComMetadados,
+                    tipo: 'sticker_image',
+                    size: stickerComMetadados.length
+                };
+            } catch (ffmpegError: any) {
+                this.logger?.error(`❌ ffmpeg também falhou: ${ffmpegError.message}`);
+                await this.cleanupFile(inputPath);
+                await this.cleanupFile(outputPath);
+                throw ffmpegError;
+            }
         } catch (error: any) {
+            this.logger?.error(`❌ Erro ao criar sticker: ${error.message}`);
             return { sucesso: false, error: error.message };
         }
     }
@@ -1530,19 +1775,23 @@ class MediaProcessor {
             let mimeType = '';
 
             if (hasImage) {
-                buffer = await this.downloadMedia(target.imageMessage, 'image');
+                const res = await this.downloadMedia(target.imageMessage, 'image');
+                buffer = res?.buffer || null;
                 tipo = 'image';
                 mimeType = target.imageMessage.mimetype || 'image/jpeg';
             } else if (hasVideo) {
-                buffer = await this.downloadMedia(target.videoMessage, 'video');
+                const res = await this.downloadMedia(target.videoMessage, 'video');
+                buffer = res?.buffer || null;
                 tipo = 'video';
                 mimeType = target.videoMessage.mimetype || 'video/mp4';
             } else if (hasAudio) {
-                buffer = await this.downloadMedia(target.audioMessage, 'audio');
+                const res = await this.downloadMedia(target.audioMessage, 'audio');
+                buffer = res?.buffer || null;
                 tipo = 'audio';
                 mimeType = target.audioMessage.mimetype || 'audio/mpeg';
             } else if (hasSticker) {
-                buffer = await this.downloadMedia(target.stickerMessage, 'sticker');
+                const res = await this.downloadMedia(target.stickerMessage, 'sticker');
+                buffer = res?.buffer || null;
                 tipo = 'sticker';
                 mimeType = target.stickerMessage.mimetype || 'image/webp';
             }
