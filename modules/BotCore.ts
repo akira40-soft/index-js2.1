@@ -517,8 +517,10 @@ class BotCore {
                 this.presenceSimulator.simulateTicks(m, false, ehGrupo).catch(() => { });
             }
 
-            const nome = m.pushName || 'Usuário';
-            const numeroReal = numero;
+            const nome = await this._resolveUserName(m, numero, remoteJid);
+            // 🔧 CRITICAL FIX: Normalize number to pure digits, removing 'lid_' prefix or any other suffix
+            // Garante que numeroReal é sempre apenas dígitos puros, sem prefixos ou sufixos
+            const numeroReal = JidUtils.normalizeUserNumber(numero) || 'desconhecido';
             const conversaType = conversationType;
 
             if (shouldLog) {
@@ -540,6 +542,18 @@ class BotCore {
             const textoFinal = texto || caption;
             const isCommand = this.messageProcessor.isCommand(textoFinal);
 
+            // ═══ FILTRO DE ÁUDIO EM GRUPO ═══
+            // Em grupos, áudios SEM reply ao bot são completamente ignorados:
+            // não transcrevemos, não gastamos tokens Deepgram, não contamos rate limit.
+            // A única forma de ativar a Akira via áudio no grupo é mandar o áudio em REPLY a ela.
+            if (temAudio && ehGrupo) {
+                const ehReplyAoBotParaAudio = !!replyInfo?.ehRespostaAoBot;
+                if (!ehReplyAoBotParaAudio) {
+                    this.logger.debug(`⏭️ [ÁUDIO GRUPO IGNORADO] ${nome}: áudio sem reply ao bot`);
+                    return;
+                }
+            }
+
             if (shouldLog) this.logger.debug(`🔹 [PIPELINE] txt=${!!texto} img=${temImagem} aud=${temAudio} sticker=${temSticker}`);
 
             if (ehGrupo && this.moderationSystem?.isMuted(remoteJid, participant)) {
@@ -559,11 +573,13 @@ class BotCore {
             // ✅ XP para TODA mensagem em grupo ANTES do return ou processamento da IA
             if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem &&
                 this.groupManagement?.groupSettings[remoteJid]?.leveling) {
-                const xpResult = this.levelSystem.awardXp(remoteJid, numeroReal, 10);
+                // 🔧 Garantir que numeroReal é limpo sem 'lid_' prefix
+                const numeroLimpoXP = JidUtils.cleanPhoneNumber(numeroReal) || numeroReal;
+                const xpResult = this.levelSystem.awardXp(remoteJid, numeroLimpoXP, 10);
                 if (xpResult?.leveled) {
                     this.logger.info(`🎉 [LEVEL UP] ${nome} → Nível ${xpResult.rec?.level}!`);
                     this.sock.sendMessage(remoteJid, {
-                        text: `🎉 *@${numeroReal}* subiu para o *Nível ${xpResult.rec?.level}*! 🏆`,
+                        text: `🎉 *@${numeroLimpoXP}* subiu para o *Nível ${xpResult.rec?.level}*! 🏆`,
                         mentions: [m.key.participant || remoteJid]
                     }).catch(() => { });
                 } else {
@@ -572,7 +588,20 @@ class BotCore {
             }
 
             if (!deveResponder) {
-                this.logger.debug(`⏭️ [IGNORADO] ${nome}: "${textoFinal.substring(0, 50)}" (genérico${ehGrupo ? ' em grupo' : ''})`);
+                if (ehGrupo) {
+                    this.logger.debug(`⏭️ [ESCUTA GRUPO] ${nome}: "${textoFinal.substring(0, 50)}"`);
+                    const grupoNome = remoteJid.split('@')[0] || 'Grupo Desconhecido';
+                    this.apiClient.listenMessage({
+                        usuario: nome,
+                        numero: numeroReal,
+                        mensagem: textoFinal,
+                        tipo_conversa: 'grupo',
+                        grupo_id: remoteJid,
+                        grupo_nome: grupoNome
+                    }).catch(() => { });
+                } else {
+                    this.logger.debug(`⏭️ [IGNORADO] ${nome}: "${textoFinal.substring(0, 50)}" (genérico${ehGrupo ? ' em grupo' : ''})`);
+                }
                 return;
             }
 
@@ -622,7 +651,10 @@ class BotCore {
                 }
                 await this.handleImageMessage(m, nome, numeroReal, replyInfo, ehGrupo);
             } else if (temAudio) {
-                await this.handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo);
+                // ═══ LÓGICA DE ÁUDIO ═══
+                // Grupo: chegou aqui = já passou pelo filtro acima (= reply ao bot) → sempre ativa áudio
+                // PV: qualquer áudio ativa STT + TTS
+                await this.handleAudioMessage(m, nome, numeroReal, replyInfo, ehGrupo, true);
             } else {
                 // Se for texto ou qualquer outra msg com texto (sticker com legenda, etc)
                 await this.handleTextMessage(m, nome, numeroReal, texto || caption, replyInfo, ehGrupo);
@@ -635,7 +667,8 @@ class BotCore {
     async handleImageMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean): Promise<void> {
         this.logger.info(`🖼️ [IMAGEM] ${nome}`);
         if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem && this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
-            const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 15);
+            const numeroLimpoXP = JidUtils.cleanPhoneNumber(numeroReal) || numeroReal;
+            const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroLimpoXP, 15);
             if (xp) this.logger.info(`📈 [LEVEL] ${nome} +15 XP`);
         }
 
@@ -711,7 +744,8 @@ class BotCore {
                 reply_metadata: replyInfo ? {
                     is_reply: replyInfo.isReply || true,
                     reply_to_bot: replyInfo.ehRespostaAoBot,
-                    quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido'
+                    quoted_author_name: await this.resolveAuthorName(replyInfo.participantJidCitado, m.key.remoteJid),
+                    quoted_author_numero: replyInfo.quotedAuthorNumero || 'desconhecido'
                 } : null
             });
 
@@ -762,28 +796,53 @@ class BotCore {
         }
     }
 
-    async handleAudioMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean): Promise<void> {
-        this.logger.info(`🎤 [ÁUDIO] ${nome}`);
+    async handleAudioMessage(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean, ativarRespostaEmAudio: boolean = true): Promise<void> {
+        this.logger.info(`🎤 [ÁUDIO] ${nome} | grupo=${ehGrupo} | responderEmAudio=${ativarRespostaEmAudio}`);
         try {
             this.logger.debug('⬇️ Baixando áudio...');
             const result = await this.mediaProcessor.downloadMedia(m.message, 'audio');
-            await this.handleAudioMessage_internal(m, nome, numeroReal, replyInfo, ehGrupo, result?.buffer || null);
+            await this.handleAudioMessage_internal(m, nome, numeroReal, replyInfo, ehGrupo, result?.buffer || null, ativarRespostaEmAudio);
         } catch (error: any) {
             this.logger.error('❌ Erro áudio:', error.message);
         }
     }
 
-    async handleAudioMessage_internal(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean, audioBuffer: Buffer | null): Promise<void> {
+    async handleAudioMessage_internal(m: any, nome: string, numeroReal: string, replyInfo: any, ehGrupo: boolean, audioBuffer: Buffer | null, ativarRespostaEmAudio: boolean = true): Promise<void> {
         try {
             if (!audioBuffer) { this.logger.error('❌ Buffer áudio vazio'); return; }
 
-            const transcricao = await this.mediaProcessor.transcribeAudio(audioBuffer);
-            if (!transcricao.sucesso) { this.logger.warn('⚠️ Falha transcrição'); return; }
+            const jid = m.key.remoteJid;
+
+            // ═══ STATUS: "Gravando áudio" durante a transcrição (Deepgram) ═══
+            // O WhatsApp mostra "gravando áudio..." enquanto ouvimos/transcrevemos
+            if (this.presenceSimulator) {
+                this.presenceSimulator.startRecordingLoop(jid).catch(() => { });
+            }
+
+            // Marca como lido (ticks azuis) antes de transcrever
+            if (this.presenceSimulator) {
+                this.presenceSimulator.simulateTicks(m, true, ehGrupo).catch(() => { });
+            }
+
+            this.logger.info('🎧 Transcrevendo áudio com Deepgram...');
+            const transcricao = await this.audioProcessor.speechToText(audioBuffer);
+
+            // Para o "recording" após STT concluir (handleTextMessage inicia o próprio loop de TTS)
+            if (this.presenceSimulator) {
+                await this.presenceSimulator.stop(jid);
+            }
+
+            if (!transcricao.sucesso) {
+                this.logger.warn('⚠️ Falha transcrição'); return;
+            }
 
             this.logger.info(`📝 Transcrição: ${transcricao.texto.substring(0, 80)}`);
-            await this.handleTextMessage(m, nome, numeroReal, transcricao.texto, replyInfo, ehGrupo, true);
+
+            // foiAudio=ativarRespostaEmAudio: handleTextMessage sabe se deve responder em voz
+            await this.handleTextMessage(m, nome, numeroReal, transcricao.texto, replyInfo, ehGrupo, ativarRespostaEmAudio);
         } catch (error: any) {
             this.logger.error('❌ Erro áudio interno:', error.message);
+            if (this.presenceSimulator) await this.presenceSimulator.stop(m.key.remoteJid).catch(() => { });
         }
     }
 
@@ -822,7 +881,8 @@ class BotCore {
                         // XP para comandos em grupos com leveling
                         if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem &&
                             this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
-                            const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 5);
+                            const numeroLimpoXP = JidUtils.cleanPhoneNumber(numeroReal) || numeroReal;
+                            const xp = this.levelSystem.awardXp(m.key.remoteJid, numeroLimpoXP, 5);
                             if (xp) this.logger.info(`📈 [LEVEL] ${nome} +5 XP (comando)`);
                         }
                         return; // COMANDO PROCESSADO ✓
@@ -837,7 +897,8 @@ class BotCore {
             // (deve ser ANTES do deveResponder para contar msgs comuns do grupo)
             if (ehGrupo && this.config.FEATURE_LEVELING && this.levelSystem &&
                 this.groupManagement?.groupSettings[m.key.remoteJid]?.leveling) {
-                const xpResult = this.levelSystem.awardXp(m.key.remoteJid, numeroReal, 10);
+                const numeroLimpoXP = JidUtils.cleanPhoneNumber(numeroReal) || numeroReal;
+                const xpResult = this.levelSystem.awardXp(m.key.remoteJid, numeroLimpoXP, 10);
                 if (xpResult?.leveled) {
                     this.logger.info(`🎉 [LEVEL UP] ${nome} você foi elevado ao nível ${xpResult.rec?.level}!`);
                     // Notifica o grupo sobre o level up
@@ -864,7 +925,7 @@ class BotCore {
             const replyMetadata = replyInfo ? {
                 is_reply: replyInfo.isReply || true,
                 reply_to_bot: replyInfo.ehRespostaAoBot,
-                quoted_author_name: replyInfo.quemEscreveuCitacao || 'desconhecido',
+                quoted_author_name: await this.resolveAuthorName(replyInfo.participantJidCitado, m.key.remoteJid),
                 quoted_author_numero: replyInfo.quotedAuthorNumero || 'desconhecido',
                 quoted_type: replyInfo.quotedType || 'texto',
                 quoted_text_original: replyInfo.quotedTextOriginal || '',
@@ -915,23 +976,38 @@ class BotCore {
             const resposta = resultado.resposta || 'Sem resposta';
 
             if (foiAudio) {
-                this.logger.info('🎤 [AUDIO RESPONSE]');
-                if (this.presenceSimulator) await this.presenceSimulator.simulateRecording(m.key.remoteJid, 2000);
+                this.logger.info('🎤 [AUDIO RESPONSE] Gerando voz com ElevenLabs...');
+
+                // ═══ INICIA "Gravando áudio..." EM PARALELO com o ElevenLabs ═══
+                // O status fica ativo durante TODO o processamento do TTS (pode demorar 2-5s)
+                // e só para EXATAMENTE quando o áudio for enviado.
+                if (this.presenceSimulator) {
+                    this.presenceSimulator.startRecordingLoop(m.key.remoteJid).catch(() => { });
+                }
+
                 try {
+                    // TTS roda enquanto o status "Gravando..." já está ativo
                     const tts = await this.audioProcessor.textToSpeech(resposta);
                     const bufferValid = tts?.buffer && Buffer.isBuffer(tts.buffer) && tts.buffer.length > 0;
+
+                    // Para o loop de "Gravando..." ANTES de enviar
+                    if (this.presenceSimulator) await this.presenceSimulator.stop(m.key.remoteJid);
+
                     if (!tts.sucesso || !bufferValid) {
-                        this.logger.warn('⚠️ Falha TTS', tts?.error || tts?.message || 'sem buffer de áudio');
-                        if (this.presenceSimulator) await this.presenceSimulator.stop(m.key.remoteJid);
+                        this.logger.warn('⚠️ Falha TTS — enviando texto como fallback', tts?.error || 'sem buffer');
                         await this.sock.sendMessage(m.key.remoteJid, { text: resposta }, { quoted: m });
                     } else {
-                        this.logger.info('📤 Voice Note...');
-                        if (this.presenceSimulator) await this.presenceSimulator.stop(m.key.remoteJid);
-                        await this.sock.sendMessage(m.key.remoteJid, {
-                            audio: tts.buffer,
-                            mimetype: tts.mimetype || 'audio/ogg; codecs=opus',
-                            ptt: true
-                        }, { quoted: m });
+                        this.logger.info(`📤 Voice Note — ${tts.fonte || 'TTS'} (${tts.size} bytes)`);
+                        // Envia o áudio SEMPRE em reply ao usuário
+                        await this.sock.sendMessage(
+                            m.key.remoteJid,
+                            {
+                                audio: tts.buffer,
+                                mimetype: tts.mimetype || 'audio/ogg; codecs=opus',
+                                ptt: true   // voice note
+                            },
+                            { quoted: m }   // sempre reply
+                        );
                     }
                 } catch (err: any) {
                     this.logger.error(`❌ Erro TTS: ${err.message}`);
@@ -1003,6 +1079,67 @@ class BotCore {
         }
     }
 
+    /**
+     * Resolve nome real do usuário.
+     * Em grupo com Cloud MD, m.pushName pode vir vazio ou genérico.
+     * Tentamos groupMetadata participants lookup como fallback.
+     */
+    /**
+     * Resolve nome real do usuário a partir de um JID.
+     * Útil para mensagens diretas e para identificar autores em replies.
+     */
+    private async resolveAuthorName(jid: string, remoteJid: string): Promise<string> {
+        if (!jid || jid === 'desconhecido') return 'Usuário';
+
+        // 1. Verificar se é o próprio bot
+        const botJid = JidUtils.normalize(this.sock?.user?.id);
+        if (JidUtils.normalize(jid) === botJid) {
+            return this.config.BOT_NAME || 'Akira';
+        }
+
+        // 2. Se for grupo, tentar buscar nos metadados (participantes)
+        const isGroup = remoteJid.endsWith('@g.us');
+        if (isGroup && this.sock) {
+            try {
+                const metadata = await this.sock.groupMetadata(remoteJid);
+                const member = metadata.participants.find((p: any) => JidUtils.normalize(p.id) === JidUtils.normalize(jid));
+                if (member && member.notify && member.notify !== 'undefined' && member.notify !== '~') {
+                    return member.notify;
+                }
+                if (member && member.name) {
+                    return member.name;
+                }
+            } catch (e: any) {
+                this.logger?.debug(`⚠️ [NAME] Falha ao resolver nome no grupo: ${e.message}`);
+            }
+        }
+
+        // 3. Fallback: onWhatsApp (apenas para números reais, não LIDs)
+        if (this.sock && !jid.includes('@lid') && jid.includes('@s.whatsapp.net')) {
+            try {
+                const onWp = await this.sock.onWhatsApp(jid);
+                if (onWp && Array.isArray(onWp) && onWp.length > 0 && onWp[0].notify) {
+                    return onWp[0].notify;
+                }
+            } catch (e: any) {
+                this.logger?.debug(`⚠️ [NAME] Falha no onWhatsApp: ${e.message}`);
+            }
+        }
+
+        return 'Usuário';
+    }
+
+    private async _resolveUserName(m: any, numero: string, remoteJid: string): Promise<string> {
+        // Prioridade 1: pushName da mensagem direta (mais rápido)
+        const pushName = m.pushName;
+        if (pushName && pushName !== 'Usuário' && pushName.trim().length > 0) {
+            return pushName;
+        }
+
+        // Prioridade 2: Usar o resolver genérico
+        return await this.resolveAuthorName(m.key.participant || m.key.remoteJid, remoteJid);
+    }
+
     async handleViolation(m: any, tipo: string, limitStatus?: any): Promise<void> {
         if (!this.sock) return;
         const jid = m.key.remoteJid;
@@ -1013,15 +1150,21 @@ class BotCore {
         this.logger.warn(`🚫 [VIOLAÇÃO] ${tipo} de ${participant} (${nome})`);
 
         try {
-            // 1. Deletar mensagem
+            // 1. Deletar mensagem (isolado para não quebrar o resto se falhar)
             await this.sock.sendMessage(jid, { delete: m.key });
+        } catch (delError: any) {
+            this.logger.debug(`Não foi possível deletar a mensagem (bot pode não ser admin): ${delError.message}`);
+        }
 
+        try {
             // 2. Notificar e agir com base no tipo
             if (tipo === 'link') {
                 await this.sock.sendMessage(jid, {
-                    text: `🚫 *ANTILINK* 🚫\n\n@${numeroReal}, links não são permitidos neste grupo.`,
+                    text: `🚫 *ANTILINK* 🚫\n\n@${numeroReal}, links não são permitidos neste grupo! Você será removido.`,
                     mentions: [participant]
                 });
+                // Remove o usuário infrator do grupo
+                await this.sock.groupParticipantsUpdate(jid, [participant], 'remove');
             } else if (tipo === 'mute') {
                 await this.sock.sendMessage(jid, { text: `🚫 *${nome} removido por falar durante o silenciamento!*` });
                 await this.sock.groupParticipantsUpdate(jid, [participant], 'remove');
@@ -1089,12 +1232,19 @@ class BotCore {
         // 3. Responde ao nome público do bot (qualquer um pode chamar)
         if (textoLower.includes(botName)) return true;
 
-        // 4. ✅ BUG FIX: 'Morena'/'Morema' é EXCLUSIVO do Dono
-        // Não-donos que usam 'morena' no texto são completamente ignorados
+        // 4. ✅ APELIDOS DE ATIVAÇÃO: Exclusivos do Dono
+        // Se o remetente for o dono, verifica se algum dos apelidos de ativação está no texto
         const isOwner = typeof this.config?.isDono === 'function'
             ? this.config.isDono(numeroRemetente, nomeRemetente)
             : false;
-        if ((textoLower.includes('morena') || textoLower.includes('morema')) && isOwner) return true;
+
+        if (isOwner && Array.isArray(this.config.DONO_APELIDOS)) {
+            const hasAlias = this.config.DONO_APELIDOS.some((alias: string) => textoLower.includes(alias.toLowerCase()));
+            if (hasAlias) {
+                this.logger.debug(`🎯 [ATIVAÇÃO] Dono chamou por apelido: "${texto.substring(0, 30)}"`);
+                return true;
+            }
+        }
 
         // 5. Se for reply a outra pessoa no grupo, ignora
         if (replyInfo?.isReply && !replyInfo?.ehRespostaAoBot) return false;

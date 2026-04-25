@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ═══════════════════════════════════════════════════════════════════════
  * CLASSE: ModerationSystem (VERSÃO COM SEGURANÇA MILITAR)
  * ═══════════════════════════════════════════════════════════════════════
@@ -13,6 +13,7 @@
 import ConfigManager from './ConfigManager.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import JidUtils from './JidUtils.js';
 
 class ModerationSystem {
     private config: any;
@@ -31,33 +32,36 @@ class ModerationSystem {
     private maxAttemptsBeforeBlacklist: number;
     private warnings: Map<string, any>;
     private antiFakeGroups: Set<string>;
+    private antiFakeExceptions: Map<string, string[]>; // groupId -> [allowlisted DDDs]
     private antiImageGroups: Set<string>;
     private antiStickerGroups: Set<string>;
     private warningsPath: string;
     private antiFakePath: string;
+    private antiFakeExceptionsPath: string;
     private antiImagePath: string;
     private antiStickerPath: string;
-    private HOURLY_LIMIT: number;
-    private HOURLY_WINDOW_MS: number;
+    private antiLinkExceptions: Map<string, string[]>; // groupId -> [userNumbers]
+    private antiLinkExceptionsPath: string;
     private SPAM_THRESHOLD: number;
     private SPAM_WINDOW_MS: number;
     private enableDetailedLogging: boolean;
     private qrTimeout: any;
+    private lidMap: Map<string, string>; // {lid} -> {realJid}
+    public sock: any;
 
     constructor(logger: any = null) {
         this.config = ConfigManager.getInstance();
         this.logger = logger || console;
 
-        // ═══════════════════════════════════════════════════════════════════════
-        // HF SPACES: Usar /tmp para garantir permissões de escrita
-        // ═══════════════════════════════════════════════════════════════════════
+        // Usar DATABASE_FOLDER do ConfigManager para persistência local
+        const basePath = this.config.DATABASE_FOLDER || './database';
 
-        this.blacklistPath = '/tmp/akira_data/datauser/blacklist.json';
+        this.blacklistPath = path.join(basePath, 'datauser', 'blacklist.json');
 
         // ═══ ESTRUTURAS DE DADOS ═══
         this.mutedUsers = new Map(); // {groupId_userId} -> {expires, mutedAt, minutes}
         this.antiLinkGroups = new Set(); // groupIds com anti-link ativo
-        this.antiLinkPath = '/tmp/akira_data/data/antilink.json';
+        this.antiLinkPath = path.join(basePath, 'data', 'antilink.json');
 
         this.muteCounts = new Map(); // {groupId_userId} -> {count, lastMuteDate}
         this.bannedUsers = new Map(); // {userId} -> {reason, bannedAt, expiresAt}
@@ -72,25 +76,34 @@ class ModerationSystem {
         // ═══ SISTEMA DE AVISOS E FILTROS ADICIONAIS ═══
         this.warnings = new Map();
         this.antiFakeGroups = new Set();
+        this.antiFakeExceptions = new Map();
         this.antiImageGroups = new Set();
         this.antiStickerGroups = new Set();
 
         // Persistência
-        this.warningsPath = '/tmp/akira_data/data/warnings.json';
-        this.antiFakePath = '/tmp/akira_data/data/antifake.json';
-        this.antiImagePath = '/tmp/akira_data/data/antiimage.json';
-        this.antiStickerPath = '/tmp/akira_data/data/antisticker.json';
+        this.warningsPath = path.join(basePath, 'data', 'warnings.json');
+        this.antiFakePath = path.join(basePath, 'data', 'antifake.json');
+        this.antiFakeExceptionsPath = path.join(basePath, 'data', 'antifake_exceptions.json');
+        this.antiImagePath = path.join(basePath, 'data', 'antiimage.json');
+        this.antiStickerPath = path.join(basePath, 'data', 'antisticker.json');
+        this.antiLinkExceptions = new Map();
+        this.antiLinkExceptionsPath = path.join(basePath, 'data', 'antilink_exceptions.json');
 
         this._loadAllSettings();
 
         // ═══ CONSTANTES ANTIGAS ═══
-        this.HOURLY_LIMIT = 300;
-        this.HOURLY_WINDOW_MS = 60 * 60 * 1000;
         this.SPAM_THRESHOLD = 3;
         this.SPAM_WINDOW_MS = 3000;
 
+        // ═══ MAPEAMENTO DE IDENTIDADE (LID -> PN) ═══
+        this.lidMap = new Map();
+
         // ═══ LOG DETALHADO ═══
         this.enableDetailedLogging = true;
+    }
+
+    public setSocket(sock: any): void {
+        this.sock = sock;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -484,6 +497,41 @@ class ModerationSystem {
         return this.antiLinkGroups.has(groupId);
     }
 
+    public isUserExcepted(groupId: string, userId: string): boolean {
+        const exceptions = this.antiLinkExceptions.get(groupId) || [];
+        // Normaliza o userId para pegar apenas o número
+        const numericId = JidUtils.getNumber(userId) || userId.replace(/\D/g, '');
+        return exceptions.includes(numericId) || exceptions.includes(userId);
+    }
+
+    public addAntiLinkException(groupId: string, userId: string): void {
+        const numericId = JidUtils.getNumber(userId) || userId.replace(/\D/g, '');
+        const current = this.antiLinkExceptions.get(groupId) || [];
+        if (!current.includes(numericId)) {
+            current.push(numericId);
+            this.antiLinkExceptions.set(groupId, current);
+            this._saveAllSettings();
+        }
+    }
+
+    public removeAntiLinkException(groupId: string, userId: string): boolean {
+        const numericId = JidUtils.getNumber(userId) || userId.replace(/\D/g, '');
+        const current = this.antiLinkExceptions.get(groupId) || [];
+        const index = current.indexOf(numericId);
+        if (index >= 0) {
+            current.splice(index, 1);
+            if (current.length === 0) this.antiLinkExceptions.delete(groupId);
+            else this.antiLinkExceptions.set(groupId, current);
+            this._saveAllSettings();
+            return true;
+        }
+        return false;
+    }
+
+    public getAntiLinkExceptions(groupId: string): string[] {
+        return this.antiLinkExceptions.get(groupId) || [];
+    }
+
     // ═══ SISTEMA DE AVISOS ═══
     public addWarning(groupId: string, userId: string, reason: string = 'No reason'): number {
         const key = `${groupId}_${userId}`;
@@ -506,7 +554,7 @@ class ModerationSystem {
         this._saveAllSettings();
     }
 
-    // ═══ ANTI-FAKE (+244) ═══
+    // ═══ ANTI-FAKE (DDDs permitidos, padrão +244 Angola) ═══
     public toggleAntiFake(groupId: string, enable: boolean = true): boolean {
         if (enable) this.antiFakeGroups.add(groupId);
         else this.antiFakeGroups.delete(groupId);
@@ -518,9 +566,118 @@ class ModerationSystem {
         return this.antiFakeGroups.has(groupId);
     }
 
-    public isFakeNumber(userId: string): boolean {
-        // Formato esperado: 244XXXXXXXXX@s.whatsapp.net
-        return !userId.startsWith('244');
+    /**
+     * Registra um mapeamento entre LID e JID real (Número de Telefone)
+     */
+    public updateLidMapping(lid: string, realJid: string): void {
+        if (!lid || !realJid) return;
+        const cleanLid = lid.split(':')[0];
+        const cleanReal = realJid.split(':')[0];
+        if (cleanLid.includes('@lid') && cleanReal.includes('@s.whatsapp.net')) {
+            this.lidMap.set(cleanLid, cleanReal);
+            this.logger.debug(`[ModerationSystem] Mapeamento atualizado: ${cleanLid} -> ${cleanReal}`);
+        }
+    }
+
+    /**
+     * Tenta resolver um JID (que pode ser um LID) para o seu número real (JID)
+     */
+    public resolveRealJid(jid: string): string {
+        if (!jid) return '';
+        const cleanJid = jid.split(':')[0];
+
+        // Se já for um JID de telefone, retorna ele mesmo
+        if (cleanJid.includes('@s.whatsapp.net')) return cleanJid;
+
+        // Se for um LID, tenta buscar no mapa
+        if (cleanJid.includes('@lid')) {
+            return this.lidMap.get(cleanJid) || cleanJid;
+        }
+
+        return cleanJid;
+    }
+
+    /**
+     * Verifica se um número é "fake" (DDD não permitido).
+     * Em ambiente cloud MD, o userId pode vir como LID (ex: 123xxx@lid),
+     * então extraímos apenas os dígitos e verificamos o DDD.
+     */
+    public isFakeNumber(userId: string, groupId?: string): boolean {
+        // ✅ TRAVA DE SEGURANÇA: Ignorar LIDs (IDs de Privacidade)
+        // LIDs não seguem o padrão de DDI e causam expulsão injusta.
+        if (userId.includes('@lid') || userId.startsWith('lid_')) {
+            this.logger.debug(`[ANTI-FAKE] Ignorando LID por segurança: ${userId}`);
+            return false;
+        }
+
+        // Limpa @ e mantém só dígitos
+        const rawNumber = userId.replace(/[@a-z._:-]/gi, '');
+        const ddd = rawNumber.substring(0, 3); // ex: "244"
+
+        // Sempre permitir: extrai o DDD completo (pode ter 3-4 dígitos)
+        const fullDdd = this._extractDdd(rawNumber);
+        if (!fullDdd) return false; // Se não tem número, não é fake
+
+        // DDDs padrão: Angola (244)
+        const allowedDdds = ['244'];
+
+        // Adiciona exceções do grupo se ativo
+        if (groupId) {
+            const groupExceptions = this.antiFakeExceptions.get(groupId) || [];
+            for (const ddd of groupExceptions) {
+                if (!allowedDdds.includes(ddd)) allowedDdds.push(ddd);
+            }
+        }
+
+        // Verifica se o DDD é permitido
+        return !allowedDdds.includes(fullDdd);
+    }
+
+    /**
+     * Adiciona DDD à lista de exceções de um grupo
+     */
+    public addAntiFakeException(groupId: string, ddd: string): void {
+        const current = this.antiFakeExceptions.get(groupId) || [];
+        if (!current.includes(ddd)) {
+            current.push(ddd);
+            this.antiFakeExceptions.set(groupId, current);
+            this._saveAllSettings();
+        }
+    }
+
+    /**
+     * Remove DDD da lista de exceções de um grupo
+     */
+    public removeAntiFakeException(groupId: string, ddd: string): void {
+        const current = this.antiFakeExceptions.get(groupId) || [];
+        const idx = current.indexOf(ddd);
+        if (idx >= 0) {
+            current.splice(idx, 1);
+            if (current.length === 0) this.antiFakeExceptions.delete(groupId);
+            else this.antiFakeExceptions.set(groupId, current);
+            this._saveAllSettings();
+        }
+    }
+
+    /**
+     * Retorna DDDs permitidos extras para um grupo
+     */
+    public getAntiFakeExceptions(groupId: string): string[] {
+        return this.antiFakeExceptions.get(groupId) || [];
+    }
+
+    /**
+     * Extrai o DDD (código de país) de um número de telefone
+     */
+    private _extractDdd(phoneNumber: string): string {
+        // Tentativa de detecção de DDD com base em padrões conhecidos
+        // 244 (Angola), 55 (Brasil - 2 dígitos), demais...
+        const threeDigitCodes = ['244', '245', '246', '247', '248', '249'];
+        if (threeDigitCodes.some(code => phoneNumber.startsWith(code))) {
+            return phoneNumber.substring(0, 3);
+        }
+        // Assume 2 dígitos para os restantes (ex: 55 BR)
+        return phoneNumber.substring(0, 2);
     }
 
     public toggleAntiImage(groupId: string, enable: boolean = true): boolean {
@@ -548,16 +705,20 @@ class ModerationSystem {
     private _loadAllSettings(): void {
         this._loadSettingsSet(this.antiLinkPath, this.antiLinkGroups);
         this._loadSettingsSet(this.antiFakePath, this.antiFakeGroups);
+        this._loadSettingsMap(this.antiFakeExceptionsPath, this.antiFakeExceptions);
         this._loadSettingsSet(this.antiImagePath, this.antiImageGroups);
         this._loadSettingsSet(this.antiStickerPath, this.antiStickerGroups);
+        this._loadSettingsMap(this.antiLinkExceptionsPath, this.antiLinkExceptions);
         this._loadSettingsMap(this.warningsPath, this.warnings);
     }
 
     private _saveAllSettings(): void {
         this._saveSettingsSet(this.antiLinkPath, this.antiLinkGroups);
         this._saveSettingsSet(this.antiFakePath, this.antiFakeGroups);
+        this._saveSettingsMap(this.antiFakeExceptionsPath, this.antiFakeExceptions);
         this._saveSettingsSet(this.antiImagePath, this.antiImageGroups);
         this._saveSettingsSet(this.antiStickerPath, this.antiStickerGroups);
+        this._saveSettingsMap(this.antiLinkExceptionsPath, this.antiLinkExceptions);
         this._saveSettingsMap(this.warningsPath, this.warnings);
     }
 
@@ -607,9 +768,10 @@ class ModerationSystem {
     public checkLink(text: string, groupId: string, userId: string, isAdmin: boolean = false): boolean {
         if (!this.isAntiLinkActive(groupId)) return false;
         if (isAdmin) return false; // Admins podem enviar links
+        if (this.isUserExcepted(groupId, userId)) return false; // Usuários confiáveis também!
 
-        // Regex robusto para links (http, www, wa.me, t.me, IPs)
-        const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(bit\.ly\/[^\s]+)|(t\.me\/[^\s]+)|(wa\.me\/[^\s]+)|(chat\.whatsapp\.com\/[^\s]+)|(\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)/gi;
+        // Regex extremamente agressivo para links (http, www, domínios puros, wa.me, t.me, IPs)
+        const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-zA-Z0-9-]{2,}\.[a-zA-Z]{2,}(\.[a-zA-Z]{2,})?(\/[^\s]*)?)|(bit\.ly\/[^\s]+)|(t\.me\/[^\s]+)|(wa\.me\/[^\s]+)|(chat\.whatsapp\.com\/[^\s]+)|(discord\.gg\/[^\s]+)|(\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)/gi;
 
         const hasLink = linkRegex.test(text);
 
@@ -702,10 +864,13 @@ class ModerationSystem {
     * Verifica se usuário está na blacklist
     */
     public isBlacklisted(userId: string): boolean {
+        const numericId = JidUtils.getNumber(userId);
+        // Para LIDs como lid_123456 ou user@lid, extrai apenas dígitos
+        const digitsOnly = userId.replace(/\D/g, '');
         const list = this.loadBlacklistDataSync();
         if (!Array.isArray(list)) return false;
 
-        const found = list.find(entry => entry && entry.id === userId);
+        const found = list.find(entry => entry && (entry.id === numericId || entry.id === userId || entry.id === digitsOnly));
 
         if (found) {
             if (found.expiresAt && found.expiresAt !== 'PERMANENT') {
@@ -721,10 +886,18 @@ class ModerationSystem {
     }
 
     public addToBlacklist(userId: string, userName: string, userNumber: string, reason: string = 'spam', expiryMs: number | null = null): any {
+        // Para LIDs como lid_12345, extrai dígitos crus
+        let numericId = JidUtils.getNumber(userId);
+        if (!numericId || numericId.length < 6) {
+            numericId = JidUtils.cleanPhoneNumber(userId);
+        }
+
         const list = this.loadBlacklistDataSync();
         const arr = Array.isArray(list) ? list : [];
 
-        if (arr.find(x => x && x.id === userId)) {
+        // Verifica duplicata por ID numérico, ID original e dígitos
+        const digitsOnly = userId.replace(/\D/g, '');
+        if (arr.find(x => x && (x.id === numericId || x.id === userId || x.id === digitsOnly))) {
             return { success: false, message: 'Já estava na blacklist' };
         }
 
@@ -733,8 +906,11 @@ class ModerationSystem {
             expiresAt = Date.now() + expiryMs;
         }
 
+        // Se o numericId vier vazio (caso de LID sem @), extrai dígitos crus
+        const storeId = numericId || JidUtils.cleanPhoneNumber(userId);
+
         const entry = {
-            id: userId,
+            id: storeId,
             name: userName,
             number: userNumber,
             reason,
@@ -746,26 +922,23 @@ class ModerationSystem {
         arr.push(entry);
 
         try {
-            fs.writeFileSync(
-                this.blacklistPath || './database/datauser/blacklist.json',
-                JSON.stringify(arr, null, 2)
-            );
+            this._saveBlacklist(arr);
 
             // LOG DETALHADO
             const timestamp = new Date().toLocaleString('pt-BR');
             const expiresStr = expiresAt === 'PERMANENT' ? 'PERMANENTE' : new Date(expiresAt).toLocaleString('pt-BR');
 
-            this.logger.log(`\n${'═'.repeat(100)}`);
-            this.logger.log(`🚫 [${timestamp}] BLACKLIST ADICIONADO - SEVERIDADE: ${entry.severity}`);
-            this.logger.log(`${'─'.repeat(100)}`);
-            this.logger.log(`👤 USUÁRIO`);
-            this.logger.log(` ├─ Nome: ${userName}`);
-            this.logger.log(` ├─ Número: ${userNumber}`);
-            this.logger.log(` └─ JID: ${userId}`);
-            this.logger.log(`📋 RAZÃO: ${reason}`);
-            this.logger.log(`⏰ EXPIRAÇÃO: ${expiresStr}`);
-            this.logger.log(`🔐 STATUS: Agora será ignorado completamente`);
-            this.logger.log(`${'═'.repeat(100)}\n`);
+            this.logger.info(`\n${'═'.repeat(100)}`);
+            this.logger.info(`🚫 [${timestamp}] BLACKLIST ADICIONADO - SEVERIDADE: ${entry.severity}`);
+            this.logger.info(`${'─'.repeat(100)}`);
+            this.logger.info(`👤 USUÁRIO`);
+            this.logger.info(` ├─ Nome: ${userName}`);
+            this.logger.info(` ├─ Número: ${userNumber}`);
+            this.logger.info(` └─ JID: ${userId}`);
+            this.logger.info(`📋 RAZÃO: ${reason}`);
+            this.logger.info(`⏰ EXPIRAÇÃO: ${expiresStr}`);
+            this.logger.info(`🔐 STATUS: Agora será ignorado completamente`);
+            this.logger.info(`${'═'.repeat(100)}\n`);
 
             return { success: true, entry };
         } catch (e: any) {
@@ -778,21 +951,20 @@ class ModerationSystem {
     * Remove da blacklist
     */
     public removeFromBlacklist(userId: string): boolean {
+        const numericId = JidUtils.getNumber(userId) || JidUtils.cleanPhoneNumber(userId);
+        const digitsOnly = userId.replace(/\D/g, '');
         const list = this.loadBlacklistDataSync();
         const arr = Array.isArray(list) ? list : [];
-        const index = arr.findIndex(x => x && x.id === userId);
+        const index = arr.findIndex(x => x && (x.id === numericId || x.id === userId || x.id === digitsOnly));
 
         if (index !== -1) {
             const removed = arr[index];
             arr.splice(index, 1);
 
             try {
-                fs.writeFileSync(
-                    this.blacklistPath || './database/datauser/blacklist.json',
-                    JSON.stringify(arr, null, 2)
-                );
+                this._saveBlacklist(arr);
 
-                this.logger.log(`✅ [BLACKLIST] ${removed.name} (${removed.number}) removido da blacklist`);
+                this.logger.info(`✅ [BLACKLIST] ${removed.name} (${removed.number}) removido da blacklist`);
                 return true;
             } catch (e: any) {
                 this.logger.error('Erro ao remover da blacklist:', e.message);
@@ -819,7 +991,50 @@ class ModerationSystem {
                 return [];
             }
 
-            return JSON.parse(data);
+            const list = JSON.parse(data);
+            if (!Array.isArray(list)) return [];
+
+            // 🛠️ AUTO-CLEANUP: Remove duplicatas e normaliza IDs antigos on-the-fly
+            const uniqueMap = new Map();
+            let hasDuplicates = false;
+
+            for (const entry of list) {
+                if (!entry || !entry.id) continue;
+                // If the ID contains '@', it's a JID — normalize it
+                // If it's pure digits (or digits with prefix), extract only digits
+                const rawId = String(entry.id);
+                let numericId = rawId.includes('@') ? JidUtils.getNumber(rawId) : rawId.replace(/\D/g, '');
+
+                // Skip entries with no meaningful numeric ID
+                if (!numericId || numericId.length < 6) {
+                    hasDuplicates = true;
+                    continue;
+                }
+
+                // Check for duplicates
+                if (uniqueMap.has(numericId)) {
+                    hasDuplicates = true;
+                    continue;
+                }
+
+                // Normalize if needed
+                if (entry.id !== numericId) {
+                    entry.id = numericId;
+                    hasDuplicates = true;
+                }
+
+                uniqueMap.set(numericId, entry);
+            }
+
+            const cleanList = Array.from(uniqueMap.values());
+
+            // Se limpamos algo, salva de volta para o disco para não repetir
+            if (hasDuplicates) {
+                this.logger.info(`🧹 [BLACKLIST] Limpeza automática: ${list.length} -> ${cleanList.length} entradas.`);
+                this._saveBlacklist(cleanList);
+            }
+
+            return cleanList;
         } catch (e: any) {
             this.logger.error('Erro ao carregar blacklist:', e.message);
             return [];
